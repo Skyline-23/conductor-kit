@@ -1,0 +1,52 @@
+{
+  "roles": {
+    "oracle": {
+      "cli": "codex",
+      "args": ["exec", "{prompt}"],
+      "model_flag": "-m",
+      "model": "",
+      "models": [],
+      "reasoning_flag": "-c",
+      "reasoning_key": "model_reasoning_effort",
+      "reasoning": ""
+    },
+    "librarian": {
+      "cli": "claude",
+      "args": ["-p", "{prompt}"],
+      "model_flag": "--model",
+      "model": "",
+      "models": []
+    },
+    "explore": {
+      "cli": "codex",
+      "args": ["exec", "{prompt}"],
+      "model_flag": "-m",
+      "model": "",
+      "models": [],
+      "reasoning_flag": "-c",
+      "reasoning_key": "model_reasoning_effort",
+      "reasoning": ""
+    },
+    "frontend-ui-ux-engineer": {
+      "cli": "gemini",
+      "args": ["{prompt}"],
+      "model_flag": "--model",
+      "model": "",
+      "models": []
+    },
+    "document-writer": {
+      "cli": "claude",
+      "args": ["-p", "{prompt}"],
+      "model_flag": "--model",
+      "model": "",
+      "models": []
+    },
+    "multimodal-looker": {
+      "cli": "gemini",
+      "args": ["{prompt}"],
+      "model_flag": "--model",
+      "model": "",
+      "models": []
+    }
+  }
+}
