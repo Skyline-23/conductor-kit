@@ -511,7 +511,12 @@ func runBackgroundBatch(args []string) int {
 		"agents":  agentList,
 		"results": results,
 		"note":    "Use conductor-background-output --task-id <id> to fetch results",
-		"warning": func() interface{} { if *roles == "" && (*modelOverride != "" || *reasoningOverride != "") { return "Model overrides apply only to --roles mode" }; return nil }(),
+		"warning": func() interface{} {
+			if *roles == "" && (*modelOverride != "" || *reasoningOverride != "") {
+				return "Model overrides apply only to --roles mode"
+			}
+			return nil
+		}(),
 	})
 	return 0
 }
@@ -645,7 +650,12 @@ func runBatchArgs(args []string) (map[string]interface{}, error) {
 		"agents":  agentList,
 		"results": results,
 		"note":    "Use conductor-background-output --task-id <id> to fetch results",
-		"warning": func() interface{} { if *roles == "" && (*modelOverride != "" || *reasoningOverride != "") { return "Model overrides apply only to --roles mode" }; return nil }(),
+		"warning": func() interface{} {
+			if *roles == "" && (*modelOverride != "" || *reasoningOverride != "") {
+				return "Model overrides apply only to --roles mode"
+			}
+			return nil
+		}(),
 	}, nil
 }
 
