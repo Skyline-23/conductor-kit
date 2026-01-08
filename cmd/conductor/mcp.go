@@ -98,7 +98,7 @@ func runMCP(args []string) int {
 	})
 
 	transport := mcp.NewStdioTransport()
-	if err := server.Connect(context.Background(), transport); err != nil {
+	if _, err := server.Connect(context.Background(), transport, nil); err != nil {
 		fmt.Println(err.Error())
 		return 1
 	}
