@@ -1,0 +1,48 @@
+project_name: conductor-kit
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: conductor
+    main: ./cmd/conductor
+    binary: conductor
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: conductor
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    files:
+      - skills/**
+      - commands/**
+      - config/**
+      - README.md
+      - README.ko.md
+      - LICENSE
+
+brews:
+  - name: conductor-kit
+    homepage: "https://github.com/Skyline-23/conductor-kit"
+    description: "Global skills pack and Go helper for Codex CLI and Claude Code"
+    license: "MIT"
+    repository:
+      owner: Skyline-23
+      name: homebrew-conductor-kit
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    install: |
+      bin.install "conductor"
+      pkgshare.install "skills", "commands", "config"
+    caveats: |
+      To install skills and commands into Codex/Claude:
+        conductor install --mode link --repo #{pkgshare}
