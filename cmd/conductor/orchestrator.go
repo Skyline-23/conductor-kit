@@ -8,59 +8,43 @@ import (
 )
 
 var (
-	rolesJSONPattern = regexp.MustCompile(`(?s)\\[(.*?)\\]`)
+	rolesJSONPattern = regexp.MustCompile(`(?s)\[(.*?)\]`)
 )
 
-func autoSelectRoles(prompt string, cfg Config) []string {
-	routing := normalizeRouting(cfg.Routing)
-	available := availableRoles(cfg)
-	add := func(out []string, role string) []string {
-		if !available[role] {
-			return out
-		}
-		for _, existing := range out {
-			if existing == role {
-				return out
-			}
-		}
-		return append(out, role)
-	}
-
-	out := []string{}
-	text := strings.ToLower(prompt)
-
-	for _, role := range routing.Always {
-		out = add(out, role)
-	}
-
-	if strings.EqualFold(routing.Strategy, "oracle") {
-		if roles, ok := selectRolesWithOracle(prompt, cfg, routing, available); ok {
-			for _, role := range roles {
-				out = add(out, role)
-			}
-			if len(out) > 0 {
-				return out
-			}
-		}
-	}
-
-	for _, role := range selectRolesByHints(prompt, cfg, routing, available) {
-		out = add(out, role)
-	}
-
-	for name := range cfg.Roles {
-		if name != "" && strings.Contains(text, strings.ToLower(name)) {
-			out = add(out, name)
-		}
-	}
-
-	if len(out) == 0 {
-		out = append(out, sortedRoles(cfg)...)
-	}
-	return out
+type DelegatedTask struct {
+	Role   string `json:"role"`
+	Prompt string `json:"prompt"`
 }
 
-func selectRolesWithOracle(prompt string, cfg Config, routing RoutingConfig, available map[string]bool) ([]string, bool) {
+func autoSelectRoles(prompt string, cfg Config) []string {
+	tasks := autoPlanTasks(prompt, cfg)
+	roles := []string{}
+	seen := map[string]bool{}
+	for _, task := range tasks {
+		if task.Role == "" || seen[task.Role] {
+			continue
+		}
+		seen[task.Role] = true
+		roles = append(roles, task.Role)
+	}
+	return roles
+}
+
+func autoPlanTasks(prompt string, cfg Config) []DelegatedTask {
+	routing := normalizeRouting(cfg.Routing)
+	available := availableRoles(cfg)
+
+	if strings.EqualFold(routing.Strategy, "oracle") {
+		if tasks, ok := planDelegatedTasks(prompt, cfg, routing, available); ok {
+			return tasks
+		}
+	}
+
+	tasks := tasksFromRoles(sortedRoles(cfg), prompt)
+	return ensureAlwaysTasks(tasks, routing.Always, prompt, available)
+}
+
+func planDelegatedTasks(prompt string, cfg Config, routing RoutingConfig, available map[string]bool) ([]DelegatedTask, bool) {
 	router := routing.RouterRole
 	if router == "" {
 		router = "oracle"
@@ -74,8 +58,7 @@ func selectRolesWithOracle(prompt string, cfg Config, routing RoutingConfig, ava
 	}
 
 	roleNames := sortedRoles(cfg)
-	roleHints := buildRoleHints(roleNames, routing.Hints)
-	routerPrompt := buildRouterPrompt(prompt, roleNames, roleHints)
+	routerPrompt := buildRouterPrompt(prompt, roleNames)
 
 	defaults := normalizeDefaults(cfg.Defaults)
 	spec, err := buildSpecFromRole(cfg, router, routerPrompt, "", "", defaults.LogPrompt)
@@ -87,40 +70,12 @@ func selectRolesWithOracle(prompt string, cfg Config, routing RoutingConfig, ava
 		return nil, false
 	}
 	stdout, _ := res["stdout"].(string)
-	roles := parseRoleList(stdout, available)
-	if len(roles) == 0 {
+	tasks := parseDelegatedTasks(stdout, prompt, available)
+	tasks = ensureAlwaysTasks(tasks, routing.Always, prompt, available)
+	if len(tasks) == 0 {
 		return nil, false
 	}
-	return roles, true
-}
-
-func selectRolesByHints(prompt string, cfg Config, routing RoutingConfig, available map[string]bool) []string {
-	lower := strings.ToLower(prompt)
-	out := []string{}
-	add := func(role string) {
-		if !available[role] {
-			return
-		}
-		for _, existing := range out {
-			if existing == role {
-				return
-			}
-		}
-		out = append(out, role)
-	}
-	for role, hints := range routing.Hints {
-		for _, hint := range hints {
-			h := strings.TrimSpace(strings.ToLower(hint))
-			if h == "" {
-				continue
-			}
-			if strings.Contains(lower, h) {
-				add(role)
-				break
-			}
-		}
-	}
-	return out
+	return tasks, true
 }
 
 func normalizeRouting(r RoutingConfig) RoutingConfig {
@@ -132,9 +87,6 @@ func normalizeRouting(r RoutingConfig) RoutingConfig {
 	}
 	if len(r.Always) == 0 {
 		r.Always = []string{"oracle"}
-	}
-	if r.Hints == nil {
-		r.Hints = map[string][]string{}
 	}
 	return r
 }
@@ -156,71 +108,58 @@ func sortedRoles(cfg Config) []string {
 	return roles
 }
 
-func buildRoleHints(roles []string, hints map[string][]string) []string {
-	lines := make([]string, 0, len(roles))
-	for _, role := range roles {
-		if len(hints[role]) == 0 {
-			continue
-		}
-		lines = append(lines, role+": "+strings.Join(hints[role], ", "))
-	}
-	return lines
-}
-
-func buildRouterPrompt(prompt string, roles, hints []string) string {
+func buildRouterPrompt(prompt string, roles []string) string {
 	builder := strings.Builder{}
 	builder.WriteString("You are routing tasks to roles.\n")
-	builder.WriteString("Return ONLY a JSON array of role names.\n")
+	builder.WriteString("Return ONLY a JSON array of objects: [{\"role\":\"<role>\",\"prompt\":\"<role-specific prompt>\"}].\n")
 	builder.WriteString("Rules:\n")
 	builder.WriteString("- Use only the provided roles.\n")
 	builder.WriteString("- Include multiple roles when useful.\n")
+	builder.WriteString("- Keep prompts short and role-specific.\n")
 	builder.WriteString("- If none fit, return an empty array.\n\n")
 	builder.WriteString("Available roles:\n")
 	builder.WriteString(strings.Join(roles, ", "))
 	builder.WriteString("\n\n")
-	if len(hints) > 0 {
-		builder.WriteString("Role hints:\n")
-		builder.WriteString(strings.Join(hints, "\n"))
-		builder.WriteString("\n\n")
-	}
 	builder.WriteString("Task:\n")
 	builder.WriteString(prompt)
 	return builder.String()
 }
 
-func parseRoleList(output string, available map[string]bool) []string {
+func parseDelegatedTasks(output, fallbackPrompt string, available map[string]bool) []DelegatedTask {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return nil
 	}
-	candidates := []string{}
+	if tasks := parseTaskJSONArray(trimmed); len(tasks) > 0 {
+		return filterTasks(tasks, fallbackPrompt, available)
+	}
+	if match := rolesJSONPattern.FindString(trimmed); match != "" {
+		if tasks := parseTaskJSONArray(match); len(tasks) > 0 {
+			return filterTasks(tasks, fallbackPrompt, available)
+		}
+	}
 	if roles := parseRoleJSONArray(trimmed); len(roles) > 0 {
-		candidates = roles
-	} else if match := rolesJSONPattern.FindString(trimmed); match != "" {
+		return filterTasks(tasksFromRoles(roles, fallbackPrompt), fallbackPrompt, available)
+	}
+	if match := rolesJSONPattern.FindString(trimmed); match != "" {
 		if roles := parseRoleJSONArray(match); len(roles) > 0 {
-			candidates = roles
+			return filterTasks(tasksFromRoles(roles, fallbackPrompt), fallbackPrompt, available)
 		}
 	}
-	if len(candidates) == 0 {
-		for _, part := range strings.FieldsFunc(trimmed, func(r rune) bool {
-			return r == ',' || r == '\n' || r == '\r' || r == '\t'
-		}) {
-			val := strings.TrimSpace(strings.Trim(part, "\"'"))
-			if val != "" {
-				candidates = append(candidates, val)
-			}
-		}
-	}
-	out := []string{}
-	seen := map[string]bool{}
-	for _, role := range candidates {
-		if !available[role] || seen[role] {
+	lines := strings.Split(trimmed, "\n")
+	parsed := []DelegatedTask{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		seen[role] = true
-		out = append(out, role)
+		role, prompt, ok := parseRolePromptLine(line)
+		if !ok {
+			continue
+		}
+		parsed = append(parsed, DelegatedTask{Role: role, Prompt: prompt})
 	}
-	return out
+	return filterTasks(parsed, fallbackPrompt, available)
 }
 
 func parseRoleJSONArray(raw string) []string {
@@ -229,4 +168,74 @@ func parseRoleJSONArray(raw string) []string {
 		return roles
 	}
 	return nil
+}
+
+func parseTaskJSONArray(raw string) []DelegatedTask {
+	var tasks []DelegatedTask
+	if err := json.Unmarshal([]byte(raw), &tasks); err == nil {
+		return tasks
+	}
+	return nil
+}
+
+func parseRolePromptLine(line string) (string, string, bool) {
+	seps := []string{":", " - ", " — "}
+	for _, sep := range seps {
+		if idx := strings.Index(line, sep); idx > 0 {
+			role := strings.TrimSpace(strings.Trim(line[:idx], "\"'"))
+			prompt := strings.TrimSpace(strings.Trim(line[idx+len(sep):], "\"'"))
+			if role == "" {
+				return "", "", false
+			}
+			return role, prompt, true
+		}
+	}
+	return "", "", false
+}
+
+func tasksFromRoles(roles []string, prompt string) []DelegatedTask {
+	tasks := make([]DelegatedTask, 0, len(roles))
+	for _, role := range roles {
+		if role == "" {
+			continue
+		}
+		tasks = append(tasks, DelegatedTask{Role: role, Prompt: prompt})
+	}
+	return tasks
+}
+
+func filterTasks(tasks []DelegatedTask, fallbackPrompt string, available map[string]bool) []DelegatedTask {
+	out := []DelegatedTask{}
+	seen := map[string]bool{}
+	for _, task := range tasks {
+		role := strings.TrimSpace(task.Role)
+		if role == "" || !available[role] || seen[role] {
+			continue
+		}
+		seen[role] = true
+		prompt := strings.TrimSpace(task.Prompt)
+		if prompt == "" {
+			prompt = fallbackPrompt
+		}
+		out = append(out, DelegatedTask{Role: role, Prompt: prompt})
+	}
+	return out
+}
+
+func ensureAlwaysTasks(tasks []DelegatedTask, always []string, fallbackPrompt string, available map[string]bool) []DelegatedTask {
+	if len(always) == 0 {
+		return tasks
+	}
+	seen := map[string]bool{}
+	for _, task := range tasks {
+		seen[task.Role] = true
+	}
+	for _, role := range always {
+		if role == "" || seen[role] || !available[role] {
+			continue
+		}
+		tasks = append(tasks, DelegatedTask{Role: role, Prompt: fallbackPrompt})
+		seen[role] = true
+	}
+	return tasks
 }

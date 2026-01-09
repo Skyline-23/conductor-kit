@@ -15,6 +15,18 @@
         "log_prompt": { "type": "boolean" }
       }
     },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "type": "string", "enum": ["oracle", "heuristic"] },
+        "router_role": { "type": "string" },
+        "always": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "daemon": {
       "type": "object",
       "additionalProperties": false,

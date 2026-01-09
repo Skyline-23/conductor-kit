@@ -663,19 +663,31 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 	logPrompt := defaults.LogPrompt
 	maxParallel := defaults.MaxParallel
 
-	roleNames := []string{}
+	tasks := []DelegatedTask{}
 	if roles == "auto" {
-		roleNames = autoSelectRoles(prompt, cfg)
+		tasks = autoPlanTasks(prompt, cfg)
 	} else {
-		roleNames = splitList(roles)
+		tasks = tasksFromRoles(splitList(roles), prompt)
 	}
-	if len(roleNames) == 0 {
+	if len(tasks) == 0 {
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}
-	agentList = roleNames
+	agentList = []string{}
+	seenRoles := map[string]bool{}
+	for _, task := range tasks {
+		if task.Role != "" && !seenRoles[task.Role] {
+			seenRoles[task.Role] = true
+			agentList = append(agentList, task.Role)
+		}
+	}
 
-	for _, role := range roleNames {
-		roleCfg := cfg.Roles[role]
+	for _, task := range tasks {
+		role := task.Role
+		roleCfg, ok := cfg.Roles[role]
+		if !ok {
+			results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": "unknown role"})
+			continue
+		}
 		if roleCfg.MaxParallel > 0 && roleCfg.MaxParallel < maxParallel {
 			maxParallel = roleCfg.MaxParallel
 		}
@@ -683,8 +695,12 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 		if len(models) == 0 {
 			models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
 		}
+		taskPrompt := strings.TrimSpace(task.Prompt)
+		if taskPrompt == "" {
+			taskPrompt = prompt
+		}
 		for _, entry := range models {
-			spec, err := buildSpecFromRole(cfg, role, prompt, entry.Name, entry.ReasoningEffort, logPrompt)
+			spec, err := buildSpecFromRole(cfg, role, taskPrompt, entry.Name, entry.ReasoningEffort, logPrompt)
 			if err != nil {
 				results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
 				continue
@@ -778,25 +794,41 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 
-	roleNames := []string{}
+	tasks := []DelegatedTask{}
 	if roles == "auto" {
-		roleNames = autoSelectRoles(prompt, cfg)
+		tasks = autoPlanTasks(prompt, cfg)
 	} else {
-		roleNames = splitList(roles)
+		tasks = tasksFromRoles(splitList(roles), prompt)
 	}
-	if len(roleNames) == 0 {
+	if len(tasks) == 0 {
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}
-	agentList = roleNames
+	agentList = []string{}
+	seenRoles := map[string]bool{}
+	for _, task := range tasks {
+		if task.Role != "" && !seenRoles[task.Role] {
+			seenRoles[task.Role] = true
+			agentList = append(agentList, task.Role)
+		}
+	}
 
-	for _, role := range roleNames {
-		roleCfg := cfg.Roles[role]
+	for _, task := range tasks {
+		role := task.Role
+		roleCfg, ok := cfg.Roles[role]
+		if !ok {
+			results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": "unknown role"})
+			continue
+		}
 		models := expandModelEntries(roleCfg, modelOverride, reasoningOverride)
 		if len(models) == 0 {
 			models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
 		}
+		taskPrompt := strings.TrimSpace(task.Prompt)
+		if taskPrompt == "" {
+			taskPrompt = prompt
+		}
 		for _, entry := range models {
-			spec, err := buildSpecFromRole(cfg, role, prompt, entry.Name, entry.ReasoningEffort, logPrompt)
+			spec, err := buildSpecFromRole(cfg, role, taskPrompt, entry.Name, entry.ReasoningEffort, logPrompt)
 			if err != nil {
 				results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
 				continue

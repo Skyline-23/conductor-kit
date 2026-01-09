@@ -812,24 +812,39 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 
-	roleNames := []string{}
+	tasks := []DelegatedTask{}
 	if input.Roles == "auto" {
-		roleNames = autoSelectRoles(input.Prompt, cfg)
+		tasks = autoPlanTasks(input.Prompt, cfg)
 	} else {
-		roleNames = splitList(input.Roles)
+		tasks = tasksFromRoles(splitList(input.Roles), input.Prompt)
 	}
-	if len(roleNames) == 0 {
+	if len(tasks) == 0 {
 		return nil, errors.New("no_roles")
 	}
-	agentList = roleNames
-	for _, role := range roleNames {
-		roleCfg := cfg.Roles[role]
+	agentList = []string{}
+	seenRoles := map[string]bool{}
+	for _, task := range tasks {
+		if task.Role != "" && !seenRoles[task.Role] {
+			seenRoles[task.Role] = true
+			agentList = append(agentList, task.Role)
+		}
+	}
+	for _, task := range tasks {
+		role := task.Role
+		roleCfg, ok := cfg.Roles[role]
+		if !ok {
+			continue
+		}
 		models := expandModelEntries(roleCfg, input.Model, input.Reasoning)
 		if len(models) == 0 {
 			models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
 		}
+		taskPrompt := strings.TrimSpace(task.Prompt)
+		if taskPrompt == "" {
+			taskPrompt = input.Prompt
+		}
 		for _, entry := range models {
-			spec, err := buildSpecFromRole(cfg, role, input.Prompt, entry.Name, entry.ReasoningEffort, logPrompt)
+			spec, err := buildSpecFromRole(cfg, role, taskPrompt, entry.Name, entry.ReasoningEffort, logPrompt)
 			if err != nil {
 				continue
 			}
