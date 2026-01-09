@@ -84,17 +84,17 @@ Claude Code (`~/.claude/.mcp.json`):
 ```
 
 Then use tools:
-- `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }`
-- Run multiple `conductor.run` tool calls in parallel (host handles concurrency)
-- `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
+- `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }` (async; returns run_id)
+- `conductor.run_batch_async` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
+- Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
 
 Note: Delegation tools are MCP-only; CLI subcommands are only for daemon setup.
 
-### 4) Async delegation (optional)
-- Start async run: `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
+### 4) Async delegation (default)
+- Start async run: `conductor.run` or `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
 - Batch async: `conductor.run_batch_async` with `{ "roles": "oracle,librarian", "prompt": "<task>" }`
 - Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
-- Wait for completion: `conductor.run_wait` with `{ "run_id": "<id>", "timeout_ms": 120000 }`
+- Wait for completion: `conductor.run_wait` (note: host tool-call timeouts may cut this off)
 - Cancel: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
 
 ### 5) Local daemon (queue + approvals, optional)
@@ -174,9 +174,9 @@ Minimal example:
 ```
 
 Overrides:
-- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
-- `conductor.run_batch` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
-- `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` or `CONDUCTOR_CONFIG=/path/to/conductor.json`
+- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }` (async)
+- `conductor.run_batch_async` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
+- `conductor.run_batch_async` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` or `CONDUCTOR_CONFIG=/path/to/conductor.json`
 Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
 Schema: `config/conductor.schema.json` (optional for tooling).
 
@@ -237,6 +237,7 @@ Tools:
 - `conductor.approval_reject` (daemon)
 - `conductor.daemon_status` (daemon)
 Note: if the host supplies a progress token, Conductor emits MCP progress notifications during batch/async runs.
+Note: `conductor.run_batch` is synchronous; prefer `conductor.run_batch_async` to avoid host tool-call timeouts.
 
 ## Repo layout
 ```

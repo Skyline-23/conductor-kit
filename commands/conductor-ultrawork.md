@@ -11,16 +11,16 @@ Treat `ulw` as an alias of `ultrawork`. Do not ask what it means.
 Do the following:
 - AUTO-DELEGATE BY DEFAULT VIA MCP TOOL CALLS:
   - Prefer router-driven delegation:
-    - Call `conductor.run` with `{ "role": "auto", "prompt": "$ARGUMENTS" }`
+    - Call `conductor.run` with `{ "role": "auto", "prompt": "$ARGUMENTS" }` (async; returns run_id)
   - Or use a single batch call if you need explicit fan-out:
-    - Call `conductor.run_batch` with `{ "roles": "auto", "prompt": "$ARGUMENTS" }`
+    - Call `conductor.run_batch_async` with `{ "roles": "auto", "prompt": "$ARGUMENTS" }`
   - Ensure the MCP server is registered (`codex mcp add conductor -- conductor mcp`) and `conductor` is on PATH.
   - If binaries are missing, build the Go helper and install aliases:
     - `go build -o ~/.local/bin/conductor ./cmd/conductor`
     - `conductor install --mode link --repo /path/to/conductor-kit --force`
   - After delegation, print a user-visible line with agents: `Delegation results received: <agents>`.
   - For audit, use `conductor.run_history` or `conductor.run_info`.
-- For long tasks, use `conductor.run_async` and poll with `conductor.run_status` or `conductor.run_wait`.
+- Poll progress with `conductor.run_status` (avoid `run_wait` due to host tool-call timeout).
   - If a daemon is running, list/approve runs with `conductor.queue_list` and `conductor.approval_*`.
 - Run the full orchestration loop: search -> plan -> execute -> verify -> cleanup.
 - Always produce a short plan (3-6 steps) before any edits.

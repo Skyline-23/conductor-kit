@@ -19,13 +19,13 @@ func runMCP(args []string) int {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "conductor.run",
-		Description: "Run a single role/agent synchronously and return output.",
+		Description: "Run a single role/agent asynchronously and return run_id(s).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input RunInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		report := progressReporterForRequest(ctx, req)
 		if report != nil {
 			report("started", 0, 1)
 		}
-		payload, err := runTool(input, report)
+		payload, err := runAsyncTool(input, report)
 		if err != nil {
 			return nil, nil, err
 		}

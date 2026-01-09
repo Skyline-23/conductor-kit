@@ -1025,7 +1025,7 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 
 	tasks := []DelegatedTask{}
 	if roles == "auto" {
-		tasks = autoPlanTasks(prompt, cfg, effectiveRouterTimeout(timeoutMs))
+		tasks = autoPlanTasks(prompt, cfg, effectiveRouterTimeoutAsync(timeoutMs))
 	} else {
 		tasks = tasksFromRoles(splitList(roles), prompt)
 	}

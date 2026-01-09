@@ -115,16 +115,14 @@ If the host supports it, prefer its native model switching first; delegate only 
 - If the user includes `ultrawork` or `ulw`, respond first with "ULTRAWORK MODE ENABLED!" and do not question the alias.
 - Auto-delegate by default using MCP tool calls (shows host tool-calling UI):
   - Prefer router-driven delegation:
-    - `conductor.run` with `{ "role": "auto", "prompt": "<request>" }`
+    - `conductor.run` with `{ "role": "auto", "prompt": "<request>" }` (async; returns run_id)
   - Or use a single batch call if you need explicit fan-out:
-    - `conductor.run_batch` with `{ "roles": "auto", "prompt": "<request>" }`
+    - `conductor.run_batch_async` with `{ "roles": "auto", "prompt": "<request>" }`
     - Override model/reasoning: `{ "roles": "auto", "model": "<model>", "reasoning": "<level>", "prompt": "<request>" }`
-  - For long-running work, use async tools:
-    - `conductor.run_async` / `conductor.run_batch_async`
-    - Poll with `conductor.run_status` or block with `conductor.run_wait`
-    - If a daemon is running, you can list/approve runs:
-      - `conductor.queue_list` / `conductor.approval_list`
-      - `conductor.approval_approve` / `conductor.approval_reject`
+  - Poll with `conductor.run_status` (host tool calls time out around 60s; avoid `run_wait`)
+  - If a daemon is running, you can list/approve runs:
+    - `conductor.queue_list` / `conductor.approval_list`
+    - `conductor.approval_approve` / `conductor.approval_reject`
   - Delegation is MCP-only; do not use CLI `background-*` commands.
   - Always print a user-visible line after delegation: `Delegation results received: <agents>` (no raw logs).
   - If you need auditability, use `conductor.run_history` / `conductor.run_info`.

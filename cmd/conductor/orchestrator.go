@@ -89,6 +89,16 @@ func effectiveRouterTimeout(timeoutMs int) int {
 	return 30000
 }
 
+func effectiveRouterTimeoutAsync(timeoutMs int) int {
+	if timeoutMs > 0 {
+		if timeoutMs < 8000 {
+			return timeoutMs
+		}
+		return 8000
+	}
+	return 8000
+}
+
 func normalizeRouting(r RoutingConfig) RoutingConfig {
 	if r.RouterRole == "" {
 		r.RouterRole = "oracle"

@@ -84,17 +84,17 @@ Claude Code (`~/.claude/.mcp.json`):
 ```
 
 이후 도구 호출:
-- `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }`
-- 여러 `conductor.run` 도구 호출을 병렬로 실행 (호스트가 병렬 처리)
-- `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
+- `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }` (비동기; run_id 반환)
+- `conductor.run_batch_async` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
+- 상태 확인: `conductor.run_status` with `{ "run_id": "<id>" }`
 
 참고: 위임 도구는 MCP 전용이며, CLI 서브커맨드는 데몬 설정용입니다.
 
-### 4) 비동기 위임 (선택)
-- 비동기 시작: `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
+### 4) 비동기 위임 (기본)
+- 비동기 시작: `conductor.run` 또는 `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
 - 배치 비동기: `conductor.run_batch_async` with `{ "roles": "oracle,librarian", "prompt": "<task>" }`
 - 상태 확인: `conductor.run_status` with `{ "run_id": "<id>" }`
-- 완료 대기: `conductor.run_wait` with `{ "run_id": "<id>", "timeout_ms": 120000 }`
+- 완료 대기: `conductor.run_wait` (호스트 tool-call 타임아웃으로 중단될 수 있음)
 - 취소: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
 
 ### 5) 로컬 데몬 (큐 + 승인, 선택)
@@ -172,9 +172,9 @@ conductor daemon --mode stop
 ```
 
 오버라이드:
-- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
-- `conductor.run_batch` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
-- `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` 또는 `CONDUCTOR_CONFIG=/path/to/conductor.json`
+- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }` (비동기)
+- `conductor.run_batch_async` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
+- `conductor.run_batch_async` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` 또는 `CONDUCTOR_CONFIG=/path/to/conductor.json`
 팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
 스키마: `config/conductor.schema.json` (툴링용 선택 사항)
 
@@ -235,6 +235,7 @@ codex mcp add conductor -- conductor mcp
 - `conductor.approval_reject` (daemon)
 - `conductor.daemon_status` (daemon)
 참고: 호스트가 progress token을 제공하면 Conductor가 batch/async 실행 중 MCP progress 알림을 보냅니다.
+참고: `conductor.run_batch`는 동기 실행이므로 `conductor.run_batch_async`를 권장합니다.
 
 ## 레포 구조
 ```
