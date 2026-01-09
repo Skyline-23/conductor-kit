@@ -20,11 +20,30 @@
     }
   },
   "roles": {
-    "oracle": { "cli": "codex" },
-    "librarian": { "cli": "claude" },
-    "explore": { "cli": "codex" },
-    "frontend-ui-ux-engineer": { "cli": "gemini" },
-    "document-writer": { "cli": "claude" },
-    "multimodal-looker": { "cli": "gemini" }
+    "oracle": {
+      "cli": "codex",
+      "model": "gpt-5.2-codex",
+      "reasoning": "medium"
+    },
+    "librarian": {
+      "cli": "claude",
+      "model": "claude-3-5-haiku-20241022"
+    },
+    "explore": {
+      "cli": "gemini",
+      "model": "gemini-3-flash-preview"
+    },
+    "frontend-ui-ux-engineer": {
+      "cli": "gemini",
+      "model": "gemini-3-pro-preview"
+    },
+    "document-writer": {
+      "cli": "gemini",
+      "model": "gemini-3-flash-preview"
+    },
+    "multimodal-looker": {
+      "cli": "gemini",
+      "model": "gemini-3-flash-preview"
+    }
   }
 }

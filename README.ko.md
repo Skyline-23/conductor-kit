@@ -146,6 +146,14 @@ conductor daemon --mode stop
 - `claude`: args `["-p","{prompt}"]`, model flag `--model`
 - `gemini`: args `["{prompt}"]`, model flag `--model`
 
+템플릿 기본 모델 (CLI 네이티브 이름):
+- `oracle`: codex `gpt-5.2-codex` + `reasoning: "medium"`
+- `librarian`: claude `claude-3-5-haiku-20241022`
+- `explore`: gemini `gemini-3-flash-preview`
+- `frontend-ui-ux-engineer`: gemini `gemini-3-pro-preview`
+- `document-writer`: gemini `gemini-3-flash-preview`
+- `multimodal-looker`: gemini `gemini-3-flash-preview`
+
 최소 예시:
 ```json
 {
@@ -170,7 +178,7 @@ conductor daemon --mode stop
 
 ## 진단
 - `conductor config-validate` (`~/.conductor-kit/conductor.json` 유효성 검사)
-- `conductor doctor` (설정 + CLI 가용성 점검)
+- `conductor doctor` (설정 + CLI 가용성 + 모델명 기본 검증)
 
 ## 관측/기록
 - `conductor.run_history` with `{ "limit": 20 }`

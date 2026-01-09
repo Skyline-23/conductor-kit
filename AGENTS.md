@@ -27,7 +27,7 @@ Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-open
 - `skills/conductor/SKILL.md` exists.
 - `commands/` contains mode-switch commands (plan/search/implement/release/ultrawork).
 - `cmd/conductor` provides install, diagnostics, local daemon, MCP server, and delegation tools (`run`, `run_batch`, async, history, queue/approval).
-- `config/conductor.json` defines role -> CLI/model mapping with defaults.
+- `config/conductor.json` defines role -> CLI/model mapping with CLI-native defaults (no provider prefix) and oracle reasoning.
 
 ## Work Plan
 1) Add async MCP tools with status/wait/cancel + basic notifications via polling.
@@ -40,6 +40,7 @@ Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-open
    - Orchestration policy inspired by oh-my-opencode (background-first fan-out, status polling, gated approvals).
 5) Keep docs and skill instructions consistent with the Go helper CLI.
 6) Validate Go CLI flags and JSON config behavior.
+7) Keep model defaults aligned to CLI-native naming (no provider prefixes) and validate in doctor output.
 
 ## Operating Notes
 - Make small, surgical changes.

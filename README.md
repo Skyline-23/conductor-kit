@@ -148,6 +148,14 @@ Defaults (if omitted):
 - `claude`: args `["-p","{prompt}"]`, model flag `--model`
 - `gemini`: args `["{prompt}"]`, model flag `--model`
 
+Template defaults (CLI-native model names):
+- `oracle`: codex `gpt-5.2-codex` + `reasoning: "medium"`
+- `librarian`: claude `claude-3-5-haiku-20241022`
+- `explore`: gemini `gemini-3-flash-preview`
+- `frontend-ui-ux-engineer`: gemini `gemini-3-pro-preview`
+- `document-writer`: gemini `gemini-3-flash-preview`
+- `multimodal-looker`: gemini `gemini-3-flash-preview`
+
 Minimal example:
 ```json
 {
@@ -172,7 +180,7 @@ Schema: `config/conductor.schema.json` (optional for tooling).
 
 ## Diagnostics
 - `conductor config-validate` (validates `~/.conductor-kit/conductor.json`)
-- `conductor doctor` (checks config + CLI availability)
+- `conductor doctor` (checks config + CLI availability + model name sanity)
 
 ## Observability
 - `conductor.run_history` with `{ "limit": 20 }`
