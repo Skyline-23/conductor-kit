@@ -10,8 +10,9 @@ It enforces a consistent orchestration loop (search -> plan -> execute -> verify
 brew tap Skyline-23/conductor-kit
 brew install conductor-kit
 
-# Install skills/commands into Codex + Claude
-conductor install --mode link --repo $(brew --prefix)/share/conductor-kit
+# Homebrew post_install links skills/commands into Codex + Claude
+# Re-run if needed:
+conductor install --mode link --repo $(brew --prefix)/share/conductor-kit --force
 ```
 
 ## Manual install

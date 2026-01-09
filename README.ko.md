@@ -10,8 +10,9 @@ Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬�
 brew tap Skyline-23/conductor-kit
 brew install conductor-kit
 
-# Codex + Claude에 스킬/커맨드 설치
-conductor install --mode link --repo $(brew --prefix)/share/conductor-kit
+# Homebrew post_install이 Codex + Claude에 자동 링크함
+# 필요 시 재실행:
+conductor install --mode link --repo $(brew --prefix)/share/conductor-kit --force
 ```
 
 ## 수동 설치
