@@ -21,6 +21,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "mode": { "type": "string", "enum": ["manual", "router", "all", "always"] },
         "router_role": { "type": "string" },
         "always": {
           "type": "array",

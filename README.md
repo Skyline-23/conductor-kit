@@ -132,8 +132,9 @@ Key fields:
 - `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
 - `defaults.log_prompt`: store prompt text in run history (default: false)
 - `defaults.summary_only`: hide raw stdout/stderr in MCP results and return read/changed file summaries only
-- `routing.router_role`: role used to route when `strategy=oracle`
-- `routing.always`: roles always included when auto-routing (e.g., `["oracle"]`)
+- `routing.mode`: `manual` (default), `router`, `all`, `always`
+- `routing.router_role`: role used when `routing.mode=router`
+- `routing.always`: roles always included when `routing.mode=all|always`
 - `daemon.host` / `daemon.port`: local daemon bind address
 - `daemon.max_parallel`: daemon worker limit (defaults to `defaults.max_parallel`)
 - `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`

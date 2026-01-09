@@ -24,6 +24,7 @@ type Defaults struct {
 }
 
 type RoutingConfig struct {
+	Mode       string   `json:"mode"`
 	RouterRole string   `json:"router_role"`
 	Always     []string `json:"always"`
 }

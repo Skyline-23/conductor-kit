@@ -1030,6 +1030,13 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 		tasks = tasksFromRoles(splitList(roles), prompt)
 	}
 	if len(tasks) == 0 {
+		note := ""
+		if roles == "auto" {
+			note = "auto routing disabled or produced no roles; specify roles explicitly"
+		}
+		if note != "" {
+			return map[string]interface{}{"status": "no_roles", "note": note}, nil
+		}
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}
 	agentList = []string{}
@@ -1180,6 +1187,13 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 		tasks = tasksFromRoles(splitList(roles), prompt)
 	}
 	if len(tasks) == 0 {
+		note := ""
+		if roles == "auto" {
+			note = "auto routing disabled or produced no roles; specify roles explicitly"
+		}
+		if note != "" {
+			return map[string]interface{}{"status": "no_roles", "note": note}, nil
+		}
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}
 	agentList = []string{}

@@ -10,10 +10,10 @@ Treat `ulw` as an alias of `ultrawork`. Do not ask what it means.
 
 Do the following:
 - AUTO-DELEGATE BY DEFAULT VIA MCP TOOL CALLS:
-  - Prefer router-driven delegation:
-    - Call `conductor.run` with `{ "role": "auto", "prompt": "$ARGUMENTS" }` (async; returns run_id)
-  - Or use a single batch call if you need explicit fan-out:
-    - Call `conductor.run_batch_async` with `{ "roles": "auto", "prompt": "$ARGUMENTS" }`
+  - Choose roles yourself; do not use `role: auto`.
+  - Use explicit roles with async tools:
+    - Call `conductor.run` with `{ "role": "<role>", "prompt": "$ARGUMENTS" }` (async; returns run_id)
+    - Call `conductor.run_batch_async` with `{ "roles": "<role(s)>", "prompt": "$ARGUMENTS" }`
   - Ensure the MCP server is registered (`codex mcp add conductor -- conductor mcp`) and `conductor` is on PATH.
   - If binaries are missing, build the Go helper and install aliases:
     - `go build -o ~/.local/bin/conductor ./cmd/conductor`

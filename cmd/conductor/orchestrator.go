@@ -33,13 +33,25 @@ func autoSelectRoles(prompt string, cfg Config) []string {
 func autoPlanTasks(prompt string, cfg Config, routerTimeoutMs int) []DelegatedTask {
 	routing := normalizeRouting(cfg.Routing)
 	available := availableRoles(cfg)
-
-	if tasks, ok := planDelegatedTasks(prompt, cfg, routing, available, routerTimeoutMs); ok {
-		return tasks
+	switch routing.Mode {
+	case "router":
+		if tasks, ok := planDelegatedTasks(prompt, cfg, routing, available, routerTimeoutMs); ok {
+			return tasks
+		}
+		tasks := tasksFromRoles(sortedRoles(cfg), prompt)
+		return ensureAlwaysTasks(tasks, routing.Always, prompt, available)
+	case "all":
+		return ensureAlwaysTasks(tasksFromRoles(sortedRoles(cfg), prompt), routing.Always, prompt, available)
+	case "always":
+		return ensureAlwaysTasks(tasksFromRoles(routing.Always, prompt), routing.Always, prompt, available)
+	case "manual":
+		if len(routing.Always) == 0 {
+			return nil
+		}
+		return ensureAlwaysTasks(tasksFromRoles(routing.Always, prompt), routing.Always, prompt, available)
+	default:
+		return nil
 	}
-
-	tasks := tasksFromRoles(sortedRoles(cfg), prompt)
-	return ensureAlwaysTasks(tasks, routing.Always, prompt, available)
 }
 
 func planDelegatedTasks(prompt string, cfg Config, routing RoutingConfig, available map[string]bool, routerTimeoutMs int) ([]DelegatedTask, bool) {
@@ -100,11 +112,14 @@ func effectiveRouterTimeoutAsync(timeoutMs int) int {
 }
 
 func normalizeRouting(r RoutingConfig) RoutingConfig {
+	if r.Mode == "" {
+		r.Mode = "manual"
+	}
 	if r.RouterRole == "" {
 		r.RouterRole = "oracle"
 	}
 	if len(r.Always) == 0 {
-		r.Always = []string{"oracle"}
+		r.Always = []string{}
 	}
 	return r
 }

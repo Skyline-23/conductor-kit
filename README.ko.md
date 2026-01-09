@@ -130,8 +130,9 @@ conductor daemon --mode stop
 - `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
 - `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
 - `defaults.summary_only`: MCP 결과에서 stdout/stderr를 숨기고 읽음/변경 파일 요약만 반환
-- `routing.router_role`: `strategy=oracle`에서 사용할 라우팅 역할
-- `routing.always`: 자동 라우팅 시 항상 포함할 역할 (예: `["oracle"]`)
+- `routing.mode`: `manual`(기본), `router`, `all`, `always`
+- `routing.router_role`: `routing.mode=router`에서 사용할 라우팅 역할
+- `routing.always`: `routing.mode=all|always`에서 항상 포함할 역할
 - `daemon.host` / `daemon.port`: 로컬 데몬 바인딩 주소
 - `daemon.max_parallel`: 데몬 동시 실행 제한 (기본값: `defaults.max_parallel`)
 - `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
