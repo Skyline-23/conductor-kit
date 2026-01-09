@@ -133,28 +133,27 @@ Key fields:
 - `daemon.max_parallel`: daemon worker limit (defaults to `defaults.max_parallel`)
 - `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
 - `daemon.approval.required`: force approvals for all runs
-- `daemon.approval.roles` / `daemon.approval.agents`: require approval for specific roles/agents
+- `daemon.approval.roles` / `daemon.approval.agents`: require approval for specific roles or CLI agents
 - `roles.<name>.cli`: executable to run (must be on PATH)
-- `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go
-- `roles.<name>.model_flag`: model flag (e.g. `-m` for codex, `--model` for claude/gemini)
+- `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go (optional for codex/claude/gemini)
+- `roles.<name>.model_flag`: model flag (optional for codex/claude/gemini)
 - `roles.<name>.model`: default model string (optional)
 - `roles.<name>.models`: fan-out list for `conductor.run_batch` (string or `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: optional reasoning config (codex supports `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd overrides
 - `roles.<name>.timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role overrides
 
-Example:
+Defaults (if omitted):
+- `codex`: args `["exec","{prompt}"]`, model flag `-m`, reasoning flag `-c model_reasoning_effort`
+- `claude`: args `["-p","{prompt}"]`, model flag `--model`
+- `gemini`: args `["{prompt}"]`, model flag `--model`
+
+Minimal example:
 ```json
 {
   "roles": {
     "oracle": {
-      "cli": "codex",
-      "args": ["exec", "{prompt}"],
-      "model_flag": "-m",
-      "model": "gpt-5.2-codex",
-      "reasoning_flag": "-c",
-      "reasoning_key": "model_reasoning_effort",
-      "reasoning": "high"
+      "cli": "codex"
     }
   }
 }
@@ -163,7 +162,6 @@ Example:
 Overrides:
 - `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "prompt": "<task>" }`
 - `conductor.run_batch` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "prompt": "<task>" }`
-  (model overrides apply only to `roles` mode, not `agents`)
 - `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` or `CONDUCTOR_CONFIG=/path/to/conductor.json`
 Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
 Schema: `config/conductor.schema.json` (optional for tooling).

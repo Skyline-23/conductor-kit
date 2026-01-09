@@ -22,8 +22,7 @@ Do the following:
   - After delegation, print a user-visible line with agents: `Delegation results received: <agents>`.
   - For audit, use `conductor.run_history` or `conductor.run_info`.
 - For long tasks, use `conductor.run_async` and poll with `conductor.run_status` or `conductor.run_wait`.
-- If a daemon is running, list/approve runs with `conductor.queue_list` and `conductor.approval_*`.
-- Follow oh-my-opencode-inspired policy: kick off background delegates early and don’t finalize until their results are integrated.
+  - If a daemon is running, list/approve runs with `conductor.queue_list` and `conductor.approval_*`.
 - Run the full orchestration loop: search -> plan -> execute -> verify -> cleanup.
 - Always produce a short plan (3-6 steps) before any edits.
 - Make small, safe changes; prefer reuse over new dependencies.

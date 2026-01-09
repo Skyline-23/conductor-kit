@@ -131,28 +131,27 @@ conductor daemon --mode stop
 - `daemon.max_parallel`: 데몬 동시 실행 제한 (기본값: `defaults.max_parallel`)
 - `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
 - `daemon.approval.required`: 전체 승인 강제
-- `daemon.approval.roles` / `daemon.approval.agents`: 특정 역할/에이전트 승인 강제
+- `daemon.approval.roles` / `daemon.approval.agents`: 특정 역할/CLI 에이전트 승인 강제
 - `roles.<name>.cli`: 실행할 CLI (PATH에 있어야 함)
-- `roles.<name>.args`: argv 템플릿; `{prompt}` 위치에 프롬프트 삽입
-- `roles.<name>.model_flag`: 모델 플래그 (codex는 `-m`, claude/gemini는 `--model`)
+- `roles.<name>.args`: argv 템플릿; `{prompt}` 위치에 프롬프트 삽입 (codex/claude/gemini는 생략 가능)
+- `roles.<name>.model_flag`: 모델 플래그 (codex/claude/gemini는 생략 가능)
 - `roles.<name>.model`: 기본 모델 문자열 (선택)
 - `roles.<name>.models`: `conductor.run_batch`용 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd 오버라이드
 - `roles.<name>.timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role 오버라이드
 
-예시:
+기본값(생략 시):
+- `codex`: args `["exec","{prompt}"]`, model flag `-m`, reasoning flag `-c model_reasoning_effort`
+- `claude`: args `["-p","{prompt}"]`, model flag `--model`
+- `gemini`: args `["{prompt}"]`, model flag `--model`
+
+최소 예시:
 ```json
 {
   "roles": {
     "oracle": {
-      "cli": "codex",
-      "args": ["exec", "{prompt}"],
-      "model_flag": "-m",
-      "model": "gpt-5.2-codex",
-      "reasoning_flag": "-c",
-      "reasoning_key": "model_reasoning_effort",
-      "reasoning": "high"
+      "cli": "codex"
     }
   }
 }
@@ -161,7 +160,6 @@ conductor daemon --mode stop
 오버라이드:
 - `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "prompt": "<task>" }`
 - `conductor.run_batch` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "prompt": "<task>" }`
-  (`model` 오버라이드는 `roles` 모드에서만 적용됨, `agents`는 제외)
 - `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` 또는 `CONDUCTOR_CONFIG=/path/to/conductor.json`
 팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
 스키마: `config/conductor.schema.json` (툴링용 선택 사항)
