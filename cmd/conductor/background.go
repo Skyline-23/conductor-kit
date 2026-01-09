@@ -82,6 +82,10 @@ func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverrid
 	if !ok {
 		return CmdSpec{}, fmt.Errorf("Missing role config for: %s", role)
 	}
+	roleCfg, err := normalizeRoleConfig(roleCfg)
+	if err != nil {
+		return CmdSpec{}, err
+	}
 	defaults := normalizeDefaults(cfg.Defaults)
 	model := modelOverride
 	if model == "" {
@@ -624,9 +628,12 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func runBatch(prompt, roles, agents, configPath, modelOverride, reasoningOverride string, timeoutMs int) (map[string]interface{}, error) {
+func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs int) (map[string]interface{}, error) {
 	if prompt == "" {
 		return nil, errors.New("Missing prompt")
+	}
+	if roles == "" {
+		return nil, errors.New("Missing roles")
 	}
 	configPath = resolveConfigPath(configPath)
 
@@ -656,64 +663,38 @@ func runBatch(prompt, roles, agents, configPath, modelOverride, reasoningOverrid
 	logPrompt := defaults.LogPrompt
 	maxParallel := defaults.MaxParallel
 
-	if roles != "" {
-		roleNames := []string{}
-		if roles == "auto" {
-			for k := range cfg.Roles {
-				roleNames = append(roleNames, k)
-			}
-		} else {
-			roleNames = splitList(roles)
-		}
-		if len(roleNames) == 0 {
-			return map[string]interface{}{"status": "no_roles"}, nil
-		}
-		agentList = roleNames
-
-		for _, role := range roleNames {
-			roleCfg := cfg.Roles[role]
-			if roleCfg.MaxParallel > 0 && roleCfg.MaxParallel < maxParallel {
-				maxParallel = roleCfg.MaxParallel
-			}
-			models := expandModelEntries(roleCfg, modelOverride, reasoningOverride)
-			if len(models) == 0 {
-				models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
-			}
-			for _, entry := range models {
-				spec, err := buildSpecFromRole(cfg, role, prompt, entry.Name, entry.ReasoningEffort, logPrompt)
-				if err != nil {
-					results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
-					continue
-				}
-				if timeoutMs > 0 {
-					spec.TimeoutMs = timeoutMs
-				}
-				entries = append(entries, specEntry{agent: role, spec: spec})
-			}
+	roleNames := []string{}
+	if roles == "auto" {
+		for k := range cfg.Roles {
+			roleNames = append(roleNames, k)
 		}
 	} else {
-		agentArg := agents
-		if agentArg == "" {
-			agentArg = "auto"
+		roleNames = splitList(roles)
+	}
+	if len(roleNames) == 0 {
+		return map[string]interface{}{"status": "no_roles"}, nil
+	}
+	agentList = roleNames
+
+	for _, role := range roleNames {
+		roleCfg := cfg.Roles[role]
+		if roleCfg.MaxParallel > 0 && roleCfg.MaxParallel < maxParallel {
+			maxParallel = roleCfg.MaxParallel
 		}
-		if agentArg == "auto" {
-			agentList = detectAgents()
-		} else {
-			agentList = splitList(agentArg)
+		models := expandModelEntries(roleCfg, modelOverride, reasoningOverride)
+		if len(models) == 0 {
+			models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
 		}
-		if len(agentList) == 0 {
-			return map[string]interface{}{"status": "no_agents", "note": "No CLI agents detected. Install codex/claude/gemini or pass agents."}, nil
-		}
-		for _, agent := range agentList {
-			spec, err := buildSpecFromAgent(agent, prompt, defaults, logPrompt)
+		for _, entry := range models {
+			spec, err := buildSpecFromRole(cfg, role, prompt, entry.Name, entry.ReasoningEffort, logPrompt)
 			if err != nil {
-				results = append(results, map[string]interface{}{"agent": agent, "status": "error", "error": err.Error()})
+				results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
 				continue
 			}
 			if timeoutMs > 0 {
 				spec.TimeoutMs = timeoutMs
 			}
-			entries = append(entries, specEntry{agent: agent, spec: spec})
+			entries = append(entries, specEntry{agent: role, spec: spec})
 		}
 	}
 
@@ -757,7 +738,7 @@ func runBatch(prompt, roles, agents, configPath, modelOverride, reasoningOverrid
 		"count":        len(results),
 		"max_parallel": maxParallel,
 		"warning": func() interface{} {
-			if roles == "" && (modelOverride != "" || reasoningOverride != "") {
+			if modelOverride != "" || reasoningOverride != "" {
 				return "Model overrides apply only to roles mode"
 			}
 			return nil
@@ -765,9 +746,12 @@ func runBatch(prompt, roles, agents, configPath, modelOverride, reasoningOverrid
 	}, nil
 }
 
-func runBatchAsync(prompt, roles, agents, configPath, modelOverride, reasoningOverride string, timeoutMs int) (map[string]interface{}, error) {
+func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs int) (map[string]interface{}, error) {
 	if prompt == "" {
 		return nil, errors.New("Missing prompt")
+	}
+	if roles == "" {
+		return nil, errors.New("Missing roles")
 	}
 	configPath = resolveConfigPath(configPath)
 
@@ -796,61 +780,35 @@ func runBatchAsync(prompt, roles, agents, configPath, modelOverride, reasoningOv
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 
-	if roles != "" {
-		roleNames := []string{}
-		if roles == "auto" {
-			for k := range cfg.Roles {
-				roleNames = append(roleNames, k)
-			}
-		} else {
-			roleNames = splitList(roles)
-		}
-		if len(roleNames) == 0 {
-			return map[string]interface{}{"status": "no_roles"}, nil
-		}
-		agentList = roleNames
-
-		for _, role := range roleNames {
-			roleCfg := cfg.Roles[role]
-			models := expandModelEntries(roleCfg, modelOverride, reasoningOverride)
-			if len(models) == 0 {
-				models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
-			}
-			for _, entry := range models {
-				spec, err := buildSpecFromRole(cfg, role, prompt, entry.Name, entry.ReasoningEffort, logPrompt)
-				if err != nil {
-					results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
-					continue
-				}
-				if timeoutMs > 0 {
-					spec.TimeoutMs = timeoutMs
-				}
-				entries = append(entries, specEntry{agent: role, spec: spec})
-			}
+	roleNames := []string{}
+	if roles == "auto" {
+		for k := range cfg.Roles {
+			roleNames = append(roleNames, k)
 		}
 	} else {
-		agentArg := agents
-		if agentArg == "" {
-			agentArg = "auto"
+		roleNames = splitList(roles)
+	}
+	if len(roleNames) == 0 {
+		return map[string]interface{}{"status": "no_roles"}, nil
+	}
+	agentList = roleNames
+
+	for _, role := range roleNames {
+		roleCfg := cfg.Roles[role]
+		models := expandModelEntries(roleCfg, modelOverride, reasoningOverride)
+		if len(models) == 0 {
+			models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
 		}
-		if agentArg == "auto" {
-			agentList = detectAgents()
-		} else {
-			agentList = splitList(agentArg)
-		}
-		if len(agentList) == 0 {
-			return map[string]interface{}{"status": "no_agents", "note": "No CLI agents detected. Install codex/claude/gemini or pass agents."}, nil
-		}
-		for _, agent := range agentList {
-			spec, err := buildSpecFromAgent(agent, prompt, defaults, logPrompt)
+		for _, entry := range models {
+			spec, err := buildSpecFromRole(cfg, role, prompt, entry.Name, entry.ReasoningEffort, logPrompt)
 			if err != nil {
-				results = append(results, map[string]interface{}{"agent": agent, "status": "error", "error": err.Error()})
+				results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
 				continue
 			}
 			if timeoutMs > 0 {
 				spec.TimeoutMs = timeoutMs
 			}
-			entries = append(entries, specEntry{agent: agent, spec: spec})
+			entries = append(entries, specEntry{agent: role, spec: spec})
 		}
 	}
 
@@ -870,18 +828,4 @@ func runBatchAsync(prompt, roles, agents, configPath, modelOverride, reasoningOv
 		"results": results,
 		"count":   len(results),
 	}, nil
-}
-
-func detectAgents() []string {
-	out := []string{}
-	if isCommandAvailable("codex") {
-		out = append(out, "codex")
-	}
-	if isCommandAvailable("claude") {
-		out = append(out, "claude")
-	}
-	if isCommandAvailable("gemini") {
-		out = append(out, "gemini")
-	}
-	return out
 }

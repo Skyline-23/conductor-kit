@@ -197,7 +197,7 @@ func runMCP(args []string) int {
 }
 
 func runBatchTool(input BatchInput) (map[string]interface{}, error) {
-	return runBatch(input.Prompt, input.Roles, input.Agents, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
+	return runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
 }
 
 func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
@@ -209,40 +209,29 @@ func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
 			}
 		}
 	}
-	return runBatchAsync(input.Prompt, input.Roles, input.Agents, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
+	return runBatchAsync(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
 }
 
 func runTool(input RunInput) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
-	if input.Role == "" && input.Agent == "" {
-		return nil, errors.New("Missing role or agent")
+	if input.Role == "" {
+		return nil, errors.New("Missing role")
 	}
 	configPath := resolveConfigPath(input.Config)
 
 	var cfg Config
 	var err error
-	if input.Role != "" {
-		cfg, err = loadConfig(configPath)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		cfg, err = loadConfigOrEmpty(configPath)
-		if err != nil {
-			return nil, err
-		}
+	cfg, err = loadConfig(configPath)
+	if err != nil {
+		return nil, err
 	}
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 
 	var spec CmdSpec
-	if input.Role != "" {
-		spec, err = buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
-	} else {
-		spec, err = buildSpecFromAgent(input.Agent, input.Prompt, defaults, logPrompt)
-	}
+	spec, err = buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
 	if err != nil {
 		return nil, err
 	}
@@ -256,8 +245,8 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
-	if input.Role == "" && input.Agent == "" {
-		return nil, errors.New("Missing role or agent")
+	if input.Role == "" {
+		return nil, errors.New("Missing role")
 	}
 	configPath := resolveConfigPath(input.Config)
 	if !input.NoDaemon {
@@ -270,26 +259,15 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 
 	var cfg Config
 	var err error
-	if input.Role != "" {
-		cfg, err = loadConfig(configPath)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		cfg, err = loadConfigOrEmpty(configPath)
-		if err != nil {
-			return nil, err
-		}
+	cfg, err = loadConfig(configPath)
+	if err != nil {
+		return nil, err
 	}
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 
 	var spec CmdSpec
-	if input.Role != "" {
-		spec, err = buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
-	} else {
-		spec, err = buildSpecFromAgent(input.Agent, input.Prompt, defaults, logPrompt)
-	}
+	spec, err = buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
 	if err != nil {
 		return nil, err
 	}

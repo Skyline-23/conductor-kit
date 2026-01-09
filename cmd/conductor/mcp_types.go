@@ -3,7 +3,6 @@ package main
 type BatchInput struct {
 	Prompt          string `json:"prompt"`
 	Roles           string `json:"roles,omitempty"`
-	Agents          string `json:"agents,omitempty"`
 	Model           string `json:"model,omitempty"`
 	Reasoning       string `json:"reasoning,omitempty"`
 	Config          string `json:"config,omitempty"`
@@ -16,7 +15,6 @@ type BatchInput struct {
 type RunInput struct {
 	Prompt          string `json:"prompt"`
 	Role            string `json:"role,omitempty"`
-	Agent           string `json:"agent,omitempty"`
 	Model           string `json:"model,omitempty"`
 	Reasoning       string `json:"reasoning,omitempty"`
 	Config          string `json:"config,omitempty"`

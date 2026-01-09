@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
@@ -57,6 +58,58 @@ type RoleConfig struct {
 type ModelEntry struct {
 	Name            string
 	ReasoningEffort string
+}
+
+type roleDefaults struct {
+	args          []string
+	modelFlag     string
+	reasoningFlag string
+	reasoningKey  string
+}
+
+func resolveRoleDefaults(cli string) (roleDefaults, bool) {
+	switch cli {
+	case "codex":
+		return roleDefaults{
+			args:          []string{"exec", "{prompt}"},
+			modelFlag:     "-m",
+			reasoningFlag: "-c",
+			reasoningKey:  "model_reasoning_effort",
+		}, true
+	case "claude":
+		return roleDefaults{
+			args:      []string{"-p", "{prompt}"},
+			modelFlag: "--model",
+		}, true
+	case "gemini":
+		return roleDefaults{
+			args:      []string{"{prompt}"},
+			modelFlag: "--model",
+		}, true
+	default:
+		return roleDefaults{}, false
+	}
+}
+
+func normalizeRoleConfig(role RoleConfig) (RoleConfig, error) {
+	if role.CLI == "" {
+		return role, fmt.Errorf("Missing cli for role")
+	}
+	defaults, ok := resolveRoleDefaults(role.CLI)
+	if len(role.Args) == 0 {
+		if !ok {
+			return role, fmt.Errorf("Missing args for cli: %s", role.CLI)
+		}
+		role.Args = append([]string{}, defaults.args...)
+	}
+	if role.ModelFlag == "" && ok {
+		role.ModelFlag = defaults.modelFlag
+	}
+	if role.ReasoningFlag == "" && role.ReasoningKey == "" && ok {
+		role.ReasoningFlag = defaults.reasoningFlag
+		role.ReasoningKey = defaults.reasoningKey
+	}
+	return role, nil
 }
 
 func (m *ModelEntry) UnmarshalJSON(data []byte) error {

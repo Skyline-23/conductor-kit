@@ -215,8 +215,8 @@ func (d *Daemon) handleRun(configPath string) http.HandlerFunc {
 			http.Error(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
-		if input.Prompt == "" || (input.Role == "" && input.Agent == "") {
-			http.Error(w, "Missing prompt or role/agent", http.StatusBadRequest)
+		if input.Prompt == "" || input.Role == "" {
+			http.Error(w, "Missing prompt or role", http.StatusBadRequest)
 			return
 		}
 		spec, err := buildSpecForInput(input, configPath)
@@ -259,8 +259,8 @@ func (d *Daemon) handleRunBatch(configPath string) http.HandlerFunc {
 			http.Error(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
-		if input.Prompt == "" {
-			http.Error(w, "Missing prompt", http.StatusBadRequest)
+		if input.Prompt == "" || input.Roles == "" {
+			http.Error(w, "Missing prompt or roles", http.StatusBadRequest)
 			return
 		}
 		entries, err := buildBatchSpecs(input, configPath)
@@ -777,21 +777,14 @@ func buildSpecForInput(input RunInput, configPath string) (CmdSpec, error) {
 	}
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
-	if input.Role != "" {
-		cfg, err = loadConfig(configPath)
-		if err != nil {
-			return CmdSpec{}, err
-		}
-		spec, err := buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
-		if err != nil {
-			return CmdSpec{}, err
-		}
-		if input.TimeoutMs > 0 {
-			spec.TimeoutMs = input.TimeoutMs
-		}
-		return spec, nil
+	if input.Role == "" {
+		return CmdSpec{}, errors.New("missing role")
 	}
-	spec, err := buildSpecFromAgent(input.Agent, input.Prompt, defaults, logPrompt)
+	cfg, err = loadConfig(configPath)
+	if err != nil {
+		return CmdSpec{}, err
+	}
+	spec, err := buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
 	if err != nil {
 		return CmdSpec{}, err
 	}
@@ -803,8 +796,8 @@ func buildSpecForInput(input RunInput, configPath string) (CmdSpec, error) {
 
 func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 	configPath = resolveConfigPath(configPath)
-	if input.Roles == "" && input.Agents == "" {
-		input.Agents = "auto"
+	if input.Roles == "" {
+		return nil, errors.New("missing roles")
 	}
 
 	results := []specEntry{}
@@ -812,67 +805,40 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 
 	var cfg Config
 	var err error
-	if input.Roles != "" {
-		cfg, err = loadConfig(configPath)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		cfg, err = loadConfigOrEmpty(configPath)
-		if err != nil {
-			return nil, err
-		}
+	cfg, err = loadConfig(configPath)
+	if err != nil {
+		return nil, err
 	}
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 
-	if input.Roles != "" {
-		roleNames := []string{}
-		if input.Roles == "auto" {
-			for k := range cfg.Roles {
-				roleNames = append(roleNames, k)
-			}
-		} else {
-			roleNames = splitList(input.Roles)
-		}
-		if len(roleNames) == 0 {
-			return nil, errors.New("no_roles")
-		}
-		agentList = roleNames
-		for _, role := range roleNames {
-			roleCfg := cfg.Roles[role]
-			models := expandModelEntries(roleCfg, input.Model, input.Reasoning)
-			if len(models) == 0 {
-				models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
-			}
-			for _, entry := range models {
-				spec, err := buildSpecFromRole(cfg, role, input.Prompt, entry.Name, entry.ReasoningEffort, logPrompt)
-				if err != nil {
-					continue
-				}
-				if input.TimeoutMs > 0 {
-					spec.TimeoutMs = input.TimeoutMs
-				}
-				results = append(results, specEntry{agent: role, spec: spec})
-			}
+	roleNames := []string{}
+	if input.Roles == "auto" {
+		for k := range cfg.Roles {
+			roleNames = append(roleNames, k)
 		}
 	} else {
-		agentList = splitList(input.Agents)
-		if input.Agents == "auto" || len(agentList) == 0 {
-			agentList = detectAgents()
+		roleNames = splitList(input.Roles)
+	}
+	if len(roleNames) == 0 {
+		return nil, errors.New("no_roles")
+	}
+	agentList = roleNames
+	for _, role := range roleNames {
+		roleCfg := cfg.Roles[role]
+		models := expandModelEntries(roleCfg, input.Model, input.Reasoning)
+		if len(models) == 0 {
+			models = []ModelEntry{{Name: roleCfg.Model, ReasoningEffort: roleCfg.Reasoning}}
 		}
-		if len(agentList) == 0 {
-			return nil, errors.New("no_agents")
-		}
-		for _, agent := range agentList {
-			spec, err := buildSpecFromAgent(agent, input.Prompt, defaults, logPrompt)
+		for _, entry := range models {
+			spec, err := buildSpecFromRole(cfg, role, input.Prompt, entry.Name, entry.ReasoningEffort, logPrompt)
 			if err != nil {
 				continue
 			}
 			if input.TimeoutMs > 0 {
 				spec.TimeoutMs = input.TimeoutMs
 			}
-			results = append(results, specEntry{agent: agent, spec: spec})
+			results = append(results, specEntry{agent: role, spec: spec})
 		}
 	}
 	_ = agentList
