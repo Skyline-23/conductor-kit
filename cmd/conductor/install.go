@@ -104,6 +104,8 @@ func runInstall(args []string) int {
 			"conductor",
 			"conductor-kit",
 			"conductor-kit-install",
+			"conductor-config-validate",
+			"conductor-doctor",
 			"conductor-mcp",
 		}
 		for _, name := range aliases {
