@@ -1,7 +1,7 @@
 # conductor-kit
 
 A global skills pack and lightweight Go helper for **Codex CLI** and **Claude Code**.
-It enforces a consistent orchestration loop (search -> plan -> execute -> verify -> cleanup) and supports optional background delegation.
+It enforces a consistent orchestration loop (search -> plan -> execute -> verify -> cleanup) and supports parallel delegation via MCP tool calls.
 
 **Language**: English | [한국어](README.ko.md)
 
@@ -26,14 +26,14 @@ conductor install --mode link --repo ~/.conductor-kit
 
 ## Requirements
 - A host CLI: Codex CLI or Claude Code (skills/commands run inside these hosts).
-- For background tasks, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
+- For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
 - `codex` CLI if you want to register MCP tools (`codex mcp add ...`).
 
 ## What you get
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)
 - **Commands**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
-- **Go helper**: `conductor` binary for install + background tasks + MCP server
+- **Go helper**: `conductor` binary for install + MCP server + delegation tools
 - **Config**: `~/.conductor-kit/conductor.json` (role -> CLI/model mapping)
 
 ## Usage
@@ -47,26 +47,17 @@ Trigger by saying: `conductor`, `ultrawork` / `ulw`, or “orchestration”.
 - `/conductor-release`
 - `/conductor-ultrawork`
 
-### 3) Background delegation
+### 3) Parallel delegation (MCP-only)
 ```bash
-# auto-detect installed CLIs
-conductor background-batch --prompt "<task>"
-
-# role-based (from ~/.conductor-kit/conductor.json)
-conductor background-batch --roles auto --prompt "<task>"
-
-# model override (single or comma list)
-conductor background-batch --roles oracle \
-  --model gpt-5.2-codex,gpt-5.2-codex-mini \
-  --reasoning xhigh \
-  --prompt "<task>"
-
-# read output
-conductor background-output --task-id <id>
-
-# cancel all
-conductor background-cancel --all
+codex mcp add conductor -- conductor mcp
 ```
+
+Then use tools:
+- `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }`
+- Run multiple `conductor.run` tool calls in parallel (host handles concurrency)
+- `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
+
+Note: Delegation tools are MCP-only; no CLI subcommands are provided.
 
 ## Model setup (roles)
 `~/.conductor-kit/conductor.json` controls role -> CLI/model routing (installed from `config/conductor.json`).
@@ -78,7 +69,7 @@ Key fields:
 - `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go
 - `roles.<name>.model_flag`: model flag (e.g. `-m` for codex, `--model` for claude/gemini)
 - `roles.<name>.model`: default model string (optional)
-- `roles.<name>.models`: fan-out list for `background-batch --roles ...` (string or `{ "name": "...", "reasoning_effort": "..." }`)
+- `roles.<name>.models`: fan-out list for `conductor.run_batch` (string or `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: optional reasoning config (codex supports `-c model_reasoning_effort`)
 
 Example:
@@ -99,21 +90,19 @@ Example:
 ```
 
 Overrides:
-- `conductor background-task --role <role> --model <model> --reasoning <level>`
-- `conductor background-batch --roles <role(s)> --model <model[,model]> --reasoning <level>`
-  (model overrides apply only to `--roles` mode, not `--agents`)
-- `conductor background-batch --config /path/to/conductor.json` or `CONDUCTOR_CONFIG=/path/to/conductor.json`
+- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "prompt": "<task>" }`
+- `conductor.run_batch` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "prompt": "<task>" }`
+  (model overrides apply only to `roles` mode, not `agents`)
+- `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` or `CONDUCTOR_CONFIG=/path/to/conductor.json`
 Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
 
-## MCP tools (optional)
+## MCP tools (recommended for tool-calling UI)
 ```bash
 codex mcp add conductor -- conductor mcp
 ```
 Tools:
-- `conductor.background_task`
-- `conductor.background_batch`
-- `conductor.background_output`
-- `conductor.background_cancel`
+- `conductor.run`
+- `conductor.run_batch`
 
 ## Repo layout
 ```

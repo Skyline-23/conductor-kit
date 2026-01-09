@@ -9,16 +9,17 @@ MANDATORY: Your first response must start with "ULTRAWORK MODE ENABLED!".
 Treat `ulw` as an alias of `ultrawork`. Do not ask what it means.
 
 Do the following:
-- AUTO-DELEGATE BY DEFAULT VIA BACKGROUND TASKS:
-  - Launch background tasks for roles (auto) via:
-    - `conductor background-batch --roles auto --prompt "$ARGUMENTS"`
-  - If needed, override roles: `conductor background-batch --roles oracle,librarian,explore --prompt "$ARGUMENTS"`
-  - If the command is not found, use its full path (e.g., `~/.local/bin/conductor-background-task`) or add the bin directory to PATH.
+- AUTO-DELEGATE BY DEFAULT VIA MCP TOOL CALLS:
+  - Prefer parallel tool calls when supported by the host:
+    - Call `conductor.run` with `{ "role": "oracle", "prompt": "$ARGUMENTS" }`
+    - Call `conductor.run` with `{ "role": "librarian", "prompt": "$ARGUMENTS" }`
+  - Or use a single batch call:
+    - Call `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "$ARGUMENTS" }`
+  - Ensure the MCP server is registered (`codex mcp add conductor -- conductor mcp`) and `conductor` is on PATH.
   - If binaries are missing, build the Go helper and install aliases:
     - `go build -o ~/.local/bin/conductor ./cmd/conductor`
     - `conductor install --mode link --repo /path/to/conductor-kit --force`
-  - After launching, print a user-visible line with task IDs: `Background tasks started: <task_ids>`.
-  - Continue work while they run; pull results with `conductor-background-output --task-id <id>`.
+  - After delegation, print a user-visible line with agents: `Delegation results received: <agents>`.
 - Run the full orchestration loop: search -> plan -> execute -> verify -> cleanup.
 - Always produce a short plan (3-6 steps) before any edits.
 - Make small, safe changes; prefer reuse over new dependencies.

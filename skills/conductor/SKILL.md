@@ -109,12 +109,15 @@ If the host supports it, prefer its native model switching first; delegate only 
 - Run the full loop: search -> plan -> execute -> verify -> cleanup.
 - Always plan before edits; keep changes minimal and verifiable.
 - If the user includes `ultrawork` or `ulw`, respond first with "ULTRAWORK MODE ENABLED!" and do not question the alias.
-- Auto-delegate by default using background tasks:
-  - `conductor background-batch --roles auto --prompt "<request>"` (roles from `~/.conductor-kit/conductor.json`)
-  - Override roles if needed: `conductor background-batch --roles oracle,librarian,explore --prompt "<request>"`
-  - Override model/reasoning if needed: `conductor background-batch --roles oracle --model <model> --reasoning <level> --prompt "<request>"`
-  - Continue while they run; retrieve with `conductor-background-output --task-id <id>`.
-  - Always print a user-visible line after launch: `Background tasks started: <task_ids>` (no raw logs).
+- Auto-delegate by default using MCP tool calls (shows host tool-calling UI):
+  - Prefer parallel tool calls when supported by the host:
+    - `conductor.run` with `{ "role": "oracle", "prompt": "<request>" }`
+    - `conductor.run` with `{ "role": "librarian", "prompt": "<request>" }`
+  - Or use a single batch call:
+    - `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<request>" }`
+    - Override model/reasoning: `{ "roles": "oracle", "model": "<model>", "reasoning": "<level>", "prompt": "<request>" }`
+  - Delegation is MCP-only; do not use CLI `background-*` commands.
+  - Always print a user-visible line after delegation: `Delegation results received: <agents>` (no raw logs).
 
 ## Safety rules (non-negotiable)
 - Never commit/push unless explicitly asked.
