@@ -1,20 +1,19 @@
 package main
 
 import (
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
 )
 
 var (
-	pathExtPattern = regexp.MustCompile(`(?i)(^|\\s)([\\w./-]+\\.(go|mod|sum|md|markdown|json|yaml|yml|toml|ini|cfg|conf|ts|tsx|js|jsx|mjs|cjs|py|rb|java|kt|swift|c|cc|cpp|h|hpp|rs|lua|sh|zsh|bash|sql|csv|tsv|log|txt|xml|html|css|scss|sass|less))`)
+	rolesJSONPattern = regexp.MustCompile(`(?s)\\[(.*?)\\]`)
 )
 
 func autoSelectRoles(prompt string, cfg Config) []string {
-	available := map[string]bool{}
-	for name := range cfg.Roles {
-		available[name] = true
-	}
+	routing := normalizeRouting(cfg.Routing)
+	available := availableRoles(cfg)
 	add := func(out []string, role string) []string {
 		if !available[role] {
 			return out
@@ -27,26 +26,26 @@ func autoSelectRoles(prompt string, cfg Config) []string {
 		return append(out, role)
 	}
 
-	text := strings.ToLower(prompt)
 	out := []string{}
+	text := strings.ToLower(prompt)
 
-	// Always include the coordinator if configured.
-	out = add(out, "oracle")
+	for _, role := range routing.Always {
+		out = add(out, role)
+	}
 
-	if shouldUseLibrarian(prompt, text) {
-		out = add(out, "librarian")
+	if strings.EqualFold(routing.Strategy, "oracle") {
+		if roles, ok := selectRolesWithOracle(prompt, cfg, routing, available); ok {
+			for _, role := range roles {
+				out = add(out, role)
+			}
+			if len(out) > 0 {
+				return out
+			}
+		}
 	}
-	if containsAny(text, exploreKeywords()) {
-		out = add(out, "explore")
-	}
-	if containsAny(text, uiKeywords()) {
-		out = add(out, "frontend-ui-ux-engineer")
-	}
-	if containsAny(text, docKeywords()) {
-		out = add(out, "document-writer")
-	}
-	if containsAny(text, multimodalKeywords()) {
-		out = add(out, "multimodal-looker")
+
+	for _, role := range selectRolesByHints(prompt, cfg, routing, available) {
+		out = add(out, role)
 	}
 
 	for name := range cfg.Roles {
@@ -56,71 +55,178 @@ func autoSelectRoles(prompt string, cfg Config) []string {
 	}
 
 	if len(out) == 0 {
-		roles := make([]string, 0, len(cfg.Roles))
-		for name := range cfg.Roles {
-			roles = append(roles, name)
-		}
-		sort.Strings(roles)
-		out = append(out, roles...)
+		out = append(out, sortedRoles(cfg)...)
 	}
 	return out
 }
 
-func shouldUseLibrarian(prompt, lowered string) bool {
-	if containsAny(lowered, librarianKeywords()) {
-		return true
+func selectRolesWithOracle(prompt string, cfg Config, routing RoutingConfig, available map[string]bool) ([]string, bool) {
+	router := routing.RouterRole
+	if router == "" {
+		router = "oracle"
 	}
-	if pathExtPattern.MatchString(prompt) {
-		return true
+	roleCfg, ok := cfg.Roles[router]
+	if !ok || roleCfg.CLI == "" {
+		return nil, false
 	}
-	if strings.Contains(prompt, "/") || strings.Contains(prompt, `\`) {
-		return true
+	if !isCommandAvailable(roleCfg.CLI) {
+		return nil, false
 	}
-	return false
+
+	roleNames := sortedRoles(cfg)
+	roleHints := buildRoleHints(roleNames, routing.Hints)
+	routerPrompt := buildRouterPrompt(prompt, roleNames, roleHints)
+
+	defaults := normalizeDefaults(cfg.Defaults)
+	spec, err := buildSpecFromRole(cfg, router, routerPrompt, "", "", defaults.LogPrompt)
+	if err != nil {
+		return nil, false
+	}
+	res, err := runCommand(spec)
+	if err != nil {
+		return nil, false
+	}
+	stdout, _ := res["stdout"].(string)
+	roles := parseRoleList(stdout, available)
+	if len(roles) == 0 {
+		return nil, false
+	}
+	return roles, true
 }
 
-func containsAny(text string, keywords []string) bool {
-	for _, k := range keywords {
-		if k != "" && strings.Contains(text, k) {
-			return true
+func selectRolesByHints(prompt string, cfg Config, routing RoutingConfig, available map[string]bool) []string {
+	lower := strings.ToLower(prompt)
+	out := []string{}
+	add := func(role string) {
+		if !available[role] {
+			return
+		}
+		for _, existing := range out {
+			if existing == role {
+				return
+			}
+		}
+		out = append(out, role)
+	}
+	for role, hints := range routing.Hints {
+		for _, hint := range hints {
+			h := strings.TrimSpace(strings.ToLower(hint))
+			if h == "" {
+				continue
+			}
+			if strings.Contains(lower, h) {
+				add(role)
+				break
+			}
 		}
 	}
-	return false
+	return out
 }
 
-func librarianKeywords() []string {
-	return []string{
-		"read file", "open file", "open the file", "read the file", "summarize file",
-		"file", "files", "path", "paths", "repo", "repository", "codebase", "source",
-		"파일", "읽", "열어", "경로", "레포", "리포", "코드베이스",
+func normalizeRouting(r RoutingConfig) RoutingConfig {
+	if r.Strategy == "" {
+		r.Strategy = "oracle"
 	}
+	if r.RouterRole == "" {
+		r.RouterRole = "oracle"
+	}
+	if len(r.Always) == 0 {
+		r.Always = []string{"oracle"}
+	}
+	if r.Hints == nil {
+		r.Hints = map[string][]string{}
+	}
+	return r
 }
 
-func exploreKeywords() []string {
-	return []string{
-		"search", "research", "investigate", "compare", "options", "survey", "scan",
-		"find", "discover", "alternative", "benchmark",
-		"검색", "조사", "비교", "대안", "옵션", "찾아", "탐색",
+func availableRoles(cfg Config) map[string]bool {
+	available := map[string]bool{}
+	for name := range cfg.Roles {
+		available[name] = true
 	}
+	return available
 }
 
-func uiKeywords() []string {
-	return []string{
-		"ui", "ux", "design", "frontend", "css", "tailwind", "react", "layout", "component",
-		"디자인", "프론트", "프론트엔드", "레이아웃", "컴포넌트",
+func sortedRoles(cfg Config) []string {
+	roles := make([]string, 0, len(cfg.Roles))
+	for name := range cfg.Roles {
+		roles = append(roles, name)
 	}
+	sort.Strings(roles)
+	return roles
 }
 
-func docKeywords() []string {
-	return []string{
-		"doc", "docs", "documentation", "readme", "guide", "manual", "changelog", "release notes",
-		"문서", "가이드", "설명", "릴리즈 노트", "변경 로그",
+func buildRoleHints(roles []string, hints map[string][]string) []string {
+	lines := make([]string, 0, len(roles))
+	for _, role := range roles {
+		if len(hints[role]) == 0 {
+			continue
+		}
+		lines = append(lines, role+": "+strings.Join(hints[role], ", "))
 	}
+	return lines
 }
 
-func multimodalKeywords() []string {
-	return []string{
-		"image", "images", "screenshot", "photo", "diagram", "mockup",
-		"이미지", "사진", "스크린샷", "스샷", "다이어그램",
+func buildRouterPrompt(prompt string, roles, hints []string) string {
+	builder := strings.Builder{}
+	builder.WriteString("You are routing tasks to roles.\n")
+	builder.WriteString("Return ONLY a JSON array of role names.\n")
+	builder.WriteString("Rules:\n")
+	builder.WriteString("- Use only the provided roles.\n")
+	builder.WriteString("- Include multiple roles when useful.\n")
+	builder.WriteString("- If none fit, return an empty array.\n\n")
+	builder.WriteString("Available roles:\n")
+	builder.WriteString(strings.Join(roles, ", "))
+	builder.WriteString("\n\n")
+	if len(hints) > 0 {
+		builder.WriteString("Role hints:\n")
+		builder.WriteString(strings.Join(hints, "\n"))
+		builder.WriteString("\n\n")
 	}
+	builder.WriteString("Task:\n")
+	builder.WriteString(prompt)
+	return builder.String()
+}
+
+func parseRoleList(output string, available map[string]bool) []string {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		return nil
+	}
+	candidates := []string{}
+	if roles := parseRoleJSONArray(trimmed); len(roles) > 0 {
+		candidates = roles
+	} else if match := rolesJSONPattern.FindString(trimmed); match != "" {
+		if roles := parseRoleJSONArray(match); len(roles) > 0 {
+			candidates = roles
+		}
+	}
+	if len(candidates) == 0 {
+		for _, part := range strings.FieldsFunc(trimmed, func(r rune) bool {
+			return r == ',' || r == '\n' || r == '\r' || r == '\t'
+		}) {
+			val := strings.TrimSpace(strings.Trim(part, "\"'"))
+			if val != "" {
+				candidates = append(candidates, val)
+			}
+		}
+	}
+	out := []string{}
+	seen := map[string]bool{}
+	for _, role := range candidates {
+		if !available[role] || seen[role] {
+			continue
+		}
+		seen[role] = true
+		out = append(out, role)
+	}
+	return out
+}
+
+func parseRoleJSONArray(raw string) []string {
+	var roles []string
+	if err := json.Unmarshal([]byte(raw), &roles); err == nil {
+		return roles
+	}
+	return nil
 }

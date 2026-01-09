@@ -8,6 +8,7 @@ import (
 
 type Config struct {
 	Defaults Defaults              `json:"defaults"`
+	Routing  RoutingConfig         `json:"routing"`
 	Roles    map[string]RoleConfig `json:"roles"`
 	Daemon   DaemonConfig          `json:"daemon"`
 }
@@ -18,6 +19,13 @@ type Defaults struct {
 	Retry          int  `json:"retry"`
 	RetryBackoffMs int  `json:"retry_backoff_ms"`
 	LogPrompt      bool `json:"log_prompt"`
+}
+
+type RoutingConfig struct {
+	Strategy   string              `json:"strategy"`
+	RouterRole string              `json:"router_role"`
+	Always     []string            `json:"always"`
+	Hints      map[string][]string `json:"hints"`
 }
 
 type DaemonConfig struct {

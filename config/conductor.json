@@ -6,6 +6,18 @@
     "retry_backoff_ms": 500,
     "log_prompt": false
   },
+  "routing": {
+    "strategy": "oracle",
+    "router_role": "oracle",
+    "always": ["oracle"],
+    "hints": {
+      "librarian": ["read", "open", "file", "path", "repo", "repository", "codebase", "source"],
+      "explore": ["search", "research", "compare", "survey", "scan", "find", "discover", "options"],
+      "frontend-ui-ux-engineer": ["ui", "ux", "design", "frontend", "css", "layout", "component"],
+      "document-writer": ["doc", "docs", "documentation", "readme", "guide", "manual", "changelog", "release notes"],
+      "multimodal-looker": ["image", "images", "screenshot", "photo", "diagram", "mockup"]
+    }
+  },
   "daemon": {
     "host": "127.0.0.1",
     "port": 51842,

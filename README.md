@@ -130,6 +130,10 @@ If `model` is empty, no model flag is passed and the CLI default is used.
 Key fields:
 - `defaults.timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
 - `defaults.log_prompt`: store prompt text in run history (default: false)
+- `routing.strategy`: `oracle` (LLM router) or `heuristic` (keyword hints only)
+- `routing.router_role`: role used to route when `strategy=oracle`
+- `routing.always`: roles always included when auto-routing (e.g., `["oracle"]`)
+- `routing.hints.<role>`: keyword hints for heuristic routing and router context
 - `daemon.host` / `daemon.port`: local daemon bind address
 - `daemon.max_parallel`: daemon worker limit (defaults to `defaults.max_parallel`)
 - `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
