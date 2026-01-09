@@ -56,6 +56,14 @@ func printJSON(payload map[string]interface{}) {
 	fmt.Println(string(out))
 }
 
+func isTerminal(file *os.File) bool {
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
 func conductorBinAliases() []string {
 	return []string{
 		"conductor",
