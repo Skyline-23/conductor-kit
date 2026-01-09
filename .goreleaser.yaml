@@ -58,7 +58,7 @@ brews:
         #!/bin/sh
         exec "#{bin}/conductor" background-batch "$@"
       EOS
-      chmod 0755, bin/"conductor-background-task", bin/"conductor-background-output", bin/"conductor-background-cancel", bin/"conductor-background-batch"
+      chmod 0755, [bin/"conductor-background-task", bin/"conductor-background-output", bin/"conductor-background-cancel", bin/"conductor-background-batch"]
       pkgshare.install "skills", "commands", "config"
     post_install: |
       system "#{bin}/conductor", "install", "--mode", "link", "--repo", "#{pkgshare}", "--force"
