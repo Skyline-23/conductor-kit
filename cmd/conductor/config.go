@@ -8,6 +8,7 @@ import (
 type Config struct {
 	Defaults Defaults              `json:"defaults"`
 	Roles    map[string]RoleConfig `json:"roles"`
+	Daemon   DaemonConfig          `json:"daemon"`
 }
 
 type Defaults struct {
@@ -16,6 +17,24 @@ type Defaults struct {
 	Retry          int  `json:"retry"`
 	RetryBackoffMs int  `json:"retry_backoff_ms"`
 	LogPrompt      bool `json:"log_prompt"`
+}
+
+type DaemonConfig struct {
+	Host        string         `json:"host"`
+	Port        int            `json:"port"`
+	MaxParallel int            `json:"max_parallel"`
+	Queue       QueueConfig    `json:"queue"`
+	Approval    ApprovalConfig `json:"approval"`
+}
+
+type QueueConfig struct {
+	OnModeChange string `json:"on_mode_change"`
+}
+
+type ApprovalConfig struct {
+	Required bool     `json:"required"`
+	Roles    []string `json:"roles"`
+	Agents   []string `json:"agents"`
 }
 
 type RoleConfig struct {

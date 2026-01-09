@@ -354,11 +354,14 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 }
 
 func startAsync(spec CmdSpec) (map[string]interface{}, error) {
+	return startAsyncWithID(newRunID(), spec)
+}
+
+func startAsyncWithID(runID string, spec CmdSpec) (map[string]interface{}, error) {
 	if !isCommandAvailable(spec.Cmd) {
 		return nil, fmt.Errorf("Missing CLI on PATH: %s", spec.Cmd)
 	}
 
-	runID := newRunID()
 	runDir := asyncRunDir(runID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return nil, err

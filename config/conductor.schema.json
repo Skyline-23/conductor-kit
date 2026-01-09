@@ -15,6 +15,40 @@
         "log_prompt": { "type": "boolean" }
       }
     },
+    "daemon": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 0 },
+        "max_parallel": { "type": "integer", "minimum": 0 },
+        "queue": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "on_mode_change": {
+              "type": "string",
+              "enum": ["none", "cancel_pending", "cancel_running"]
+            }
+          }
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": { "type": "boolean" },
+            "roles": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "agents": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
     "roles": {
       "type": "object",
       "minProperties": 1,
