@@ -814,7 +814,7 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 
 	tasks := []DelegatedTask{}
 	if input.Roles == "auto" {
-		tasks = autoPlanTasks(input.Prompt, cfg)
+		tasks = autoPlanTasks(input.Prompt, cfg, effectiveRouterTimeout(input.TimeoutMs))
 	} else {
 		tasks = tasksFromRoles(splitList(input.Roles), input.Prompt)
 	}

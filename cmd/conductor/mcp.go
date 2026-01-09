@@ -202,8 +202,27 @@ func runMCP(args []string) int {
 	return 0
 }
 
+const defaultMcpTimeoutMs = 55000
+
+func effectiveMcpTimeoutMs(timeoutMs int) int {
+	if timeoutMs > 0 {
+		return timeoutMs
+	}
+	return defaultMcpTimeoutMs
+}
+
+func applyTimeout(spec *CmdSpec, timeoutMs int) {
+	if timeoutMs <= 0 {
+		return
+	}
+	if spec.TimeoutMs == 0 || timeoutMs < spec.TimeoutMs {
+		spec.TimeoutMs = timeoutMs
+	}
+}
+
 func runBatchTool(input BatchInput) (map[string]interface{}, error) {
-	return runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
+	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
+	return runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs)
 }
 
 func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
@@ -222,8 +241,9 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
+	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
 	if input.Role == "" || input.Role == "auto" {
-		return runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, input.TimeoutMs)
+		return runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs)
 	}
 	configPath := resolveConfigPath(input.Config)
 
@@ -241,9 +261,7 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	if input.TimeoutMs > 0 {
-		spec.TimeoutMs = input.TimeoutMs
-	}
+	applyTimeout(&spec, timeoutMs)
 	return runCommand(spec)
 }
 

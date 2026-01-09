@@ -17,7 +17,7 @@ type DelegatedTask struct {
 }
 
 func autoSelectRoles(prompt string, cfg Config) []string {
-	tasks := autoPlanTasks(prompt, cfg)
+	tasks := autoPlanTasks(prompt, cfg, 0)
 	roles := []string{}
 	seen := map[string]bool{}
 	for _, task := range tasks {
@@ -30,12 +30,12 @@ func autoSelectRoles(prompt string, cfg Config) []string {
 	return roles
 }
 
-func autoPlanTasks(prompt string, cfg Config) []DelegatedTask {
+func autoPlanTasks(prompt string, cfg Config, routerTimeoutMs int) []DelegatedTask {
 	routing := normalizeRouting(cfg.Routing)
 	available := availableRoles(cfg)
 
 	if strings.EqualFold(routing.Strategy, "oracle") {
-		if tasks, ok := planDelegatedTasks(prompt, cfg, routing, available); ok {
+		if tasks, ok := planDelegatedTasks(prompt, cfg, routing, available, routerTimeoutMs); ok {
 			return tasks
 		}
 	}
@@ -44,7 +44,7 @@ func autoPlanTasks(prompt string, cfg Config) []DelegatedTask {
 	return ensureAlwaysTasks(tasks, routing.Always, prompt, available)
 }
 
-func planDelegatedTasks(prompt string, cfg Config, routing RoutingConfig, available map[string]bool) ([]DelegatedTask, bool) {
+func planDelegatedTasks(prompt string, cfg Config, routing RoutingConfig, available map[string]bool, routerTimeoutMs int) ([]DelegatedTask, bool) {
 	router := routing.RouterRole
 	if router == "" {
 		router = "oracle"
@@ -65,6 +65,9 @@ func planDelegatedTasks(prompt string, cfg Config, routing RoutingConfig, availa
 	if err != nil {
 		return nil, false
 	}
+	if routerTimeoutMs > 0 && (spec.TimeoutMs == 0 || routerTimeoutMs < spec.TimeoutMs) {
+		spec.TimeoutMs = routerTimeoutMs
+	}
 	res, err := runCommand(spec)
 	if err != nil {
 		return nil, false
@@ -76,6 +79,16 @@ func planDelegatedTasks(prompt string, cfg Config, routing RoutingConfig, availa
 		return nil, false
 	}
 	return tasks, true
+}
+
+func effectiveRouterTimeout(timeoutMs int) int {
+	if timeoutMs > 0 {
+		if timeoutMs < 30000 {
+			return timeoutMs
+		}
+		return 30000
+	}
+	return 30000
 }
 
 func normalizeRouting(r RoutingConfig) RoutingConfig {
