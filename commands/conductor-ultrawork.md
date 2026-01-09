@@ -17,6 +17,7 @@ Do the following:
   - If binaries are missing, build the Go helper and install aliases:
     - `go build -o ~/.local/bin/conductor ./cmd/conductor`
     - `conductor install --mode link --repo /path/to/conductor-kit --force`
+  - After launching, print a user-visible line with task IDs: `Background tasks started: <task_ids>`.
   - Continue work while they run; pull results with `conductor-background-output --task-id <id>`.
   - Before final answer, cancel any running tasks with `conductor-background-cancel --all`.
 - Run the full orchestration loop: search -> plan -> execute -> verify -> cleanup.

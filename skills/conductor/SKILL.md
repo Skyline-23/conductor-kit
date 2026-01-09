@@ -115,6 +115,7 @@ If the host supports it, prefer its native model switching first; delegate only 
   - Override model/reasoning if needed: `conductor background-batch --roles oracle --model <model> --reasoning <level> --prompt "<request>"`
   - Continue while they run; retrieve with `conductor-background-output --task-id <id>`.
   - Cancel remaining tasks before final response: `conductor-background-cancel --all`.
+  - Always print a user-visible line after launch: `Background tasks started: <task_ids>` (no raw logs).
 
 ## Safety rules (non-negotiable)
 - Never commit/push unless explicitly asked.
