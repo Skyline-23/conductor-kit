@@ -60,7 +60,7 @@ func runSettings(args []string) int {
 			fmt.Println("Missing --cli or --role for --list-models.")
 			return 1
 		}
-		models, source := listModelsForCLI(targetCLI)
+		models, source := listModelsForCLI(targetCLI, true)
 		if len(models) == 0 {
 			fmt.Printf("No models found for %s.\n", targetCLI)
 			return 1
@@ -214,6 +214,7 @@ func runSettingsInteractive(cfg Config, path string) int {
 		fmt.Println("Config write error:", err.Error())
 		return 1
 	}
+	clearScreen()
 	fmt.Printf("Updated %s\n", path)
 	return 0
 }
@@ -233,7 +234,7 @@ func runSettingsPickModel(cfg Config, path, roleName, cliOverride string, useTui
 	}
 	var model string
 	if useTui && isTerminal(os.Stdin) && isTerminal(os.Stdout) {
-		selection, ok := tuiSelectModel(roleCfg.CLI, roleCfg.Model)
+		selection, ok := tuiSelectModel(roleCfg.CLI, roleCfg.Model, false)
 		if !ok {
 			fmt.Println("No model selected.")
 			return 1
@@ -256,6 +257,7 @@ func runSettingsPickModel(cfg Config, path, roleName, cliOverride string, useTui
 		fmt.Println("Config write error:", err.Error())
 		return 1
 	}
+	clearScreen()
 	fmt.Printf("Updated %s\n", path)
 	return 0
 }
@@ -280,80 +282,107 @@ func runSettingsTUI(cfg Config, path string) int {
 		cfg.Roles = map[string]RoleConfig{}
 	}
 
-	roleName, ok := tuiSelectRole(cfg)
-	if !ok {
-		return 1
-	}
-	if roleName == tuiNewRole {
-		roleName = promptLine(reader, "Role name", "")
-		if roleName == "" {
-			fmt.Println("Missing role name.")
-			return 1
-		}
-	}
+	type step int
+	const (
+		stepRole step = iota
+		stepCLI
+		stepModel
+		stepReasoning
+		stepSave
+	)
 
-	roleCfg := cfg.Roles[roleName]
-	cliChoice, ok := tuiSelectOptions("Select CLI", []tuiOption{
-		{Label: "codex", Value: "codex"},
-		{Label: "claude", Value: "claude"},
-		{Label: "gemini", Value: "gemini"},
-		{Label: "Manual entry", Value: tuiManualValue},
-	}, roleCfg.CLI)
-	if !ok {
-		return 1
-	}
-	if cliChoice == tuiManualValue {
-		cliChoice = promptLine(reader, "CLI", roleCfg.CLI)
-	}
-	if cliChoice != "" {
-		roleCfg.CLI = cliChoice
-	}
-	if roleCfg.CLI == "" {
-		fmt.Println("CLI is required.")
-		return 1
-	}
+	currentStep := stepRole
+	var roleName string
+	var roleCfg RoleConfig
 
-	modelChoice, ok := tuiSelectModel(roleCfg.CLI, roleCfg.Model)
-	if !ok {
-		return 1
-	}
-	if modelChoice == tuiManualValue {
-		modelChoice = promptLine(reader, "Model", roleCfg.Model)
-	}
-	if modelChoice != "" {
-		roleCfg.Model = modelChoice
-	}
-
-	if roleCfg.CLI == "codex" {
-		reasoningChoice, ok := tuiSelectOptions("Reasoning effort", []tuiOption{
-			{Label: "Keep current", Value: tuiKeepValue},
-			{Label: "low", Value: "low"},
-			{Label: "medium", Value: "medium"},
-			{Label: "high", Value: "high"},
-			{Label: "xhigh", Value: "xhigh"},
-			{Label: "Manual entry", Value: tuiManualValue},
-		}, roleCfg.Reasoning)
-		if !ok {
-			return 1
-		}
-		switch reasoningChoice {
-		case tuiKeepValue:
-		case tuiManualValue:
-			roleCfg.Reasoning = promptLine(reader, "Reasoning", roleCfg.Reasoning)
-		default:
-			if reasoningChoice != "" {
-				roleCfg.Reasoning = reasoningChoice
+	for {
+		switch currentStep {
+		case stepRole:
+			selected, ok := tuiSelectRole(cfg)
+			if !ok {
+				clearScreen()
+				return 0
 			}
+			roleName = selected
+			if roleName == tuiNewRole {
+				roleName = promptLine(reader, "Role name", "")
+				if roleName == "" {
+					continue
+				}
+			}
+			roleCfg = cfg.Roles[roleName]
+			currentStep = stepCLI
+		case stepCLI:
+			cliChoice, ok := tuiSelectOptions("Select CLI", []tuiOption{
+				{Label: "codex", Value: "codex"},
+				{Label: "claude", Value: "claude"},
+				{Label: "gemini", Value: "gemini"},
+				{Label: "Manual entry", Value: tuiManualValue},
+			}, roleCfg.CLI)
+			if !ok {
+				currentStep = stepRole
+				continue
+			}
+			if cliChoice == tuiManualValue {
+				cliChoice = promptLine(reader, "CLI", roleCfg.CLI)
+			}
+			if cliChoice != "" {
+				roleCfg.CLI = cliChoice
+			}
+			if roleCfg.CLI == "" {
+				continue
+			}
+			currentStep = stepModel
+		case stepModel:
+			modelChoice, ok := tuiSelectModel(roleCfg.CLI, roleCfg.Model, false)
+			if !ok {
+				currentStep = stepCLI
+				continue
+			}
+			if modelChoice == tuiManualValue {
+				modelChoice = promptLine(reader, "Model", roleCfg.Model)
+			}
+			if modelChoice != "" {
+				roleCfg.Model = modelChoice
+			}
+			if roleCfg.CLI == "codex" {
+				currentStep = stepReasoning
+			} else {
+				currentStep = stepSave
+			}
+		case stepReasoning:
+			reasoningChoice, ok := tuiSelectOptions("Reasoning effort", []tuiOption{
+				{Label: "Keep current", Value: tuiKeepValue},
+				{Label: "low", Value: "low"},
+				{Label: "medium", Value: "medium"},
+				{Label: "high", Value: "high"},
+				{Label: "xhigh", Value: "xhigh"},
+				{Label: "Manual entry", Value: tuiManualValue},
+			}, roleCfg.Reasoning)
+			if !ok {
+				currentStep = stepModel
+				continue
+			}
+			switch reasoningChoice {
+			case tuiKeepValue:
+			case tuiManualValue:
+				roleCfg.Reasoning = promptLine(reader, "Reasoning", roleCfg.Reasoning)
+			default:
+				if reasoningChoice != "" {
+					roleCfg.Reasoning = reasoningChoice
+				}
+			}
+			currentStep = stepSave
+		case stepSave:
+			cfg.Roles[roleName] = roleCfg
+			if err := writeConfig(path, cfg); err != nil {
+				clearScreen()
+				fmt.Println("Config write error:", err.Error())
+				return 1
+			}
+			currentStep = stepRole
 		}
 	}
-
-	cfg.Roles[roleName] = roleCfg
-	if err := writeConfig(path, cfg); err != nil {
-		fmt.Println("Config write error:", err.Error())
-		return 1
-	}
-	fmt.Printf("Updated %s\n", path)
-	return 0
 }
 
 func tuiSelectRole(cfg Config) (string, bool) {
@@ -370,8 +399,8 @@ func tuiSelectRole(cfg Config) (string, bool) {
 	return tuiSelectOptions("Select role", options, "")
 }
 
-func tuiSelectModel(cli, current string) (string, bool) {
-	models, source := listModelsForCLI(cli)
+func tuiSelectModel(cli, current string, allowCLI bool) (string, bool) {
+	models, source := listModelsForCLI(cli, allowCLI)
 	options := make([]tuiOption, 0, len(models)+1)
 	for _, model := range models {
 		options = append(options, tuiOption{Label: model, Value: model})
@@ -407,19 +436,21 @@ func tuiSelectOptions(title string, options []tuiOption, current string) (string
 
 	reader := bufio.NewReader(os.Stdin)
 	render := func() {
-		clearScreen()
-		tuiPrintLine(title)
-		tuiPrintLine("Use Up/Down. Enter to select. Esc to cancel.")
+		lines := make([]string, 0, len(options)+2)
+		lines = append(lines, title)
+		lines = append(lines, "Use Up/Down. Enter to select. Esc to cancel.")
 		for i, opt := range options {
 			line := opt.Label
 			prefix := "  "
 			if i == index {
 				prefix = "> "
-				tuiPrintLine(fmt.Sprintf("\x1b[7m%s%s\x1b[0m", prefix, line))
+				line = fmt.Sprintf("\x1b[7m%s%s\x1b[0m", prefix, line)
 			} else {
-				tuiPrintLine(fmt.Sprintf("%s%s", prefix, line))
+				line = fmt.Sprintf("%s%s", prefix, line)
 			}
+			lines = append(lines, line)
 		}
+		tuiRenderLines(lines)
 	}
 
 	render()
@@ -470,9 +501,11 @@ func showCursor() {
 	fmt.Print("\x1b[?25h")
 }
 
-func tuiPrintLine(line string) {
-	// Ensure we return to column 0 in raw mode and clear the line.
-	fmt.Print("\r\x1b[2K" + line + "\r\n")
+func tuiRenderLines(lines []string) {
+	clearScreen()
+	for i, line := range lines {
+		fmt.Printf("\x1b[%d;1H\x1b[2K%s", i+1, line)
+	}
 }
 
 func promptRole(reader *bufio.Reader, cfg Config) (string, bool) {
@@ -563,7 +596,7 @@ func promptLine(reader *bufio.Reader, label, current string) string {
 }
 
 func promptModel(reader *bufio.Reader, cli, current string) string {
-	models, source := listModelsForCLI(cli)
+	models, source := listModelsForCLI(cli, true)
 	if current != "" && !contains(models, current) {
 		models = append([]string{current}, models...)
 	}
@@ -574,8 +607,8 @@ func promptModel(reader *bufio.Reader, cli, current string) string {
 	return promptChoice(reader, "Select model", models, current, true)
 }
 
-func listModelsForCLI(cli string) ([]string, string) {
-	if isCommandAvailable(cli) {
+func listModelsForCLI(cli string, allowCLI bool) ([]string, string) {
+	if allowCLI && isCommandAvailable(cli) {
 		if models := listModelsFromCLI(cli); len(models) > 0 {
 			return models, "cli"
 		}
