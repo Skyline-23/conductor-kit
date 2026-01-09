@@ -4,14 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 )
 
 func runConfigValidate(args []string) int {
 	fs := flag.NewFlagSet("config-validate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", getenv("CONDUCTOR_CONFIG", filepath.Join(os.Getenv("HOME"), ".conductor-kit", "conductor.json")), "config path")
+	configPath := fs.String("config", resolveConfigPath(""), "config path")
 	if err := fs.Parse(args); err != nil {
 		fmt.Println("Invalid flags.")
 		return 1
@@ -36,7 +34,7 @@ func runConfigValidate(args []string) int {
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config", getenv("CONDUCTOR_CONFIG", filepath.Join(os.Getenv("HOME"), ".conductor-kit", "conductor.json")), "config path")
+	configPath := fs.String("config", resolveConfigPath(""), "config path")
 	if err := fs.Parse(args); err != nil {
 		fmt.Println("Invalid flags.")
 		return 1

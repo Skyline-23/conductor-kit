@@ -15,6 +15,7 @@ func runInstall(args []string) int {
 	mode := fs.String("mode", "link", "link|copy")
 	skillsOnly := fs.Bool("skills-only", false, "install only skills")
 	commandsOnly := fs.Bool("commands-only", false, "install only commands")
+	project := fs.Bool("project", false, "install into local project .claude/.codex")
 	codexHome := fs.String("codex-home", getenv("CODEX_HOME", filepath.Join(os.Getenv("HOME"), ".codex")), "codex home")
 	claudeHome := fs.String("claude-home", filepath.Join(os.Getenv("HOME"), ".claude"), "claude home")
 	binDir := fs.String("bin-dir", getenv("CONDUCTOR_BIN", filepath.Join(os.Getenv("HOME"), ".local", "bin")), "bin dir")
@@ -49,6 +50,15 @@ func runInstall(args []string) int {
 	configSource := filepath.Join(root, "config", "conductor.json")
 	bundlesSource := filepath.Join(root, "config", "mcp-bundles.json")
 	configDest := filepath.Join(os.Getenv("HOME"), ".conductor-kit", "conductor.json")
+	bundlesDest := filepath.Join(os.Getenv("HOME"), ".conductor-kit", "mcp-bundles.json")
+
+	if *project {
+		cwd, _ := os.Getwd()
+		*codexHome = filepath.Join(cwd, ".codex")
+		*claudeHome = filepath.Join(cwd, ".claude")
+		configDest = filepath.Join(cwd, ".conductor-kit", "conductor.json")
+		bundlesDest = filepath.Join(cwd, ".conductor-kit", "mcp-bundles.json")
+	}
 
 	installCommands := *commandsOnly || !*skillsOnly
 	installSkills := !*commandsOnly
@@ -139,7 +149,7 @@ func installHelp() string {
 
 Usage:
   conductor install [--mode link|copy] [--skills-only|--commands-only]
-                    [--codex-home PATH] [--claude-home PATH] [--force] [--dry-run]
+                    [--project] [--codex-home PATH] [--claude-home PATH] [--force] [--dry-run]
                     [--no-bins] [--bin-dir PATH] [--no-config] [--repo PATH]
 `
 }
