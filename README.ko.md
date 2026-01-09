@@ -83,11 +83,6 @@ Claude Code (`~/.claude/.mcp.json`):
 
 참고: 위임 도구는 MCP 전용이며 CLI 서브커맨드는 제공하지 않습니다.
 
-## 제거
-```bash
-conductor uninstall
-```
-`--keep-home`을 사용하면 `~/.conductor-kit`을 보존합니다.
 
 ## 모델 설정 (roles)
 `~/.conductor-kit/conductor.json`에서 역할 -> CLI/모델 라우팅을 설정합니다 (`config/conductor.json`에서 설치).

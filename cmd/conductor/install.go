@@ -109,7 +109,6 @@ func runInstall(args []string) int {
 			"conductor",
 			"conductor-kit",
 			"conductor-kit-install",
-			"conductor-kit-uninstall",
 			"conductor-config-validate",
 			"conductor-doctor",
 			"conductor-mcp",

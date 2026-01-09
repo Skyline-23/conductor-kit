@@ -83,11 +83,6 @@ Then use tools:
 
 Note: Delegation tools are MCP-only; no CLI subcommands are provided.
 
-## Uninstall
-```bash
-conductor uninstall
-```
-Use `--keep-home` to preserve `~/.conductor-kit`.
 
 ## Model setup (roles)
 `~/.conductor-kit/conductor.json` controls role -> CLI/model routing (installed from `config/conductor.json`).
