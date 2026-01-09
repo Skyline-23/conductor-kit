@@ -4,8 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -28,6 +27,22 @@ type RunInput struct {
 	Reasoning string `json:"reasoning,omitempty"`
 	Config    string `json:"config,omitempty"`
 	TimeoutMs int    `json:"timeout_ms,omitempty"`
+}
+
+type StatusInput struct {
+	RunID string `json:"run_id"`
+	Tail  int    `json:"tail,omitempty"`
+}
+
+type WaitInput struct {
+	RunID     string `json:"run_id"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
+	Tail      int    `json:"tail,omitempty"`
+}
+
+type CancelInput struct {
+	RunID string `json:"run_id"`
+	Force bool   `json:"force,omitempty"`
 }
 
 type HistoryInput struct {
@@ -71,6 +86,82 @@ func runMCP(args []string) int {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.run_async",
+		Description: "Run a single role/agent asynchronously and return run_id.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input RunInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		payload, err := runAsyncTool(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.run_batch_async",
+		Description: "Run multiple roles/agents asynchronously and return run_ids.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input BatchInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		payload, err := runBatchAsyncTool(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.run_status",
+		Description: "Get status and output tail for an async run.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input StatusInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		if input.RunID == "" {
+			return nil, nil, errors.New("Missing run_id")
+		}
+		tail := input.Tail
+		if tail <= 0 {
+			tail = 4000
+		}
+		payload, err := getRunStatus(input.RunID, tail)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.run_wait",
+		Description: "Block until an async run completes or timeout is reached.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input WaitInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		if input.RunID == "" {
+			return nil, nil, errors.New("Missing run_id")
+		}
+		tail := input.Tail
+		if tail <= 0 {
+			tail = 4000
+		}
+		timeout := time.Duration(input.TimeoutMs) * time.Millisecond
+		if timeout <= 0 {
+			timeout = time.Duration(defaultTimeoutMs) * time.Millisecond
+		}
+		payload, err := waitRun(input.RunID, timeout, tail)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.run_cancel",
+		Description: "Cancel an async run.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input CancelInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		if input.RunID == "" {
+			return nil, nil, errors.New("Missing run_id")
+		}
+		payload, err := cancelRun(input.RunID, input.Force)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "conductor.run_history",
 		Description: "List recent run records.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input HistoryInput) (*mcp.CallToolResult, map[string]interface{}, error) {
@@ -107,6 +198,10 @@ func runBatchTool(input BatchInput) (map[string]interface{}, error) {
 	return runBatch(input.Prompt, input.Roles, input.Agents, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
 }
 
+func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
+	return runBatchAsync(input.Prompt, input.Roles, input.Agents, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
+}
+
 func runTool(input RunInput) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
@@ -114,10 +209,7 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	if input.Role == "" && input.Agent == "" {
 		return nil, errors.New("Missing role or agent")
 	}
-	configPath := input.Config
-	if configPath == "" {
-		configPath = getenv("CONDUCTOR_CONFIG", filepath.Join(os.Getenv("HOME"), ".conductor-kit", "conductor.json"))
-	}
+	configPath := resolveConfigPath(input.Config)
 
 	var cfg Config
 	var err error
@@ -148,4 +240,44 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 		spec.TimeoutMs = input.TimeoutMs
 	}
 	return runCommand(spec)
+}
+
+func runAsyncTool(input RunInput) (map[string]interface{}, error) {
+	if input.Prompt == "" {
+		return nil, errors.New("Missing prompt")
+	}
+	if input.Role == "" && input.Agent == "" {
+		return nil, errors.New("Missing role or agent")
+	}
+	configPath := resolveConfigPath(input.Config)
+
+	var cfg Config
+	var err error
+	if input.Role != "" {
+		cfg, err = loadConfig(configPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		cfg, err = loadConfigOrEmpty(configPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	defaults := normalizeDefaults(cfg.Defaults)
+	logPrompt := defaults.LogPrompt
+
+	var spec CmdSpec
+	if input.Role != "" {
+		spec, err = buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
+	} else {
+		spec, err = buildSpecFromAgent(input.Agent, input.Prompt, defaults, logPrompt)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if input.TimeoutMs > 0 {
+		spec.TimeoutMs = input.TimeoutMs
+	}
+	return startAsync(spec)
 }
