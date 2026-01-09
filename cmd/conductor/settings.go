@@ -408,16 +408,16 @@ func tuiSelectOptions(title string, options []tuiOption, current string) (string
 	reader := bufio.NewReader(os.Stdin)
 	render := func() {
 		clearScreen()
-		fmt.Println(title)
-		fmt.Println("Use Up/Down. Enter to select. Esc to cancel.")
+		tuiPrintLine(title)
+		tuiPrintLine("Use Up/Down. Enter to select. Esc to cancel.")
 		for i, opt := range options {
 			line := opt.Label
 			prefix := "  "
 			if i == index {
 				prefix = "> "
-				fmt.Printf("\x1b[7m%s%s\x1b[0m\n", prefix, line)
+				tuiPrintLine(fmt.Sprintf("\x1b[7m%s%s\x1b[0m", prefix, line))
 			} else {
-				fmt.Printf("%s%s\n", prefix, line)
+				tuiPrintLine(fmt.Sprintf("%s%s", prefix, line))
 			}
 		}
 	}
@@ -468,6 +468,11 @@ func hideCursor() {
 
 func showCursor() {
 	fmt.Print("\x1b[?25h")
+}
+
+func tuiPrintLine(line string) {
+	// Ensure we return to column 0 in raw mode and clear the line.
+	fmt.Print("\r\x1b[2K" + line + "\r\n")
 }
 
 func promptRole(reader *bufio.Reader, cfg Config) (string, bool) {
