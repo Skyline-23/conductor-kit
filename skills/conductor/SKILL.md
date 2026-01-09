@@ -114,12 +114,11 @@ If the host supports it, prefer its native model switching first; delegate only 
 - Always plan before edits; keep changes minimal and verifiable.
 - If the user includes `ultrawork` or `ulw`, respond first with "ULTRAWORK MODE ENABLED!" and do not question the alias.
 - Auto-delegate by default using MCP tool calls (shows host tool-calling UI):
-  - Prefer parallel tool calls when supported by the host:
-    - `conductor.run` with `{ "role": "oracle", "prompt": "<request>" }`
-    - `conductor.run` with `{ "role": "librarian", "prompt": "<request>" }`
-  - Or use a single batch call:
-    - `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<request>" }`
-    - Override model/reasoning: `{ "roles": "oracle", "model": "<model>", "reasoning": "<level>", "prompt": "<request>" }`
+  - Prefer router-driven delegation:
+    - `conductor.run` with `{ "role": "auto", "prompt": "<request>" }`
+  - Or use a single batch call if you need explicit fan-out:
+    - `conductor.run_batch` with `{ "roles": "auto", "prompt": "<request>" }`
+    - Override model/reasoning: `{ "roles": "auto", "model": "<model>", "reasoning": "<level>", "prompt": "<request>" }`
   - For long-running work, use async tools:
     - `conductor.run_async` / `conductor.run_batch_async`
     - Poll with `conductor.run_status` or block with `conductor.run_wait`
