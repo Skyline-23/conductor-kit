@@ -9,53 +9,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-type BatchInput struct {
-	Prompt    string `json:"prompt"`
-	Roles     string `json:"roles,omitempty"`
-	Agents    string `json:"agents,omitempty"`
-	Model     string `json:"model,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
-	Config    string `json:"config,omitempty"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"`
-}
-
-type RunInput struct {
-	Prompt    string `json:"prompt"`
-	Role      string `json:"role,omitempty"`
-	Agent     string `json:"agent,omitempty"`
-	Model     string `json:"model,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
-	Config    string `json:"config,omitempty"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"`
-}
-
-type StatusInput struct {
-	RunID string `json:"run_id"`
-	Tail  int    `json:"tail,omitempty"`
-}
-
-type WaitInput struct {
-	RunID     string `json:"run_id"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"`
-	Tail      int    `json:"tail,omitempty"`
-}
-
-type CancelInput struct {
-	RunID string `json:"run_id"`
-	Force bool   `json:"force,omitempty"`
-}
-
-type HistoryInput struct {
-	Limit  int    `json:"limit,omitempty"`
-	Status string `json:"status,omitempty"`
-	Role   string `json:"role,omitempty"`
-	Agent  string `json:"agent,omitempty"`
-}
-
-type InfoInput struct {
-	RunID string `json:"run_id"`
-}
-
 func runMCP(args []string) int {
 	_ = args
 	server := mcp.NewServer(&mcp.Implementation{
@@ -114,11 +67,7 @@ func runMCP(args []string) int {
 		if input.RunID == "" {
 			return nil, nil, errors.New("Missing run_id")
 		}
-		tail := input.Tail
-		if tail <= 0 {
-			tail = 4000
-		}
-		payload, err := getRunStatus(input.RunID, tail)
+		payload, err := runStatusTool(input)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -132,15 +81,7 @@ func runMCP(args []string) int {
 		if input.RunID == "" {
 			return nil, nil, errors.New("Missing run_id")
 		}
-		tail := input.Tail
-		if tail <= 0 {
-			tail = 4000
-		}
-		timeout := time.Duration(input.TimeoutMs) * time.Millisecond
-		if timeout <= 0 {
-			timeout = time.Duration(defaultTimeoutMs) * time.Millisecond
-		}
-		payload, err := waitRun(input.RunID, timeout, tail)
+		payload, err := runWaitTool(input)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -154,7 +95,7 @@ func runMCP(args []string) int {
 		if input.RunID == "" {
 			return nil, nil, errors.New("Missing run_id")
 		}
-		payload, err := cancelRun(input.RunID, input.Force)
+		payload, err := runCancelTool(input)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -186,6 +127,67 @@ func runMCP(args []string) int {
 		return nil, map[string]interface{}{"found": ok, "run": record}, nil
 	})
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.queue_list",
+		Description: "List queued/running/completed runs from the daemon.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input QueueListInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		payload, err := queueListTool(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.approval_list",
+		Description: "List runs awaiting approval (daemon required).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input QueueListInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		payload, err := approvalListTool(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.approval_approve",
+		Description: "Approve a queued run (daemon required).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input ApprovalInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		if input.RunID == "" {
+			return nil, nil, errors.New("Missing run_id")
+		}
+		payload, err := approvalApproveTool(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.approval_reject",
+		Description: "Reject a queued run (daemon required).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input ApprovalInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		if input.RunID == "" {
+			return nil, nil, errors.New("Missing run_id")
+		}
+		payload, err := approvalRejectTool(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.daemon_status",
+		Description: "Get daemon health/status if running.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input QueueListInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		payload, err := daemonStatusTool()
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
+	})
+
 	transport := mcp.NewStdioTransport()
 	if _, err := server.Connect(context.Background(), transport, nil); err != nil {
 		fmt.Println(err.Error())
@@ -199,6 +201,14 @@ func runBatchTool(input BatchInput) (map[string]interface{}, error) {
 }
 
 func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
+	configPath := resolveConfigPath(input.Config)
+	if !input.NoDaemon {
+		if baseURL := resolveDaemonURL(configPath); baseURL != "" {
+			if payload, err := daemonRunBatch(baseURL, input); err == nil {
+				return payload, nil
+			}
+		}
+	}
 	return runBatchAsync(input.Prompt, input.Roles, input.Agents, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
 }
 
@@ -250,6 +260,13 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 		return nil, errors.New("Missing role or agent")
 	}
 	configPath := resolveConfigPath(input.Config)
+	if !input.NoDaemon {
+		if baseURL := resolveDaemonURL(configPath); baseURL != "" {
+			if payload, err := daemonRun(baseURL, input); err == nil {
+				return payload, nil
+			}
+		}
+	}
 
 	var cfg Config
 	var err error
@@ -280,4 +297,83 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 		spec.TimeoutMs = input.TimeoutMs
 	}
 	return startAsync(spec)
+}
+
+func runStatusTool(input StatusInput) (map[string]interface{}, error) {
+	tail := input.Tail
+	if tail <= 0 {
+		tail = 4000
+	}
+	if baseURL := resolveDaemonURL(resolveConfigPath("")); baseURL != "" {
+		if payload, err := daemonRunStatus(baseURL, input.RunID, tail); err == nil {
+			return payload, nil
+		}
+	}
+	return getRunStatus(input.RunID, tail)
+}
+
+func runWaitTool(input WaitInput) (map[string]interface{}, error) {
+	tail := input.Tail
+	if tail <= 0 {
+		tail = 4000
+	}
+	timeout := time.Duration(input.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = time.Duration(defaultTimeoutMs) * time.Millisecond
+	}
+	if baseURL := resolveDaemonURL(resolveConfigPath("")); baseURL != "" {
+		if payload, err := daemonRunWait(baseURL, input.RunID, timeout, tail); err == nil {
+			return payload, nil
+		}
+	}
+	return waitRun(input.RunID, timeout, tail)
+}
+
+func runCancelTool(input CancelInput) (map[string]interface{}, error) {
+	if baseURL := resolveDaemonURL(resolveConfigPath("")); baseURL != "" {
+		if payload, err := daemonRunCancel(baseURL, input.RunID, input.Force); err == nil {
+			return payload, nil
+		}
+	}
+	return cancelRun(input.RunID, input.Force)
+}
+
+func queueListTool(input QueueListInput) (map[string]interface{}, error) {
+	baseURL := resolveDaemonURL(resolveConfigPath(""))
+	if baseURL == "" {
+		return map[string]interface{}{"status": "daemon_not_running"}, nil
+	}
+	return daemonQueueList(baseURL, input.Status, input.Limit)
+}
+
+func approvalListTool(input QueueListInput) (map[string]interface{}, error) {
+	baseURL := resolveDaemonURL(resolveConfigPath(""))
+	if baseURL == "" {
+		return map[string]interface{}{"status": "daemon_not_running"}, nil
+	}
+	return daemonApprovalList(baseURL)
+}
+
+func approvalApproveTool(input ApprovalInput) (map[string]interface{}, error) {
+	baseURL := resolveDaemonURL(resolveConfigPath(""))
+	if baseURL == "" {
+		return map[string]interface{}{"status": "daemon_not_running"}, nil
+	}
+	return daemonApprovalApprove(baseURL, input.RunID)
+}
+
+func approvalRejectTool(input ApprovalInput) (map[string]interface{}, error) {
+	baseURL := resolveDaemonURL(resolveConfigPath(""))
+	if baseURL == "" {
+		return map[string]interface{}{"status": "daemon_not_running"}, nil
+	}
+	return daemonApprovalReject(baseURL, input.RunID)
+}
+
+func daemonStatusTool() (map[string]interface{}, error) {
+	baseURL := resolveDaemonURL(resolveConfigPath(""))
+	if baseURL == "" {
+		return map[string]interface{}{"status": "daemon_not_running"}, nil
+	}
+	return daemonStatus(baseURL)
 }

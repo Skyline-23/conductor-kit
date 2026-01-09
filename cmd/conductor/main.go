@@ -16,6 +16,8 @@ func main() {
 		os.Exit(runConfigValidate(rest))
 	case "doctor":
 		os.Exit(runDoctor(rest))
+	case "daemon":
+		os.Exit(runDaemon(rest))
 	case "mcp-bundle":
 		os.Exit(runMCPBundle(rest))
 	case "mcp":
@@ -31,6 +33,7 @@ func resolveCommand(args []string) (string, []string) {
 		"install":         true,
 		"config-validate": true,
 		"doctor":          true,
+		"daemon":          true,
 		"mcp-bundle":      true,
 		"mcp":             true,
 	}
@@ -47,12 +50,14 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-kit-install":         "install",
 		"conductor-config-validate":     "config-validate",
 		"conductor-doctor":              "doctor",
+		"conductor-daemon":              "daemon",
 		"conductor-mcp-bundle":          "mcp-bundle",
 		"conductor-mcp":                 "mcp",
 		"conductor-mcp.exe":             "mcp",
 		"conductor-config-validate.exe": "config-validate",
 		"conductor-doctor.exe":          "doctor",
 		"conductor-mcp-bundle.exe":      "mcp-bundle",
+		"conductor-daemon.exe":          "daemon",
 	}
 
 	exe := filepath.Base(os.Args[0])
@@ -76,12 +81,14 @@ Commands:
   install              Install skills, commands, bins, and config
   config-validate      Validate conductor config JSON
   doctor               Check config and CLI availability
+  daemon               Run local orchestration daemon
   mcp-bundle           Render MCP bundle templates for hosts
   mcp                  Run MCP server (stdio)
 
 Aliases:
   conductor-kit, conductor-kit-install
   conductor-config-validate, conductor-doctor
+  conductor-daemon
   conductor-mcp-bundle
   conductor-mcp
 `)

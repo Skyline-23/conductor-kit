@@ -122,6 +122,7 @@ func runInstall(args []string) int {
 			"conductor-kit-install",
 			"conductor-config-validate",
 			"conductor-doctor",
+			"conductor-daemon",
 			"conductor-mcp-bundle",
 			"conductor-mcp",
 		}
