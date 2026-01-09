@@ -47,6 +47,7 @@ func runInstall(args []string) int {
 	skillsSource := filepath.Join(root, "skills", "conductor")
 	commandsSource := filepath.Join(root, "commands")
 	configSource := filepath.Join(root, "config", "conductor.json")
+	bundlesSource := filepath.Join(root, "config", "mcp-bundles.json")
 	configDest := filepath.Join(os.Getenv("HOME"), ".conductor-kit", "conductor.json")
 
 	installCommands := *commandsOnly || !*skillsOnly
@@ -111,6 +112,7 @@ func runInstall(args []string) int {
 			"conductor-kit-install",
 			"conductor-config-validate",
 			"conductor-doctor",
+			"conductor-mcp-bundle",
 			"conductor-mcp",
 		}
 		for _, name := range aliases {
@@ -123,6 +125,9 @@ func runInstall(args []string) int {
 		fmt.Printf("Install config -> %s\n", configDest)
 		ensureDir(filepath.Dir(configDest), *dryRun)
 		doLinkOrCopy(configSource, configDest, *mode, *force, *dryRun)
+		if pathExists(bundlesSource) {
+			doLinkOrCopy(bundlesSource, bundlesDest, *mode, *force, *dryRun)
+		}
 	}
 
 	fmt.Println("Done.")

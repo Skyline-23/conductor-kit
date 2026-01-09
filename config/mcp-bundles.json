@@ -1,0 +1,43 @@
+{
+  "bundles": {
+    "core": {
+      "servers": [
+        {
+          "name": "conductor",
+          "command": "conductor",
+          "args": ["mcp"]
+        }
+      ]
+    },
+    "extended": {
+      "servers": [
+        {
+          "name": "conductor",
+          "command": "conductor",
+          "args": ["mcp"]
+        },
+        {
+          "name": "search",
+          "command": "",
+          "args": [],
+          "enabled": false,
+          "note": "Add a search MCP server command here."
+        },
+        {
+          "name": "lsp",
+          "command": "",
+          "args": [],
+          "enabled": false,
+          "note": "Add an LSP MCP server command here."
+        },
+        {
+          "name": "ast",
+          "command": "",
+          "args": [],
+          "enabled": false,
+          "note": "Add an AST MCP server command here."
+        }
+      ]
+    }
+  }
+}
