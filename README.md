@@ -10,9 +10,6 @@ It enforces a consistent orchestration loop (search -> plan -> execute -> verify
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 
-# If you previously installed the formula:
-# brew uninstall conductor-kit
-
 # Homebrew post_install links skills/commands into Codex + Claude
 # Re-run if needed:
 conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force

@@ -10,9 +10,6 @@ Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬�
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 
-# 예전에 formula로 설치했다면 먼저 제거:
-# brew uninstall conductor-kit
-
 # Homebrew post_install이 Codex + Claude에 자동 링크함
 # 필요 시 재실행:
 conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
