@@ -151,7 +151,7 @@ Defaults (if omitted):
 
 Template defaults (CLI-native model names):
 - `oracle`: codex `gpt-5.2-codex` + `reasoning: "medium"`
-- `librarian`: claude `claude-3-5-haiku-20241022`
+- `librarian`: gemini `gemini-3-flash-preview`
 - `explore`: gemini `gemini-3-flash-preview`
 - `frontend-ui-ux-engineer`: gemini `gemini-3-pro-preview`
 - `document-writer`: gemini `gemini-3-flash-preview`

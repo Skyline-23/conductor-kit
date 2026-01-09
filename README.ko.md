@@ -149,7 +149,7 @@ conductor daemon --mode stop
 
 템플릿 기본 모델 (CLI 네이티브 이름):
 - `oracle`: codex `gpt-5.2-codex` + `reasoning: "medium"`
-- `librarian`: claude `claude-3-5-haiku-20241022`
+- `librarian`: gemini `gemini-3-flash-preview`
 - `explore`: gemini `gemini-3-flash-preview`
 - `frontend-ui-ux-engineer`: gemini `gemini-3-pro-preview`
 - `document-writer`: gemini `gemini-3-flash-preview`

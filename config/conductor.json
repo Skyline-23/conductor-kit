@@ -26,8 +26,8 @@
       "reasoning": "medium"
     },
     "librarian": {
-      "cli": "claude",
-      "model": "claude-3-5-haiku-20241022"
+      "cli": "gemini",
+      "model": "gemini-3-flash-preview"
     },
     "explore": {
       "cli": "gemini",
