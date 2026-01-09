@@ -8,11 +8,14 @@ It enforces a consistent orchestration loop (search -> plan -> execute -> verify
 ## Quick start (Homebrew)
 ```bash
 brew tap Skyline-23/conductor-kit
-brew install conductor-kit
+brew install --cask conductor-kit
+
+# If you previously installed the formula:
+# brew uninstall conductor-kit
 
 # Homebrew post_install links skills/commands into Codex + Claude
 # Re-run if needed:
-conductor install --mode link --repo $(brew --prefix)/share/conductor-kit --force
+conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
 ```
 
 ## Manual install
@@ -33,6 +36,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - A host CLI: Codex CLI or Claude Code (skills/commands run inside these hosts).
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
+- Homebrew cask install is macOS-only (Linux users should use manual install).
 - MCP registration:
   - Codex CLI: `codex mcp add ...`
   - Claude Code: `~/.claude/.mcp.json` (see below)
@@ -188,6 +192,12 @@ Schema: `config/conductor.schema.json` (optional for tooling).
 ## Diagnostics
 - `conductor config-validate` (validates `~/.conductor-kit/conductor.json`)
 - `conductor doctor` (checks config + CLI availability + model name sanity)
+
+## Uninstall (Homebrew)
+```bash
+brew uninstall --cask conductor-kit
+```
+This runs `conductor uninstall --force` via a cask uninstall hook to clean user-level installs.
 
 ## Observability
 - `conductor.run_history` with `{ "limit": 20 }`

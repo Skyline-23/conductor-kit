@@ -30,7 +30,7 @@ archives:
       - README.ko.md
       - LICENSE
 
-brews:
+homebrew_casks:
   - name: conductor-kit
     homepage: "https://github.com/Skyline-23/conductor-kit"
     description: "Global skills pack and Go helper for Codex CLI and Claude Code"
@@ -39,15 +39,27 @@ brews:
       owner: Skyline-23
       name: homebrew-conductor-kit
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    install: |
-      bin.install "conductor"
-      pkgshare.install "skills", "commands", "config"
-    post_install: |
-      system "#{bin}/conductor", "install", "--mode", "link", "--repo", "#{pkgshare}", "--force"
+    ids:
+      - conductor
+    binaries:
+      - conductor
+    url:
+      verified: "github.com/Skyline-23/conductor-kit"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}"]
+          end
+          system_command "#{staged_path}/conductor", args: ["install", "--mode", "link", "--repo", "#{staged_path}", "--force"]
+      pre:
+        uninstall: |
+          if File.exist?("#{staged_path}/conductor")
+            system_command "#{staged_path}/conductor", args: ["uninstall", "--force"]
+          end
     caveats: |
       Skills/commands were linked into ~/.codex and ~/.claude during install.
       If you need to re-link:
-        conductor install --mode link --repo #{pkgshare} --force
+        #{staged_path}/conductor install --mode link --repo #{staged_path} --force
       To fully remove user-level installs:
         conductor uninstall --force

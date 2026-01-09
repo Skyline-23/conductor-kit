@@ -8,11 +8,14 @@ Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬�
 ## 빠른 설치 (Homebrew)
 ```bash
 brew tap Skyline-23/conductor-kit
-brew install conductor-kit
+brew install --cask conductor-kit
+
+# 예전에 formula로 설치했다면 먼저 제거:
+# brew uninstall conductor-kit
 
 # Homebrew post_install이 Codex + Claude에 자동 링크함
 # 필요 시 재실행:
-conductor install --mode link --repo $(brew --prefix)/share/conductor-kit --force
+conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
 ```
 
 ## 수동 설치
@@ -33,6 +36,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - 호스트 CLI: Codex CLI 또는 Claude Code (스킬/커맨드는 해당 호스트 안에서 실행됨)
 - 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
 - Go 1.23+ (소스에서 빌드할 때만 필요)
+- Homebrew cask 설치는 macOS 전용입니다 (Linux는 수동 설치 사용).
 - MCP 도구 등록:
   - Codex CLI: `codex mcp add ...`
   - Claude Code: `~/.claude/.mcp.json` (아래 참고)
@@ -186,6 +190,12 @@ conductor daemon --mode stop
 ## 진단
 - `conductor config-validate` (`~/.conductor-kit/conductor.json` 유효성 검사)
 - `conductor doctor` (설정 + CLI 가용성 + 모델명 기본 검증)
+
+## 제거 (Homebrew)
+```bash
+brew uninstall --cask conductor-kit
+```
+cask uninstall 훅이 `conductor uninstall --force`를 실행해 사용자 설치물을 정리합니다.
 
 ## 관측/기록
 - `conductor.run_history` with `{ "limit": 20 }`
