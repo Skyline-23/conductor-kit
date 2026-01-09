@@ -33,23 +33,38 @@
     },
     "librarian": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash-preview",
+      "ready_cmd": "gemini",
+      "ready_args": ["auth", "status"],
+      "ready_timeout_ms": 5000
     },
     "explore": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash-preview",
+      "ready_cmd": "gemini",
+      "ready_args": ["auth", "status"],
+      "ready_timeout_ms": 5000
     },
     "frontend-ui-ux-engineer": {
       "cli": "gemini",
-      "model": "gemini-3-pro-preview"
+      "model": "gemini-3-pro-preview",
+      "ready_cmd": "gemini",
+      "ready_args": ["auth", "status"],
+      "ready_timeout_ms": 5000
     },
     "document-writer": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash-preview",
+      "ready_cmd": "gemini",
+      "ready_args": ["auth", "status"],
+      "ready_timeout_ms": 5000
     },
     "multimodal-looker": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash-preview",
+      "ready_cmd": "gemini",
+      "ready_args": ["auth", "status"],
+      "ready_timeout_ms": 5000
     }
   }
 }

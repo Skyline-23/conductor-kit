@@ -21,9 +21,16 @@ func runMCP(args []string) int {
 		Name:        "conductor.run",
 		Description: "Run a single role/agent synchronously and return output.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input RunInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		payload, err := runTool(input)
+		report := progressReporterForRequest(ctx, req)
+		if report != nil {
+			report("started", 0, 1)
+		}
+		payload, err := runTool(input, report)
 		if err != nil {
 			return nil, nil, err
+		}
+		if report != nil {
+			report("completed", 1, 1)
 		}
 		return nil, payload, nil
 	})
@@ -32,7 +39,8 @@ func runMCP(args []string) int {
 		Name:        "conductor.run_batch",
 		Description: "Run multiple roles/agents in parallel and return outputs.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input BatchInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		payload, err := runBatchTool(input)
+		report := progressReporterForRequest(ctx, req)
+		payload, err := runBatchTool(input, report)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -43,9 +51,16 @@ func runMCP(args []string) int {
 		Name:        "conductor.run_async",
 		Description: "Run a single role/agent asynchronously and return run_id.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input RunInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		payload, err := runAsyncTool(input)
+		report := progressReporterForRequest(ctx, req)
+		if report != nil {
+			report("starting", 0, 1)
+		}
+		payload, err := runAsyncTool(input, report)
 		if err != nil {
 			return nil, nil, err
+		}
+		if report != nil {
+			report("started", 1, 1)
 		}
 		return nil, payload, nil
 	})
@@ -54,7 +69,8 @@ func runMCP(args []string) int {
 		Name:        "conductor.run_batch_async",
 		Description: "Run multiple roles/agents asynchronously and return run_ids.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input BatchInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		payload, err := runBatchAsyncTool(input)
+		report := progressReporterForRequest(ctx, req)
+		payload, err := runBatchAsyncTool(input, report)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -82,9 +98,16 @@ func runMCP(args []string) int {
 		if input.RunID == "" {
 			return nil, nil, errors.New("Missing run_id")
 		}
+		report := progressReporterForRequest(ctx, req)
+		if report != nil {
+			report("waiting", 0, 1)
+		}
 		payload, err := runWaitTool(input)
 		if err != nil {
 			return nil, nil, err
+		}
+		if report != nil {
+			report("done", 1, 1)
 		}
 		return nil, payload, nil
 	})
@@ -202,6 +225,27 @@ func runMCP(args []string) int {
 	return 0
 }
 
+func progressReporterForRequest(ctx context.Context, req *mcp.CallToolRequest) progressReporter {
+	if req == nil || req.Session == nil || req.Params == nil {
+		return nil
+	}
+	token := req.Params.GetProgressToken()
+	if token == nil {
+		return nil
+	}
+	return func(message string, progress float64, total float64) {
+		params := &mcp.ProgressNotificationParams{
+			Message:       message,
+			Progress:      progress,
+			ProgressToken: token,
+		}
+		if total > 0 {
+			params.Total = total
+		}
+		_ = req.Session.NotifyProgress(ctx, params)
+	}
+}
+
 const defaultMcpTimeoutMs = 55000
 
 func effectiveMcpTimeoutMs(timeoutMs int) int {
@@ -282,9 +326,9 @@ func summarizeBatchPayload(payload map[string]interface{}) map[string]interface{
 	return out
 }
 
-func runBatchTool(input BatchInput) (map[string]interface{}, error) {
+func runBatchTool(input BatchInput, report progressReporter) (map[string]interface{}, error) {
 	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
-	payload, err := runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
+	payload, err := runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs, report)
 	if err != nil {
 		return payload, err
 	}
@@ -295,7 +339,7 @@ func runBatchTool(input BatchInput) (map[string]interface{}, error) {
 	return payload, nil
 }
 
-func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
+func runBatchAsyncTool(input BatchInput, report progressReporter) (map[string]interface{}, error) {
 	configPath := resolveConfigPath(input.Config)
 	if !input.NoDaemon {
 		if baseURL := resolveDaemonURL(configPath); baseURL != "" {
@@ -304,16 +348,16 @@ func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
 			}
 		}
 	}
-	return runBatchAsync(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs, input.IdleTimeoutMs)
+	return runBatchAsync(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs, input.IdleTimeoutMs, report)
 }
 
-func runTool(input RunInput) (map[string]interface{}, error) {
+func runTool(input RunInput, report progressReporter) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
 	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
 	if input.Role == "" || input.Role == "auto" {
-		payload, err := runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
+		payload, err := runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs, report)
 		if err != nil {
 			return payload, err
 		}
@@ -351,7 +395,7 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	return payload, nil
 }
 
-func runAsyncTool(input RunInput) (map[string]interface{}, error) {
+func runAsyncTool(input RunInput, report progressReporter) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
@@ -368,7 +412,7 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 			Mode:            input.Mode,
 			NoDaemon:        input.NoDaemon,
 		}
-		return runBatchAsyncTool(batch)
+		return runBatchAsyncTool(batch, report)
 	}
 	configPath := resolveConfigPath(input.Config)
 	if !input.NoDaemon {

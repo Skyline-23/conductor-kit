@@ -74,6 +74,12 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "ready_cmd": { "type": "string" },
+          "ready_args": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "ready_timeout_ms": { "type": "integer", "minimum": 0 },
           "model_flag": { "type": "string" },
           "model": { "type": "string" },
           "models": {

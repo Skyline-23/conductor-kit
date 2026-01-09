@@ -28,6 +28,9 @@ type CmdSpec struct {
 	Reasoning      string
 	Cmd            string
 	Args           []string
+	ReadyCmd       string
+	ReadyArgs      []string
+	ReadyTimeoutMs int
 	Env            map[string]string
 	Cwd            string
 	TimeoutMs      int
@@ -133,6 +136,9 @@ func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverrid
 		Reasoning:      reasoning,
 		Cmd:            roleCfg.CLI,
 		Args:           args,
+		ReadyCmd:       roleCfg.ReadyCmd,
+		ReadyArgs:      roleCfg.ReadyArgs,
+		ReadyTimeoutMs: roleCfg.ReadyTimeoutMs,
 		Env:            roleCfg.Env,
 		Cwd:            roleCfg.Cwd,
 		TimeoutMs:      effectiveInt(roleCfg.TimeoutMs, defaults.TimeoutMs),
@@ -414,6 +420,45 @@ func runCommand(spec CmdSpec) (map[string]interface{}, error) {
 	}
 	backoff := time.Duration(spec.RetryBackoffMs) * time.Millisecond
 
+	if err := checkReady(spec); err != nil {
+		now := time.Now().UTC()
+		payload := map[string]interface{}{
+			"run_id":      newRunID(),
+			"status":      "not_ready",
+			"agent":       firstNonEmpty(spec.Role, spec.Agent),
+			"role":        spec.Role,
+			"model":       spec.Model,
+			"cmd":         spec.Cmd,
+			"args":        spec.Args,
+			"attempt":     0,
+			"attempts":    attempts,
+			"exit_code":   1,
+			"duration_ms": int64(0),
+			"started_at":  now.Format(time.RFC3339),
+			"ended_at":    now.Format(time.RFC3339),
+			"error":       err.Error(),
+		}
+		record := RunRecord{
+			ID:         payload["run_id"].(string),
+			Agent:      spec.Agent,
+			Role:       spec.Role,
+			Model:      spec.Model,
+			Cmd:        spec.Cmd,
+			Args:       spec.Args,
+			Status:     "not_ready",
+			ExitCode:   1,
+			StartedAt:  payload["started_at"].(string),
+			EndedAt:    payload["ended_at"].(string),
+			DurationMs: 0,
+			PromptHash: spec.PromptHash,
+			PromptLen:  spec.PromptLen,
+			Prompt:     spec.Prompt,
+			Error:      err.Error(),
+		}
+		_ = appendRunRecord(record, spec.LogPrompt)
+		return payload, nil
+	}
+
 	var last map[string]interface{}
 	for i := 1; i <= attempts; i++ {
 		res, err := runCommandOnce(spec, i, attempts)
@@ -429,6 +474,54 @@ func runCommand(spec CmdSpec) (map[string]interface{}, error) {
 		}
 	}
 	return last, nil
+}
+
+const defaultReadyTimeoutMs = 5000
+
+func checkReady(spec CmdSpec) error {
+	if spec.ReadyCmd == "" {
+		return nil
+	}
+	if !isCommandAvailable(spec.ReadyCmd) {
+		return fmt.Errorf("Ready check missing CLI on PATH: %s", spec.ReadyCmd)
+	}
+	timeoutMs := spec.ReadyTimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = defaultReadyTimeoutMs
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, spec.ReadyCmd, spec.ReadyArgs...)
+	if spec.Cwd != "" {
+		cmd.Dir = spec.Cwd
+	}
+	if len(spec.Env) > 0 {
+		env := append([]string{}, os.Environ()...)
+		for k, v := range spec.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		cmd.Env = env
+	}
+	cmd.Stdin = strings.NewReader("")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("ready check timed out after %dms", timeoutMs)
+	}
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
+		if msg != "" {
+			return fmt.Errorf("ready check failed: %s", msg)
+		}
+		return fmt.Errorf("ready check failed")
+	}
+	return nil
 }
 
 func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}, error) {
@@ -562,6 +655,55 @@ func startAsync(spec CmdSpec) (map[string]interface{}, error) {
 func startAsyncWithID(runID string, spec CmdSpec) (map[string]interface{}, error) {
 	if !isCommandAvailable(spec.Cmd) {
 		return nil, fmt.Errorf("Missing CLI on PATH: %s", spec.Cmd)
+	}
+	if err := checkReady(spec); err != nil {
+		now := time.Now().UTC()
+		runDir := asyncRunDir(runID)
+		if err := os.MkdirAll(runDir, 0o755); err != nil {
+			return nil, err
+		}
+		meta := AsyncMeta{
+			ID:         runID,
+			Status:     "not_ready",
+			Agent:      spec.Agent,
+			Role:       spec.Role,
+			Model:      spec.Model,
+			Cmd:        spec.Cmd,
+			Args:       spec.Args,
+			Attempt:    0,
+			Attempts:   spec.Retry + 1,
+			ExitCode:   1,
+			Error:      err.Error(),
+			StartedAt:  now.Format(time.RFC3339),
+			EndedAt:    now.Format(time.RFC3339),
+			PromptHash: spec.PromptHash,
+			PromptLen:  spec.PromptLen,
+		}
+		_ = writeAsyncMeta(meta)
+		record := RunRecord{
+			ID:         runID,
+			Agent:      spec.Agent,
+			Role:       spec.Role,
+			Model:      spec.Model,
+			Cmd:        spec.Cmd,
+			Args:       spec.Args,
+			Status:     "not_ready",
+			ExitCode:   1,
+			StartedAt:  meta.StartedAt,
+			EndedAt:    meta.EndedAt,
+			DurationMs: 0,
+			PromptHash: spec.PromptHash,
+			PromptLen:  spec.PromptLen,
+			Prompt:     spec.Prompt,
+			Error:      err.Error(),
+		}
+		_ = appendRunRecord(record, spec.LogPrompt)
+		return map[string]interface{}{
+			"run_id": runID,
+			"status": "not_ready",
+			"agent":  firstNonEmpty(spec.Role, spec.Agent),
+			"error":  err.Error(),
+		}, nil
 	}
 
 	runDir := asyncRunDir(runID)
@@ -846,7 +988,7 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs, idleTimeoutMs int) (map[string]interface{}, error) {
+func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs, idleTimeoutMs int, report progressReporter) (map[string]interface{}, error) {
 	if prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
@@ -936,10 +1078,15 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 	if maxParallel <= 0 {
 		maxParallel = 1
 	}
+	total := len(entries)
+	if report != nil {
+		report("starting", 0, float64(total))
+	}
 	sem := make(chan struct{}, maxParallel)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var completed int64
 	for _, entry := range entries {
 		wg.Add(1)
 		go func(e specEntry) {
@@ -951,12 +1098,23 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 			defer mu.Unlock()
 			if err != nil {
 				results = append(results, map[string]interface{}{"agent": e.agent, "status": "error", "error": err.Error()})
+				if report != nil {
+					done := atomic.AddInt64(&completed, 1)
+					report(fmt.Sprintf("finished %s (error)", e.agent), float64(done), float64(total))
+				}
 				return
 			}
 			results = append(results, res)
+			if report != nil {
+				done := atomic.AddInt64(&completed, 1)
+				report(fmt.Sprintf("finished %s", e.agent), float64(done), float64(total))
+			}
 		}(entry)
 	}
 	wg.Wait()
+	if report != nil {
+		report("completed", float64(total), float64(total))
+	}
 
 	status := "ok"
 	for _, r := range results {
@@ -981,7 +1139,7 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 	}, nil
 }
 
-func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs, idleTimeoutMs int) (map[string]interface{}, error) {
+func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs, idleTimeoutMs int, report progressReporter) (map[string]interface{}, error) {
 	if prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
@@ -1064,14 +1222,30 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 		}
 	}
 
+	total := len(entries)
+	if report != nil {
+		report("starting", 0, float64(total))
+	}
+	started := 0
 	for _, entry := range entries {
 		res, err := startAsync(entry.spec)
 		if err != nil {
 			results = append(results, map[string]interface{}{"agent": entry.agent, "status": "error", "error": err.Error()})
+			if report != nil {
+				started++
+				report(fmt.Sprintf("failed %s", entry.agent), float64(started), float64(total))
+			}
 			continue
 		}
 		res["agent"] = entry.agent
 		results = append(results, res)
+		if report != nil {
+			started++
+			report(fmt.Sprintf("started %s", entry.agent), float64(started), float64(total))
+		}
+	}
+	if report != nil {
+		report("completed", float64(total), float64(total))
 	}
 
 	return map[string]interface{}{
