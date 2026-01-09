@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -189,8 +190,13 @@ func runMCP(args []string) int {
 	})
 
 	transport := mcp.NewStdioTransport()
-	if _, err := server.Connect(context.Background(), transport, nil); err != nil {
-		fmt.Println(err.Error())
+	session, err := server.Connect(context.Background(), transport, nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+	if err := session.Wait(); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
 	return 0
