@@ -128,7 +128,6 @@ conductor daemon --mode stop
 핵심 필드:
 - `defaults.timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
 - `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
-- `routing.strategy`: `oracle`(LLM 라우터) 또는 `heuristic`(라우터 없이 전체 역할 실행)
 - `routing.router_role`: `strategy=oracle`에서 사용할 라우팅 역할
 - `routing.always`: 자동 라우팅 시 항상 포함할 역할 (예: `["oracle"]`)
 - `daemon.host` / `daemon.port`: 로컬 데몬 바인딩 주소

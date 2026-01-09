@@ -19,7 +19,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "strategy": { "type": "string", "enum": ["oracle", "heuristic"] },
         "router_role": { "type": "string" },
         "always": {
           "type": "array",

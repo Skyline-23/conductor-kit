@@ -7,7 +7,6 @@
     "log_prompt": false
   },
   "routing": {
-    "strategy": "oracle",
     "router_role": "oracle",
     "always": ["oracle"]
   },

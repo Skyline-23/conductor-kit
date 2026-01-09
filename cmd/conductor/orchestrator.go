@@ -34,10 +34,8 @@ func autoPlanTasks(prompt string, cfg Config, routerTimeoutMs int) []DelegatedTa
 	routing := normalizeRouting(cfg.Routing)
 	available := availableRoles(cfg)
 
-	if strings.EqualFold(routing.Strategy, "oracle") {
-		if tasks, ok := planDelegatedTasks(prompt, cfg, routing, available, routerTimeoutMs); ok {
-			return tasks
-		}
+	if tasks, ok := planDelegatedTasks(prompt, cfg, routing, available, routerTimeoutMs); ok {
+		return tasks
 	}
 
 	tasks := tasksFromRoles(sortedRoles(cfg), prompt)
@@ -92,9 +90,6 @@ func effectiveRouterTimeout(timeoutMs int) int {
 }
 
 func normalizeRouting(r RoutingConfig) RoutingConfig {
-	if r.Strategy == "" {
-		r.Strategy = "oracle"
-	}
 	if r.RouterRole == "" {
 		r.RouterRole = "oracle"
 	}
