@@ -41,6 +41,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - **스킬**: `conductor` (`skills/conductor/SKILL.md`)
 - **커맨드**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
 - **Go 헬퍼**: `conductor` 바이너리(설치/MCP/위임 도구)
+- **옵션 런타임**: 로컬 데몬(큐/승인 기반 비동기 실행)
 - **설정**: `~/.conductor-kit/conductor.json` (역할 -> CLI/모델 매핑)
 
 ## 사용법
@@ -86,7 +87,7 @@ Claude Code (`~/.claude/.mcp.json`):
 - 여러 `conductor.run` 도구 호출을 병렬로 실행 (호스트가 병렬 처리)
 - `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
 
-참고: 위임 도구는 MCP 전용이며 CLI 서브커맨드는 제공하지 않습니다.
+참고: 위임 도구는 MCP 전용이며, CLI 서브커맨드는 데몬 설정용입니다.
 
 ### 4) 비동기 위임 (선택)
 - 비동기 시작: `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
@@ -95,6 +96,28 @@ Claude Code (`~/.claude/.mcp.json`):
 - 완료 대기: `conductor.run_wait` with `{ "run_id": "<id>", "timeout_ms": 120000 }`
 - 취소: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
 
+### 5) 로컬 데몬 (큐 + 승인, 선택)
+로컬 데몬을 실행하면 비동기 작업을 큐잉하고 승인/목록 조회가 가능합니다.
+
+```bash
+conductor daemon --mode start --detach
+conductor daemon --mode status
+conductor daemon --mode stop
+```
+
+데몬이 실행 중이면 비동기 MCP 도구가 자동으로 데몬을 통해 동작합니다 (`no_daemon: true`로 우회 가능).
+원격 데몬을 쓰려면 `CONDUCTOR_DAEMON_URL`을 설정하세요.
+추가 도구:
+- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval", "limit": 50 }`
+- `conductor.approval_list`
+- `conductor.approval_approve` with `{ "run_id": "<id>" }`
+- `conductor.approval_reject` with `{ "run_id": "<id>" }`
+- `conductor.daemon_status`
+
+비동기 옵션:
+- `require_approval: true` (강제 승인)
+- `mode: "string"` (모드 해시 지정)
+- `no_daemon: true` (데몬 우회)
 
 ## 모델 설정 (roles)
 `~/.conductor-kit/conductor.json`에서 역할 -> CLI/모델 라우팅을 설정합니다 (`config/conductor.json`에서 설치).
@@ -104,6 +127,11 @@ Claude Code (`~/.claude/.mcp.json`):
 핵심 필드:
 - `defaults.timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
 - `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
+- `daemon.host` / `daemon.port`: 로컬 데몬 바인딩 주소
+- `daemon.max_parallel`: 데몬 동시 실행 제한 (기본값: `defaults.max_parallel`)
+- `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
+- `daemon.approval.required`: 전체 승인 강제
+- `daemon.approval.roles` / `daemon.approval.agents`: 특정 역할/에이전트 승인 강제
 - `roles.<name>.cli`: 실행할 CLI (PATH에 있어야 함)
 - `roles.<name>.args`: argv 템플릿; `{prompt}` 위치에 프롬프트 삽입
 - `roles.<name>.model_flag`: 모델 플래그 (codex는 `-m`, claude/gemini는 `--model`)
@@ -149,6 +177,8 @@ Claude Code (`~/.claude/.mcp.json`):
 ## 관측/기록
 - `conductor.run_history` with `{ "limit": 20 }`
 - `conductor.run_info` with `{ "run_id": "<id>" }`
+- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval" }`
+- `conductor.approval_list` (승인 대기 목록)
 
 ## 선택적 MCP 번들
 ```bash
@@ -174,6 +204,11 @@ codex mcp add conductor -- conductor mcp
 - `conductor.run_cancel`
 - `conductor.run_history`
 - `conductor.run_info`
+- `conductor.queue_list` (daemon)
+- `conductor.approval_list` (daemon)
+- `conductor.approval_approve` (daemon)
+- `conductor.approval_reject` (daemon)
+- `conductor.daemon_status` (daemon)
 
 ## 레포 구조
 ```

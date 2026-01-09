@@ -41,6 +41,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)
 - **Commands**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
 - **Go helper**: `conductor` binary for install + MCP server + delegation tools
+- **Optional runtime**: local daemon for queued/approved async runs
 - **Config**: `~/.conductor-kit/conductor.json` (role -> CLI/model mapping)
 
 ## Usage
@@ -86,7 +87,7 @@ Then use tools:
 - Run multiple `conductor.run` tool calls in parallel (host handles concurrency)
 - `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
 
-Note: Delegation tools are MCP-only; no CLI subcommands are provided.
+Note: Delegation tools are MCP-only; CLI subcommands are only for daemon setup.
 
 ### 4) Async delegation (optional)
 - Start async run: `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
@@ -94,6 +95,30 @@ Note: Delegation tools are MCP-only; no CLI subcommands are provided.
 - Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
 - Wait for completion: `conductor.run_wait` with `{ "run_id": "<id>", "timeout_ms": 120000 }`
 - Cancel: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
+
+### 5) Local daemon (queue + approvals, optional)
+Start a local daemon to queue async runs, enforce approvals, and expose run listings.
+
+```bash
+conductor daemon --mode start --detach
+conductor daemon --mode status
+conductor daemon --mode stop
+```
+
+When the daemon is running, async MCP tools automatically route through it (unless `no_daemon: true`).
+New tools:
+- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval", "limit": 50 }`
+- `conductor.approval_list`
+- `conductor.approval_approve` with `{ "run_id": "<id>" }`
+- `conductor.approval_reject` with `{ "run_id": "<id>" }`
+- `conductor.daemon_status`
+
+Optional flags for async tools:
+- `require_approval: true` (force approval even if defaults say no)
+- `mode: "string"` (override mode hash for batching)
+- `no_daemon: true` (bypass daemon)
+
+Set `CONDUCTOR_DAEMON_URL` to target a remote daemon.
 
 
 ## Model setup (roles)
@@ -104,6 +129,11 @@ If `model` is empty, no model flag is passed and the CLI default is used.
 Key fields:
 - `defaults.timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
 - `defaults.log_prompt`: store prompt text in run history (default: false)
+- `daemon.host` / `daemon.port`: local daemon bind address
+- `daemon.max_parallel`: daemon worker limit (defaults to `defaults.max_parallel`)
+- `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
+- `daemon.approval.required`: force approvals for all runs
+- `daemon.approval.roles` / `daemon.approval.agents`: require approval for specific roles/agents
 - `roles.<name>.cli`: executable to run (must be on PATH)
 - `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go
 - `roles.<name>.model_flag`: model flag (e.g. `-m` for codex, `--model` for claude/gemini)
@@ -149,6 +179,8 @@ Schema: `config/conductor.schema.json` (optional for tooling).
 ## Observability
 - `conductor.run_history` with `{ "limit": 20 }`
 - `conductor.run_info` with `{ "run_id": "<id>" }`
+- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval" }`
+- `conductor.approval_list` to list pending approvals
 
 ## Optional MCP bundles
 ```bash
@@ -174,6 +206,11 @@ Tools:
 - `conductor.run_cancel`
 - `conductor.run_history`
 - `conductor.run_info`
+- `conductor.queue_list` (daemon)
+- `conductor.approval_list` (daemon)
+- `conductor.approval_approve` (daemon)
+- `conductor.approval_reject` (daemon)
+- `conductor.daemon_status` (daemon)
 
 ## Repo layout
 ```

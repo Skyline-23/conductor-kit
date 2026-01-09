@@ -32,7 +32,7 @@ If the host supports markdown commands, install the `commands/` files and use th
 
 ## Cross-CLI delegation (multi-agent, multi-model)
 
-Conductor is **not** a separate runtime. The active host (Codex CLI or Claude Code) is the orchestrator.
+By default, the active host (Codex CLI or Claude Code) is the orchestrator. A local `conductor` daemon is optional for queueing/approvals/remote monitoring; treat it as a helper runtime, not a replacement for the host.
 
 When it helps, delegate sub-tasks to other installed CLI agents (examples: `codex`, `claude`, `gemini`) by running them from the host shell tool.
 
@@ -54,6 +54,7 @@ Recommended pattern:
 2) Run the external CLI and capture output to a temp file.
 3) Summarize the result in your own words with file references.
 4) Continue the main loop (Plan/Execute/Verify).
+
 
 Suggested delegation targets:
 - **Fast broad scan:** delegate repo-wide discovery or doc lookups.
@@ -119,6 +120,9 @@ If the host supports it, prefer its native model switching first; delegate only 
   - For long-running work, use async tools:
     - `conductor.run_async` / `conductor.run_batch_async`
     - Poll with `conductor.run_status` or block with `conductor.run_wait`
+    - If a daemon is running, you can list/approve runs:
+      - `conductor.queue_list` / `conductor.approval_list`
+      - `conductor.approval_approve` / `conductor.approval_reject`
   - Delegation is MCP-only; do not use CLI `background-*` commands.
   - Always print a user-visible line after delegation: `Delegation results received: <agents>` (no raw logs).
   - If you need auditability, use `conductor.run_history` / `conductor.run_info`.
