@@ -164,7 +164,12 @@ func ensureDir(dir string, dryRun bool) {
 
 func doLinkOrCopy(src, dest, mode string, force, dryRun bool) {
 	if pathExists(dest) {
-		if !force {
+		if mode == "link" && !force {
+			if linkMatches(dest, src) {
+				fmt.Printf("Skip (linked): %s\n", dest)
+				return
+			}
+		} else if !force {
 			fmt.Printf("Skip (exists): %s\n", dest)
 			return
 		}
@@ -191,6 +196,29 @@ func doLinkOrCopy(src, dest, mode string, force, dryRun bool) {
 		return
 	}
 	_ = copyFile(src, dest)
+}
+
+func linkMatches(dest, src string) bool {
+	info, err := os.Lstat(dest)
+	if err != nil {
+		return false
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := os.Readlink(dest)
+	if err != nil {
+		return false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(dest), target)
+	}
+	target = filepath.Clean(target)
+	srcAbs, err := filepath.Abs(src)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(srcAbs) == target
 }
 
 func copyFile(src, dest string) error {

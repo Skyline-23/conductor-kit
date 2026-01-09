@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 )
 
 func runConfigValidate(args []string) int {
@@ -67,6 +68,25 @@ func runDoctor(args []string) int {
 			fmt.Printf("Role %s: %s (missing)\n", name, role.CLI)
 			missing = true
 		}
+		modelIssues := append([]ModelEntry{}, role.Models...)
+		if role.Model != "" {
+			modelIssues = append(modelIssues, ModelEntry{Name: role.Model, ReasoningEffort: role.Reasoning})
+		}
+		for _, entry := range modelIssues {
+			if entry.Name == "" {
+				continue
+			}
+			check := checkModelForCLI(role.CLI, entry.Name)
+			switch check.level {
+			case "ok":
+				fmt.Printf("Role %s: model %s (ok)\n", name, entry.Name)
+			case "warn":
+				fmt.Printf("Role %s: model %s (%s)\n", name, entry.Name, check.message)
+			case "error":
+				fmt.Printf("Role %s: model %s (%s)\n", name, entry.Name, check.message)
+				missing = true
+			}
+		}
 	}
 	if missing {
 		return 1
@@ -92,11 +112,8 @@ func validateConfig(cfg Config) []string {
 		errors = append(errors, "defaults.retry_backoff_ms must be >= 0")
 	}
 	for name, role := range cfg.Roles {
-		if role.CLI == "" {
-			errors = append(errors, fmt.Sprintf("roles.%s.cli is empty", name))
-		}
-		if len(role.Args) == 0 {
-			errors = append(errors, fmt.Sprintf("roles.%s.args is empty", name))
+		if _, err := normalizeRoleConfig(role); err != nil {
+			errors = append(errors, fmt.Sprintf("roles.%s.%s", name, err.Error()))
 		}
 		if role.MaxParallel < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.max_parallel must be >= 0", name))
@@ -112,4 +129,40 @@ func validateConfig(cfg Config) []string {
 		}
 	}
 	return errors
+}
+
+type modelCheck struct {
+	level   string
+	message string
+}
+
+func checkModelForCLI(cli, model string) modelCheck {
+	if model == "" {
+		return modelCheck{level: "ok", message: "uses cli default"}
+	}
+	if strings.Contains(model, "/") {
+		return modelCheck{
+			level:   "error",
+			message: "invalid (use CLI-native model names without provider prefix)",
+		}
+	}
+	switch cli {
+	case "codex":
+		if strings.HasPrefix(model, "gpt-") {
+			return modelCheck{level: "ok", message: "ok"}
+		}
+		return modelCheck{level: "warn", message: "unexpected for codex (expected gpt-*)"}
+	case "claude":
+		if strings.HasPrefix(model, "claude-") {
+			return modelCheck{level: "ok", message: "ok"}
+		}
+		return modelCheck{level: "warn", message: "unexpected for claude (expected claude-*)"}
+	case "gemini":
+		if strings.HasPrefix(model, "gemini-") || model == "auto" {
+			return modelCheck{level: "ok", message: "ok"}
+		}
+		return modelCheck{level: "warn", message: "unexpected for gemini (expected gemini-*)"}
+	default:
+		return modelCheck{level: "warn", message: "unknown cli (skipping model validation)"}
+	}
 }
