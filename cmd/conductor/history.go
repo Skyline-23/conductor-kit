@@ -10,21 +10,23 @@ import (
 )
 
 type RunRecord struct {
-	ID         string   `json:"id"`
-	Agent      string   `json:"agent,omitempty"`
-	Role       string   `json:"role,omitempty"`
-	Model      string   `json:"model,omitempty"`
-	Cmd        string   `json:"cmd"`
-	Args       []string `json:"args,omitempty"`
-	Status     string   `json:"status"`
-	ExitCode   int      `json:"exit_code"`
-	StartedAt  string   `json:"started_at"`
-	EndedAt    string   `json:"ended_at"`
-	DurationMs int64    `json:"duration_ms"`
-	PromptHash string   `json:"prompt_hash,omitempty"`
-	PromptLen  int      `json:"prompt_len,omitempty"`
-	Prompt     string   `json:"prompt,omitempty"`
-	Error      string   `json:"error,omitempty"`
+	ID           string   `json:"id"`
+	Agent        string   `json:"agent,omitempty"`
+	Role         string   `json:"role,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Cmd          string   `json:"cmd"`
+	Args         []string `json:"args,omitempty"`
+	Status       string   `json:"status"`
+	ExitCode     int      `json:"exit_code"`
+	StartedAt    string   `json:"started_at"`
+	EndedAt      string   `json:"ended_at"`
+	DurationMs   int64    `json:"duration_ms"`
+	PromptHash   string   `json:"prompt_hash,omitempty"`
+	PromptLen    int      `json:"prompt_len,omitempty"`
+	Prompt       string   `json:"prompt,omitempty"`
+	ReadFiles    []string `json:"read_files,omitempty"`
+	ChangedFiles []string `json:"changed_files,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 var runLogMu sync.Mutex

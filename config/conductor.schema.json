@@ -13,7 +13,8 @@
         "max_parallel": { "type": "integer", "minimum": 0 },
         "retry": { "type": "integer", "minimum": 0 },
         "retry_backoff_ms": { "type": "integer", "minimum": 0 },
-        "log_prompt": { "type": "boolean" }
+        "log_prompt": { "type": "boolean" },
+        "summary_only": { "type": "boolean" }
       }
     },
     "routing": {

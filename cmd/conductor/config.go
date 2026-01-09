@@ -20,6 +20,7 @@ type Defaults struct {
 	Retry          int  `json:"retry"`
 	RetryBackoffMs int  `json:"retry_backoff_ms"`
 	LogPrompt      bool `json:"log_prompt"`
+	SummaryOnly    bool `json:"summary_only"`
 }
 
 type RoutingConfig struct {

@@ -227,9 +227,72 @@ func applyIdleTimeout(spec *CmdSpec, idleTimeoutMs int) {
 	spec.IdleTimeoutMs = idleTimeoutMs
 }
 
+func resolveSummaryOnly(input *bool, cfg Config) bool {
+	if input != nil {
+		return *input
+	}
+	return cfg.Defaults.SummaryOnly
+}
+
+func summarizePayload(payload map[string]interface{}) map[string]interface{} {
+	if payload == nil {
+		return payload
+	}
+	keep := []string{
+		"run_id",
+		"status",
+		"agent",
+		"role",
+		"model",
+		"duration_ms",
+		"exit_code",
+		"started_at",
+		"ended_at",
+		"error",
+		"read_files",
+		"changed_files",
+	}
+	out := map[string]interface{}{}
+	for _, key := range keep {
+		if val, ok := payload[key]; ok {
+			out[key] = val
+		}
+	}
+	return out
+}
+
+func summarizeBatchPayload(payload map[string]interface{}) map[string]interface{} {
+	if payload == nil {
+		return payload
+	}
+	out := map[string]interface{}{}
+	for _, key := range []string{"status", "agents", "count", "max_parallel", "warning", "note", "config"} {
+		if val, ok := payload[key]; ok {
+			out[key] = val
+		}
+	}
+	results, _ := payload["results"].([]map[string]interface{})
+	if results != nil {
+		summary := make([]map[string]interface{}, 0, len(results))
+		for _, res := range results {
+			summary = append(summary, summarizePayload(res))
+		}
+		out["results"] = summary
+	}
+	return out
+}
+
 func runBatchTool(input BatchInput) (map[string]interface{}, error) {
 	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
-	return runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
+	payload, err := runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
+	if err != nil {
+		return payload, err
+	}
+	cfg, cfgErr := loadConfig(resolveConfigPath(input.Config))
+	if cfgErr == nil && resolveSummaryOnly(input.SummaryOnly, cfg) {
+		return summarizeBatchPayload(payload), nil
+	}
+	return payload, nil
 }
 
 func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
@@ -250,7 +313,15 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	}
 	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
 	if input.Role == "" || input.Role == "auto" {
-		return runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
+		payload, err := runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
+		if err != nil {
+			return payload, err
+		}
+		cfg, cfgErr := loadConfig(resolveConfigPath(input.Config))
+		if cfgErr == nil && resolveSummaryOnly(input.SummaryOnly, cfg) {
+			return summarizeBatchPayload(payload), nil
+		}
+		return payload, nil
 	}
 	configPath := resolveConfigPath(input.Config)
 
@@ -270,7 +341,14 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	}
 	applyTimeout(&spec, timeoutMs)
 	applyIdleTimeout(&spec, input.IdleTimeoutMs)
-	return runCommand(spec)
+	payload, err := runCommand(spec)
+	if err != nil {
+		return payload, err
+	}
+	if resolveSummaryOnly(input.SummaryOnly, cfg) {
+		return summarizePayload(payload), nil
+	}
+	return payload, nil
 }
 
 func runAsyncTool(input RunInput) (map[string]interface{}, error) {

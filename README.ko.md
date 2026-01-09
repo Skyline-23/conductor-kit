@@ -119,6 +119,7 @@ conductor daemon --mode stop
 - `require_approval: true` (강제 승인)
 - `mode: "string"` (모드 해시 지정)
 - `no_daemon: true` (데몬 우회)
+- `summary_only: true` (stdout/stderr 숨기고 읽음/변경 파일 요약만 반환)
 
 ## 모델 설정 (roles)
 `~/.conductor-kit/conductor.json`에서 역할 -> CLI/모델 라우팅을 설정합니다 (`config/conductor.json`에서 설치).
@@ -128,6 +129,7 @@ conductor daemon --mode stop
 핵심 필드:
 - `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
 - `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
+- `defaults.summary_only`: MCP 결과에서 stdout/stderr를 숨기고 읽음/변경 파일 요약만 반환
 - `routing.router_role`: `strategy=oracle`에서 사용할 라우팅 역할
 - `routing.always`: 자동 라우팅 시 항상 포함할 역할 (예: `["oracle"]`)
 - `daemon.host` / `daemon.port`: 로컬 데몬 바인딩 주소

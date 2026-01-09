@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,6 +57,8 @@ type AsyncMeta struct {
 	EndedAt         string   `json:"ended_at,omitempty"`
 	PromptHash      string   `json:"prompt_hash,omitempty"`
 	PromptLen       int      `json:"prompt_len,omitempty"`
+	ReadFiles       []string `json:"read_files,omitempty"`
+	ChangedFiles    []string `json:"changed_files,omitempty"`
 	CancelRequested bool     `json:"cancel_requested,omitempty"`
 }
 
@@ -306,6 +309,100 @@ func isCommandAvailable(cmd string) bool {
 	return false
 }
 
+func cwdForSpec(spec CmdSpec) string {
+	if spec.Cwd != "" {
+		return spec.Cwd
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
+}
+
+func gitStatusSnapshot(cwd string) (map[string]string, error) {
+	if cwd == "" {
+		return nil, errors.New("missing cwd")
+	}
+	cmd := exec.Command("git", "-C", cwd, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return map[string]string{}, nil
+	}
+	snapshot := map[string]string{}
+	for _, line := range lines {
+		if len(line) < 3 {
+			continue
+		}
+		status := strings.TrimSpace(line[:2])
+		path := strings.TrimSpace(line[2:])
+		if path == "" {
+			continue
+		}
+		if arrow := strings.LastIndex(path, "->"); arrow >= 0 {
+			path = strings.TrimSpace(path[arrow+2:])
+		}
+		snapshot[path] = status
+	}
+	return snapshot, nil
+}
+
+func diffGitStatus(before, after map[string]string) []string {
+	if before == nil || after == nil {
+		return nil
+	}
+	changes := []string{}
+	for path, status := range after {
+		if prev, ok := before[path]; !ok || prev != status {
+			if status == "" {
+				changes = append(changes, path)
+			} else {
+				changes = append(changes, status+" "+path)
+			}
+		}
+	}
+	sort.Strings(changes)
+	return changes
+}
+
+func extractReadFiles(output string) []string {
+	lines := strings.Split(output, "\n")
+	reads := []string{}
+	seen := map[string]bool{}
+	prefixes := []string{
+		"read file ",
+		"read_file ",
+		"open file ",
+		"opened file ",
+		"read: ",
+		"open: ",
+	}
+	for _, line := range lines {
+		text := strings.TrimSpace(line)
+		if text == "" {
+			continue
+		}
+		lower := strings.ToLower(text)
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(lower, prefix) {
+				path := strings.TrimSpace(text[len(prefix):])
+				path = strings.Trim(path, "\"'`")
+				if path != "" && !seen[path] {
+					seen[path] = true
+					reads = append(reads, path)
+				}
+				break
+			}
+		}
+	}
+	sort.Strings(reads)
+	return reads
+}
+
 func runCommand(spec CmdSpec) (map[string]interface{}, error) {
 	if !isCommandAvailable(spec.Cmd) {
 		return nil, fmt.Errorf("Missing CLI on PATH: %s", spec.Cmd)
@@ -345,6 +442,12 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 		ctx, cancel = context.WithCancel(ctx)
 	}
 	defer cancel()
+
+	cwd := cwdForSpec(spec)
+	var beforeStatus map[string]string
+	if snapshot, err := gitStatusSnapshot(cwd); err == nil {
+		beforeStatus = snapshot
+	}
 
 	activityCh := make(chan struct{}, 1)
 	var idleTimedOut atomic.Bool
@@ -398,45 +501,54 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 	end := time.Now().UTC()
 	duration := end.Sub(start).Milliseconds()
 
+	var changedFiles []string
+	if snapshot, err := gitStatusSnapshot(cwd); err == nil {
+		changedFiles = diffGitStatus(beforeStatus, snapshot)
+	}
+	readFiles := extractReadFiles(stdout.String() + "\n" + stderr.String())
 	status, exitCode, errMsg := statusFromErrorWithTimeout(ctx, err, idleTimedOut.Load())
 
 	payload := map[string]interface{}{
-		"run_id":      runID,
-		"status":      status,
-		"agent":       firstNonEmpty(spec.Role, spec.Agent),
-		"role":        spec.Role,
-		"model":       spec.Model,
-		"cmd":         spec.Cmd,
-		"args":        spec.Args,
-		"attempt":     attempt,
-		"attempts":    attempts,
-		"exit_code":   exitCode,
-		"stdout":      strings.TrimSpace(stdout.String()),
-		"stderr":      strings.TrimSpace(stderr.String()),
-		"duration_ms": duration,
-		"started_at":  start.Format(time.RFC3339),
-		"ended_at":    end.Format(time.RFC3339),
+		"run_id":        runID,
+		"status":        status,
+		"agent":         firstNonEmpty(spec.Role, spec.Agent),
+		"role":          spec.Role,
+		"model":         spec.Model,
+		"cmd":           spec.Cmd,
+		"args":          spec.Args,
+		"attempt":       attempt,
+		"attempts":      attempts,
+		"exit_code":     exitCode,
+		"stdout":        strings.TrimSpace(stdout.String()),
+		"stderr":        strings.TrimSpace(stderr.String()),
+		"duration_ms":   duration,
+		"started_at":    start.Format(time.RFC3339),
+		"ended_at":      end.Format(time.RFC3339),
+		"read_files":    readFiles,
+		"changed_files": changedFiles,
 	}
 	if errMsg != "" {
 		payload["error"] = errMsg
 	}
 
 	record := RunRecord{
-		ID:         runID,
-		Agent:      spec.Agent,
-		Role:       spec.Role,
-		Model:      spec.Model,
-		Cmd:        spec.Cmd,
-		Args:       spec.Args,
-		Status:     status,
-		ExitCode:   exitCode,
-		StartedAt:  payload["started_at"].(string),
-		EndedAt:    payload["ended_at"].(string),
-		DurationMs: duration,
-		PromptHash: spec.PromptHash,
-		PromptLen:  spec.PromptLen,
-		Prompt:     spec.Prompt,
-		Error:      errMsg,
+		ID:           runID,
+		Agent:        spec.Agent,
+		Role:         spec.Role,
+		Model:        spec.Model,
+		Cmd:          spec.Cmd,
+		Args:         spec.Args,
+		Status:       status,
+		ExitCode:     exitCode,
+		StartedAt:    payload["started_at"].(string),
+		EndedAt:      payload["ended_at"].(string),
+		DurationMs:   duration,
+		PromptHash:   spec.PromptHash,
+		PromptLen:    spec.PromptLen,
+		Prompt:       spec.Prompt,
+		ReadFiles:    readFiles,
+		ChangedFiles: changedFiles,
+		Error:        errMsg,
 	}
 	_ = appendRunRecord(record, spec.LogPrompt)
 
@@ -508,12 +620,19 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 	}
 	backoff := time.Duration(spec.RetryBackoffMs) * time.Millisecond
 
+	cwd := cwdForSpec(spec)
+	var beforeStatus map[string]string
+	if snapshot, err := gitStatusSnapshot(cwd); err == nil {
+		beforeStatus = snapshot
+	}
+
 	var startedAt time.Time
 	var endedAt time.Time
 	var status string
 	var exitCode int
 	var errMsg string
 	lastAttempt := 0
+	var changedFiles []string
 
 	for attempt := 1; attempt <= attempts; attempt++ {
 		lastAttempt = attempt
@@ -581,6 +700,9 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 		stopIdle()
 		endedAt = time.Now().UTC()
 		status, exitCode, errMsg = statusFromErrorWithTimeout(ctx, err, idleTimedOut.Load())
+		if snapshot, err := gitStatusSnapshot(cwd); err == nil {
+			changedFiles = diffGitStatus(beforeStatus, snapshot)
+		}
 
 		cancelRequested := false
 		if current, _, err := loadAsyncMeta(runID); err == nil {
@@ -599,21 +721,22 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 	}
 
 	finalMeta := AsyncMeta{
-		ID:         runID,
-		Status:     status,
-		Agent:      spec.Agent,
-		Role:       spec.Role,
-		Model:      spec.Model,
-		Cmd:        spec.Cmd,
-		Args:       spec.Args,
-		Attempt:    lastAttempt,
-		Attempts:   attempts,
-		ExitCode:   exitCode,
-		Error:      errMsg,
-		StartedAt:  startedAt.Format(time.RFC3339),
-		EndedAt:    endedAt.Format(time.RFC3339),
-		PromptHash: spec.PromptHash,
-		PromptLen:  spec.PromptLen,
+		ID:           runID,
+		Status:       status,
+		Agent:        spec.Agent,
+		Role:         spec.Role,
+		Model:        spec.Model,
+		Cmd:          spec.Cmd,
+		Args:         spec.Args,
+		Attempt:      lastAttempt,
+		Attempts:     attempts,
+		ExitCode:     exitCode,
+		Error:        errMsg,
+		StartedAt:    startedAt.Format(time.RFC3339),
+		EndedAt:      endedAt.Format(time.RFC3339),
+		PromptHash:   spec.PromptHash,
+		PromptLen:    spec.PromptLen,
+		ChangedFiles: changedFiles,
 	}
 	if current, _, err := loadAsyncMeta(runID); err == nil {
 		finalMeta.CancelRequested = current.CancelRequested
@@ -624,21 +747,22 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 	_ = writeAsyncMeta(finalMeta)
 
 	record := RunRecord{
-		ID:         runID,
-		Agent:      spec.Agent,
-		Role:       spec.Role,
-		Model:      spec.Model,
-		Cmd:        spec.Cmd,
-		Args:       spec.Args,
-		Status:     finalMeta.Status,
-		ExitCode:   exitCode,
-		StartedAt:  finalMeta.StartedAt,
-		EndedAt:    finalMeta.EndedAt,
-		DurationMs: endedAt.Sub(startedAt).Milliseconds(),
-		PromptHash: spec.PromptHash,
-		PromptLen:  spec.PromptLen,
-		Prompt:     spec.Prompt,
-		Error:      errMsg,
+		ID:           runID,
+		Agent:        spec.Agent,
+		Role:         spec.Role,
+		Model:        spec.Model,
+		Cmd:          spec.Cmd,
+		Args:         spec.Args,
+		Status:       finalMeta.Status,
+		ExitCode:     exitCode,
+		StartedAt:    finalMeta.StartedAt,
+		EndedAt:      finalMeta.EndedAt,
+		DurationMs:   endedAt.Sub(startedAt).Milliseconds(),
+		PromptHash:   spec.PromptHash,
+		PromptLen:    spec.PromptLen,
+		Prompt:       spec.Prompt,
+		ChangedFiles: changedFiles,
+		Error:        errMsg,
 	}
 	if finalMeta.Status == "ok" {
 		record.Error = ""
@@ -659,20 +783,22 @@ func getRunStatus(runID string, tailBytes int) (map[string]interface{}, error) {
 	stdout := readTail(filepath.Join(dir, "stdout.log"), tailBytes)
 	stderr := readTail(filepath.Join(dir, "stderr.log"), tailBytes)
 	return map[string]interface{}{
-		"run_id":     runID,
-		"status":     status,
-		"agent":      firstNonEmpty(meta.Role, meta.Agent),
-		"role":       meta.Role,
-		"model":      meta.Model,
-		"pid":        meta.PID,
-		"attempt":    meta.Attempt,
-		"attempts":   meta.Attempts,
-		"exit_code":  meta.ExitCode,
-		"stdout":     strings.TrimSpace(stdout),
-		"stderr":     strings.TrimSpace(stderr),
-		"error":      meta.Error,
-		"started_at": meta.StartedAt,
-		"ended_at":   meta.EndedAt,
+		"run_id":        runID,
+		"status":        status,
+		"agent":         firstNonEmpty(meta.Role, meta.Agent),
+		"role":          meta.Role,
+		"model":         meta.Model,
+		"pid":           meta.PID,
+		"attempt":       meta.Attempt,
+		"attempts":      meta.Attempts,
+		"exit_code":     meta.ExitCode,
+		"stdout":        strings.TrimSpace(stdout),
+		"stderr":        strings.TrimSpace(stderr),
+		"error":         meta.Error,
+		"started_at":    meta.StartedAt,
+		"ended_at":      meta.EndedAt,
+		"read_files":    meta.ReadFiles,
+		"changed_files": meta.ChangedFiles,
 	}, nil
 }
 

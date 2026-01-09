@@ -118,6 +118,7 @@ Optional flags for async tools:
 - `require_approval: true` (force approval even if defaults say no)
 - `mode: "string"` (override mode hash for batching)
 - `no_daemon: true` (bypass daemon)
+- `summary_only: true` (hide stdout/stderr and return read/changed file summaries)
 
 Set `CONDUCTOR_DAEMON_URL` to target a remote daemon.
 
@@ -130,6 +131,7 @@ If `model` is empty, no model flag is passed and the CLI default is used.
 Key fields:
 - `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
 - `defaults.log_prompt`: store prompt text in run history (default: false)
+- `defaults.summary_only`: hide raw stdout/stderr in MCP results and return read/changed file summaries only
 - `routing.router_role`: role used to route when `strategy=oracle`
 - `routing.always`: roles always included when auto-routing (e.g., `["oracle"]`)
 - `daemon.host` / `daemon.port`: local daemon bind address
