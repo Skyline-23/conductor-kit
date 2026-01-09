@@ -81,8 +81,13 @@ func runInstall(args []string) int {
 			doLinkOrCopy(skillsSource, dest, *mode, *force, *dryRun)
 		}
 		if installCommands {
-			fmt.Printf("Install commands -> %s: %s\n", t.name, t.home)
 			commandsDir := filepath.Join(t.home, "commands")
+			label := "commands"
+			if t.name == "codex" {
+				commandsDir = filepath.Join(t.home, "prompts")
+				label = "prompts"
+			}
+			fmt.Printf("Install %s -> %s: %s\n", label, t.name, t.home)
 			ensureDir(commandsDir, *dryRun)
 			entries, _ := os.ReadDir(commandsSource)
 			for _, entry := range entries {
@@ -104,6 +109,7 @@ func runInstall(args []string) int {
 			"conductor",
 			"conductor-kit",
 			"conductor-kit-install",
+			"conductor-kit-uninstall",
 			"conductor-config-validate",
 			"conductor-doctor",
 			"conductor-mcp",
