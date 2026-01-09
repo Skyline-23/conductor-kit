@@ -9,6 +9,9 @@ Enforce a repeatable operator workflow that **forces orchestration** rather than
 
 Use multiple CLI agents (Codex CLI, Claude Code CLI, Gemini CLI, etc.) only as delegates; keep the active host as the operator.
 
+Trigger rules:
+- If the user says `ulw` or `ultrawork` (even without mentioning "conductor"), immediately enter Ultrawork mode.
+
 Key principle:
 - **Let the host control model routing.** Do not hardcode model picks. You may *suggest* when/why to switch (fast model for broad search, careful model for architecture/review), but defer to the host UX.
 

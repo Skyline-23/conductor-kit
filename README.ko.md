@@ -174,7 +174,7 @@ conductor daemon --mode stop
 스키마: `config/conductor.schema.json` (툴링용 선택 사항)
 
 ## 설정/로그인
-- `conductor settings` (대화형 설정)
+- `conductor settings` (TUI 설정; 일반 프롬프트는 `--no-tui`)
 - `conductor settings --list-models --cli codex` (모델 목록 출력)
 - `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
 - `conductor login codex|claude|gemini` (CLI 로그인 실행)

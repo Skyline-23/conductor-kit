@@ -176,7 +176,7 @@ Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor ins
 Schema: `config/conductor.schema.json` (optional for tooling).
 
 ## Setup helpers
-- `conductor settings` (interactive wizard)
+- `conductor settings` (TUI wizard; use `--no-tui` for plain prompts)
 - `conductor settings --list-models --cli codex` (show available models)
 - `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
 - `conductor login codex|claude|gemini` (runs CLI login flow)
