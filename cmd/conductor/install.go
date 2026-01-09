@@ -116,17 +116,7 @@ func runInstall(args []string) int {
 		fmt.Printf("Install bins -> %s\n", *binDir)
 		ensureDir(*binDir, *dryRun)
 		exe, _ := os.Executable()
-		aliases := []string{
-			"conductor",
-			"conductor-kit",
-			"conductor-kit-install",
-			"conductor-config-validate",
-			"conductor-doctor",
-			"conductor-daemon",
-			"conductor-mcp-bundle",
-			"conductor-mcp",
-		}
-		for _, name := range aliases {
+		for _, name := range conductorBinAliases() {
 			dest := filepath.Join(*binDir, name)
 			doLinkOrCopy(exe, dest, *mode, *force, *dryRun)
 		}

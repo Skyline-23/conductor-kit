@@ -12,6 +12,12 @@ func main() {
 	switch cmd {
 	case "install":
 		os.Exit(runInstall(rest))
+	case "uninstall":
+		os.Exit(runUninstall(rest))
+	case "settings":
+		os.Exit(runSettings(rest))
+	case "login":
+		os.Exit(runLogin(rest))
 	case "config-validate":
 		os.Exit(runConfigValidate(rest))
 	case "doctor":
@@ -31,6 +37,9 @@ func main() {
 func resolveCommand(args []string) (string, []string) {
 	subcommands := map[string]bool{
 		"install":         true,
+		"uninstall":       true,
+		"settings":        true,
+		"login":           true,
 		"config-validate": true,
 		"doctor":          true,
 		"daemon":          true,
@@ -48,6 +57,9 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor":                     "",
 		"conductor-kit":                 "install",
 		"conductor-kit-install":         "install",
+		"conductor-uninstall":           "uninstall",
+		"conductor-settings":            "settings",
+		"conductor-login":               "login",
 		"conductor-config-validate":     "config-validate",
 		"conductor-doctor":              "doctor",
 		"conductor-daemon":              "daemon",
@@ -56,6 +68,9 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-mcp.exe":             "mcp",
 		"conductor-config-validate.exe": "config-validate",
 		"conductor-doctor.exe":          "doctor",
+		"conductor-login.exe":           "login",
+		"conductor-settings.exe":        "settings",
+		"conductor-uninstall.exe":       "uninstall",
 		"conductor-mcp-bundle.exe":      "mcp-bundle",
 		"conductor-daemon.exe":          "daemon",
 	}
@@ -79,6 +94,9 @@ Usage:
 
 Commands:
   install              Install skills, commands, bins, and config
+  uninstall            Remove skills, commands, bins, and config
+  settings             Update role CLI/model settings
+  login                Run CLI login flow (codex/claude/gemini)
   config-validate      Validate conductor config JSON
   doctor               Check config and CLI availability
   daemon               Run local orchestration daemon
@@ -87,6 +105,7 @@ Commands:
 
 Aliases:
   conductor-kit, conductor-kit-install
+  conductor-uninstall, conductor-settings, conductor-login
   conductor-config-validate, conductor-doctor
   conductor-daemon
   conductor-mcp-bundle

@@ -56,6 +56,22 @@ func printJSON(payload map[string]interface{}) {
 	fmt.Println(string(out))
 }
 
+func conductorBinAliases() []string {
+	return []string{
+		"conductor",
+		"conductor-kit",
+		"conductor-kit-install",
+		"conductor-config-validate",
+		"conductor-doctor",
+		"conductor-daemon",
+		"conductor-mcp-bundle",
+		"conductor-mcp",
+		"conductor-login",
+		"conductor-settings",
+		"conductor-uninstall",
+	}
+}
+
 func randomSeed() {
 	rand.Seed(time.Now().UnixNano())
 }
