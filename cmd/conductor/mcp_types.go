@@ -7,6 +7,7 @@ type BatchInput struct {
 	Reasoning       string `json:"reasoning,omitempty"`
 	Config          string `json:"config,omitempty"`
 	TimeoutMs       int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs   int    `json:"idle_timeout_ms,omitempty"`
 	RequireApproval bool   `json:"require_approval,omitempty"`
 	Mode            string `json:"mode,omitempty"`
 	NoDaemon        bool   `json:"no_daemon,omitempty"`
@@ -19,6 +20,7 @@ type RunInput struct {
 	Reasoning       string `json:"reasoning,omitempty"`
 	Config          string `json:"config,omitempty"`
 	TimeoutMs       int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs   int    `json:"idle_timeout_ms,omitempty"`
 	RequireApproval bool   `json:"require_approval,omitempty"`
 	Mode            string `json:"mode,omitempty"`
 	NoDaemon        bool   `json:"no_daemon,omitempty"`

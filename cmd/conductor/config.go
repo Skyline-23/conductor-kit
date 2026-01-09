@@ -15,6 +15,7 @@ type Config struct {
 
 type Defaults struct {
 	TimeoutMs      int  `json:"timeout_ms"`
+	IdleTimeoutMs  int  `json:"idle_timeout_ms"`
 	MaxParallel    int  `json:"max_parallel"`
 	Retry          int  `json:"retry"`
 	RetryBackoffMs int  `json:"retry_backoff_ms"`
@@ -56,6 +57,7 @@ type RoleConfig struct {
 	Env            map[string]string `json:"env"`
 	Cwd            string            `json:"cwd"`
 	TimeoutMs      int               `json:"timeout_ms"`
+	IdleTimeoutMs  int               `json:"idle_timeout_ms"`
 	MaxParallel    int               `json:"max_parallel"`
 	Retry          int               `json:"retry"`
 	RetryBackoffMs int               `json:"retry_backoff_ms"`
@@ -172,6 +174,7 @@ func loadConfigOrEmpty(path string) (Config, error) {
 
 const (
 	defaultTimeoutMs      = 120000
+	defaultIdleTimeoutMs  = 0
 	defaultMaxParallel    = 4
 	defaultRetry          = 0
 	defaultRetryBackoffMs = 500
@@ -180,6 +183,9 @@ const (
 func normalizeDefaults(d Defaults) Defaults {
 	if d.TimeoutMs <= 0 {
 		d.TimeoutMs = defaultTimeoutMs
+	}
+	if d.IdleTimeoutMs < 0 {
+		d.IdleTimeoutMs = defaultIdleTimeoutMs
 	}
 	if d.MaxParallel <= 0 {
 		d.MaxParallel = defaultMaxParallel

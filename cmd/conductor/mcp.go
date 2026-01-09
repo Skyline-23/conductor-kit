@@ -220,9 +220,16 @@ func applyTimeout(spec *CmdSpec, timeoutMs int) {
 	}
 }
 
+func applyIdleTimeout(spec *CmdSpec, idleTimeoutMs int) {
+	if idleTimeoutMs <= 0 {
+		return
+	}
+	spec.IdleTimeoutMs = idleTimeoutMs
+}
+
 func runBatchTool(input BatchInput) (map[string]interface{}, error) {
 	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
-	return runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs)
+	return runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
 }
 
 func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
@@ -234,7 +241,7 @@ func runBatchAsyncTool(input BatchInput) (map[string]interface{}, error) {
 			}
 		}
 	}
-	return runBatchAsync(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
+	return runBatchAsync(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs, input.IdleTimeoutMs)
 }
 
 func runTool(input RunInput) (map[string]interface{}, error) {
@@ -243,7 +250,7 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	}
 	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
 	if input.Role == "" || input.Role == "auto" {
-		return runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs)
+		return runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs)
 	}
 	configPath := resolveConfigPath(input.Config)
 
@@ -262,6 +269,7 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 		return nil, err
 	}
 	applyTimeout(&spec, timeoutMs)
+	applyIdleTimeout(&spec, input.IdleTimeoutMs)
 	return runCommand(spec)
 }
 
@@ -277,6 +285,7 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 			Reasoning:       input.Reasoning,
 			Config:          input.Config,
 			TimeoutMs:       input.TimeoutMs,
+			IdleTimeoutMs:   input.IdleTimeoutMs,
 			RequireApproval: input.RequireApproval,
 			Mode:            input.Mode,
 			NoDaemon:        input.NoDaemon,
@@ -308,6 +317,9 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 	}
 	if input.TimeoutMs > 0 {
 		spec.TimeoutMs = input.TimeoutMs
+	}
+	if input.IdleTimeoutMs > 0 {
+		spec.IdleTimeoutMs = input.IdleTimeoutMs
 	}
 	return startAsync(spec)
 }

@@ -126,7 +126,7 @@ conductor daemon --mode stop
 `model`이 비어 있으면 모델 플래그를 전달하지 않아 각 CLI의 기본 모델을 사용합니다.
 
 핵심 필드:
-- `defaults.timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
+- `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
 - `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
 - `routing.router_role`: `strategy=oracle`에서 사용할 라우팅 역할
 - `routing.always`: 자동 라우팅 시 항상 포함할 역할 (예: `["oracle"]`)
@@ -142,7 +142,7 @@ conductor daemon --mode stop
 - `roles.<name>.models`: `conductor.run_batch`용 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd 오버라이드
-- `roles.<name>.timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role 오버라이드
+- `roles.<name>.timeout_ms` / `roles.<name>.idle_timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role 오버라이드
 
 기본값(생략 시):
 - `codex`: args `["exec","{prompt}"]`, model flag `-m`, reasoning flag `-c model_reasoning_effort`
@@ -169,8 +169,8 @@ conductor daemon --mode stop
 ```
 
 오버라이드:
-- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "prompt": "<task>" }`
-- `conductor.run_batch` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "prompt": "<task>" }`
+- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
+- `conductor.run_batch` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
 - `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` 또는 `CONDUCTOR_CONFIG=/path/to/conductor.json`
 팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
 스키마: `config/conductor.schema.json` (툴링용 선택 사항)

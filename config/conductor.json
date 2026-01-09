@@ -1,6 +1,7 @@
 {
   "defaults": {
     "timeout_ms": 120000,
+    "idle_timeout_ms": 0,
     "max_parallel": 4,
     "retry": 0,
     "retry_backoff_ms": 500,

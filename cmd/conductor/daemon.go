@@ -791,6 +791,9 @@ func buildSpecForInput(input RunInput, configPath string) (CmdSpec, error) {
 	if input.TimeoutMs > 0 {
 		spec.TimeoutMs = input.TimeoutMs
 	}
+	if input.IdleTimeoutMs > 0 {
+		spec.IdleTimeoutMs = input.IdleTimeoutMs
+	}
 	return spec, nil
 }
 
@@ -850,6 +853,9 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 			}
 			if input.TimeoutMs > 0 {
 				spec.TimeoutMs = input.TimeoutMs
+			}
+			if input.IdleTimeoutMs > 0 {
+				spec.IdleTimeoutMs = input.IdleTimeoutMs
 			}
 			results = append(results, specEntry{agent: role, spec: spec})
 		}

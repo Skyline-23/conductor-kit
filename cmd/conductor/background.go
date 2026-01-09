@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -29,6 +30,7 @@ type CmdSpec struct {
 	Env            map[string]string
 	Cwd            string
 	TimeoutMs      int
+	IdleTimeoutMs  int
 	Retry          int
 	RetryBackoffMs int
 	PromptHash     string
@@ -65,6 +67,7 @@ func buildSpecFromAgent(agent, prompt string, defaults Defaults, logPrompt bool)
 	}
 	if spec, ok := mapping[agent]; ok {
 		spec.TimeoutMs = defaults.TimeoutMs
+		spec.IdleTimeoutMs = defaults.IdleTimeoutMs
 		spec.Retry = defaults.Retry
 		spec.RetryBackoffMs = defaults.RetryBackoffMs
 		spec.PromptHash, spec.PromptLen = promptMeta(prompt)
@@ -130,6 +133,7 @@ func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverrid
 		Env:            roleCfg.Env,
 		Cwd:            roleCfg.Cwd,
 		TimeoutMs:      effectiveInt(roleCfg.TimeoutMs, defaults.TimeoutMs),
+		IdleTimeoutMs:  effectiveInt(roleCfg.IdleTimeoutMs, defaults.IdleTimeoutMs),
 		Retry:          effectiveInt(roleCfg.Retry, defaults.Retry),
 		RetryBackoffMs: effectiveInt(roleCfg.RetryBackoffMs, defaults.RetryBackoffMs),
 	}
@@ -222,12 +226,61 @@ func readTail(path string, bytes int) string {
 	return string(data)
 }
 
-func statusFromError(ctx context.Context, err error) (string, int, string) {
+type activityWriter struct {
+	w          io.Writer
+	activityCh chan struct{}
+}
+
+func (a *activityWriter) Write(p []byte) (int, error) {
+	n, err := a.w.Write(p)
+	if n > 0 && a.activityCh != nil {
+		select {
+		case a.activityCh <- struct{}{}:
+		default:
+		}
+	}
+	return n, err
+}
+
+func startIdleTimer(ctx context.Context, idle time.Duration, activityCh <-chan struct{}, onTimeout func()) func() {
+	if idle <= 0 || activityCh == nil {
+		return func() {}
+	}
+	stopCh := make(chan struct{})
+	go func() {
+		timer := time.NewTimer(idle)
+		defer timer.Stop()
+		for {
+			select {
+			case <-activityCh:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(idle)
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			case <-timer.C:
+				onTimeout()
+				return
+			}
+		}
+	}()
+	return func() { close(stopCh) }
+}
+
+func statusFromErrorWithTimeout(ctx context.Context, err error, timedOut bool) (string, int, string) {
 	if err == nil {
 		return "ok", 0, ""
 	}
 	status := "error"
 	switch {
+	case timedOut:
+		status = "timeout"
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		status = "timeout"
 	case errors.Is(ctx.Err(), context.Canceled):
@@ -283,20 +336,39 @@ func runCommand(spec CmdSpec) (map[string]interface{}, error) {
 
 func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}, error) {
 	timeout := time.Duration(spec.TimeoutMs) * time.Millisecond
+	idleTimeout := time.Duration(spec.IdleTimeoutMs) * time.Millisecond
 	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
 	}
+	defer cancel()
+
+	activityCh := make(chan struct{}, 1)
+	var idleTimedOut atomic.Bool
+	stopIdle := startIdleTimer(ctx, idleTimeout, activityCh, func() {
+		idleTimedOut.Store(true)
+		cancel()
+	})
+	defer stopIdle()
 
 	runID := newRunID()
 	start := time.Now().UTC()
 	cmd := exec.CommandContext(ctx, spec.Cmd, spec.Args...)
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutWriter := &activityWriter{w: &stdout, activityCh: activityCh}
+	stderrWriter := &activityWriter{w: &stderr, activityCh: activityCh}
 	if spec.Cwd != "" {
 		cmd.Dir = spec.Cwd
 	}
@@ -308,11 +380,25 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 		cmd.Env = env
 	}
 
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		_, _ = io.Copy(stdoutWriter, stdoutPipe)
+		wg.Done()
+	}()
+	go func() {
+		_, _ = io.Copy(stderrWriter, stderrPipe)
+		wg.Done()
+	}()
+	err = cmd.Wait()
+	wg.Wait()
 	end := time.Now().UTC()
 	duration := end.Sub(start).Milliseconds()
 
-	status, exitCode, errMsg := statusFromError(ctx, err)
+	status, exitCode, errMsg := statusFromErrorWithTimeout(ctx, err, idleTimedOut.Load())
 
 	payload := map[string]interface{}{
 		"run_id":      runID,
@@ -435,11 +521,19 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 		var cancel context.CancelFunc
 		if spec.TimeoutMs > 0 {
 			ctx, cancel = context.WithTimeout(ctx, time.Duration(spec.TimeoutMs)*time.Millisecond)
+		} else {
+			ctx, cancel = context.WithCancel(ctx)
 		}
+		activityCh := make(chan struct{}, 1)
+		var idleTimedOut atomic.Bool
+		stopIdle := startIdleTimer(ctx, time.Duration(spec.IdleTimeoutMs)*time.Millisecond, activityCh, func() {
+			idleTimedOut.Store(true)
+			cancel()
+		})
 
 		cmd := exec.CommandContext(ctx, spec.Cmd, spec.Args...)
-		cmd.Stdout = stdoutFile
-		cmd.Stderr = stderrFile
+		cmd.Stdout = &activityWriter{w: stdoutFile, activityCh: activityCh}
+		cmd.Stderr = &activityWriter{w: stderrFile, activityCh: activityCh}
 		if spec.Cwd != "" {
 			cmd.Dir = spec.Cwd
 		}
@@ -460,9 +554,8 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 			exitCode = 1
 			errMsg = err.Error()
 			endedAt = time.Now().UTC()
-			if cancel != nil {
-				cancel()
-			}
+			cancel()
+			stopIdle()
 			break
 		}
 
@@ -484,11 +577,10 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 		_ = writeAsyncMeta(meta)
 
 		err := cmd.Wait()
-		if cancel != nil {
-			cancel()
-		}
+		cancel()
+		stopIdle()
 		endedAt = time.Now().UTC()
-		status, exitCode, errMsg = statusFromError(ctx, err)
+		status, exitCode, errMsg = statusFromErrorWithTimeout(ctx, err, idleTimedOut.Load())
 
 		cancelRequested := false
 		if current, _, err := loadAsyncMeta(runID); err == nil {
@@ -628,7 +720,7 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs int) (map[string]interface{}, error) {
+func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs, idleTimeoutMs int) (map[string]interface{}, error) {
 	if prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
@@ -708,6 +800,9 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 			if timeoutMs > 0 {
 				spec.TimeoutMs = timeoutMs
 			}
+			if idleTimeoutMs > 0 {
+				spec.IdleTimeoutMs = idleTimeoutMs
+			}
 			entries = append(entries, specEntry{agent: role, spec: spec})
 		}
 	}
@@ -760,7 +855,7 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 	}, nil
 }
 
-func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs int) (map[string]interface{}, error) {
+func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs, idleTimeoutMs int) (map[string]interface{}, error) {
 	if prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
@@ -835,6 +930,9 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 			}
 			if timeoutMs > 0 {
 				spec.TimeoutMs = timeoutMs
+			}
+			if idleTimeoutMs > 0 {
+				spec.IdleTimeoutMs = idleTimeoutMs
 			}
 			entries = append(entries, specEntry{agent: role, spec: spec})
 		}
