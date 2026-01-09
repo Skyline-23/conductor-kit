@@ -24,6 +24,11 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install --mode link --repo ~/.conductor-kit
 ```
 
+프로젝트 로컬 설치:
+```bash
+conductor install --mode link --repo ~/.conductor-kit --project
+```
+
 ## 요구 사항
 - 호스트 CLI: Codex CLI 또는 Claude Code (스킬/커맨드는 해당 호스트 안에서 실행됨)
 - 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
@@ -83,6 +88,13 @@ Claude Code (`~/.claude/.mcp.json`):
 
 참고: 위임 도구는 MCP 전용이며 CLI 서브커맨드는 제공하지 않습니다.
 
+### 4) 비동기 위임 (선택)
+- 비동기 시작: `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
+- 배치 비동기: `conductor.run_batch_async` with `{ "roles": "oracle,librarian", "prompt": "<task>" }`
+- 상태 확인: `conductor.run_status` with `{ "run_id": "<id>" }`
+- 완료 대기: `conductor.run_wait` with `{ "run_id": "<id>", "timeout_ms": 120000 }`
+- 취소: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
+
 
 ## 모델 설정 (roles)
 `~/.conductor-kit/conductor.json`에서 역할 -> CLI/모델 라우팅을 설정합니다 (`config/conductor.json`에서 설치).
@@ -126,6 +138,10 @@ Claude Code (`~/.claude/.mcp.json`):
 팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
 스키마: `config/conductor.schema.json` (툴링용 선택 사항)
 
+## 프로젝트 로컬 오버라이드
+- `./.conductor-kit/conductor.json`에 로컬 설정을 두면 글로벌 설정을 덮어씁니다.
+- `conductor install --project`로 `./.claude`에 스킬/커맨드, `./.codex`에 프롬프트를 설치합니다.
+
 ## 진단
 - `conductor config-validate` (`~/.conductor-kit/conductor.json` 유효성 검사)
 - `conductor doctor` (설정 + CLI 가용성 점검)
@@ -134,6 +150,16 @@ Claude Code (`~/.claude/.mcp.json`):
 - `conductor.run_history` with `{ "limit": 20 }`
 - `conductor.run_info` with `{ "run_id": "<id>" }`
 
+## 선택적 MCP 번들
+```bash
+# Claude Code (.claude/.mcp.json)
+conductor mcp-bundle --host claude --bundle core --repo /path/to/conductor-kit --out .claude/.mcp.json
+
+# Codex CLI (codex mcp add 명령 출력)
+conductor mcp-bundle --host codex --bundle core --repo /path/to/conductor-kit
+```
+번들 설정은 `~/.conductor-kit/mcp-bundles.json`에 설치됩니다.
+
 ## MCP 도구 (tool-calling UI 권장)
 ```bash
 codex mcp add conductor -- conductor mcp
@@ -141,6 +167,11 @@ codex mcp add conductor -- conductor mcp
 도구 목록:
 - `conductor.run`
 - `conductor.run_batch`
+- `conductor.run_async`
+- `conductor.run_batch_async`
+- `conductor.run_status`
+- `conductor.run_wait`
+- `conductor.run_cancel`
 - `conductor.run_history`
 - `conductor.run_info`
 

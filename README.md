@@ -24,6 +24,11 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install --mode link --repo ~/.conductor-kit
 ```
 
+Project-local install:
+```bash
+conductor install --mode link --repo ~/.conductor-kit --project
+```
+
 ## Requirements
 - A host CLI: Codex CLI or Claude Code (skills/commands run inside these hosts).
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
@@ -83,6 +88,13 @@ Then use tools:
 
 Note: Delegation tools are MCP-only; no CLI subcommands are provided.
 
+### 4) Async delegation (optional)
+- Start async run: `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
+- Batch async: `conductor.run_batch_async` with `{ "roles": "oracle,librarian", "prompt": "<task>" }`
+- Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
+- Wait for completion: `conductor.run_wait` with `{ "run_id": "<id>", "timeout_ms": 120000 }`
+- Cancel: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
+
 
 ## Model setup (roles)
 `~/.conductor-kit/conductor.json` controls role -> CLI/model routing (installed from `config/conductor.json`).
@@ -126,6 +138,10 @@ Overrides:
 Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
 Schema: `config/conductor.schema.json` (optional for tooling).
 
+## Project-local overrides
+- Place a local config at `./.conductor-kit/conductor.json` to override the global config.
+- Use `conductor install --project` to link skills/commands into `./.claude` and prompts into `./.codex`.
+
 ## Diagnostics
 - `conductor config-validate` (validates `~/.conductor-kit/conductor.json`)
 - `conductor doctor` (checks config + CLI availability)
@@ -134,6 +150,16 @@ Schema: `config/conductor.schema.json` (optional for tooling).
 - `conductor.run_history` with `{ "limit": 20 }`
 - `conductor.run_info` with `{ "run_id": "<id>" }`
 
+## Optional MCP bundles
+```bash
+# Claude Code (.claude/.mcp.json)
+conductor mcp-bundle --host claude --bundle core --repo /path/to/conductor-kit --out .claude/.mcp.json
+
+# Codex CLI (prints codex mcp add commands)
+conductor mcp-bundle --host codex --bundle core --repo /path/to/conductor-kit
+```
+Bundle config lives at `~/.conductor-kit/mcp-bundles.json` (installed by `conductor install`).
+
 ## MCP tools (recommended for tool-calling UI)
 ```bash
 codex mcp add conductor -- conductor mcp
@@ -141,6 +167,11 @@ codex mcp add conductor -- conductor mcp
 Tools:
 - `conductor.run`
 - `conductor.run_batch`
+- `conductor.run_async`
+- `conductor.run_batch_async`
+- `conductor.run_status`
+- `conductor.run_wait`
+- `conductor.run_cancel`
 - `conductor.run_history`
 - `conductor.run_info`
 

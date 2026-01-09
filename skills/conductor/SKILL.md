@@ -116,6 +116,9 @@ If the host supports it, prefer its native model switching first; delegate only 
   - Or use a single batch call:
     - `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<request>" }`
     - Override model/reasoning: `{ "roles": "oracle", "model": "<model>", "reasoning": "<level>", "prompt": "<request>" }`
+  - For long-running work, use async tools:
+    - `conductor.run_async` / `conductor.run_batch_async`
+    - Poll with `conductor.run_status` or block with `conductor.run_wait`
   - Delegation is MCP-only; do not use CLI `background-*` commands.
   - Always print a user-visible line after delegation: `Delegation results received: <agents>` (no raw logs).
   - If you need auditability, use `conductor.run_history` / `conductor.run_info`.
