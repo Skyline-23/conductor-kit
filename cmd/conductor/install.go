@@ -104,10 +104,6 @@ func runInstall(args []string) int {
 			"conductor",
 			"conductor-kit",
 			"conductor-kit-install",
-			"conductor-background-task",
-			"conductor-background-output",
-			"conductor-background-cancel",
-			"conductor-background-batch",
 			"conductor-mcp",
 		}
 		for _, name := range aliases {

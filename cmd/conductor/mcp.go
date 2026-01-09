@@ -18,28 +18,17 @@ type BatchInput struct {
 	Model     string `json:"model,omitempty"`
 	Reasoning string `json:"reasoning,omitempty"`
 	Config    string `json:"config,omitempty"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
 
-type TaskInput struct {
+type RunInput struct {
 	Prompt    string `json:"prompt"`
 	Role      string `json:"role,omitempty"`
 	Agent     string `json:"agent,omitempty"`
 	Model     string `json:"model,omitempty"`
 	Reasoning string `json:"reasoning,omitempty"`
 	Config    string `json:"config,omitempty"`
-}
-
-type OutputInput struct {
-	TaskID  string `json:"task_id"`
-	Block   bool   `json:"block,omitempty"`
-	Timeout int    `json:"timeout,omitempty"`
-	Tail    int    `json:"tail,omitempty"`
-}
-
-type CancelInput struct {
-	TaskID string `json:"task_id,omitempty"`
-	All    bool   `json:"all,omitempty"`
-	Force  bool   `json:"force,omitempty"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
 
 func runMCP(args []string) int {
@@ -50,10 +39,10 @@ func runMCP(args []string) int {
 	}, nil)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "conductor.background_task",
-		Description: "Run a single role/agent CLI in background and return a task ID.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input TaskInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		payload, err := runTaskTool(input)
+		Name:        "conductor.run",
+		Description: "Run a single role/agent synchronously and return output.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input RunInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		payload, err := runTool(input)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -61,38 +50,12 @@ func runMCP(args []string) int {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "conductor.background_batch",
-		Description: "Run role/agent background batch for multiple CLIs and return task IDs.",
+		Name:        "conductor.run_batch",
+		Description: "Run multiple roles/agents in parallel and return outputs.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input BatchInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		payload, err := runBatchTool(input)
 		if err != nil {
 			return nil, nil, err
-		}
-		return nil, payload, nil
-	})
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "conductor.background_output",
-		Description: "Fetch output for a background task.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input OutputInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		payload, err := getTaskOutput(input.TaskID, input.Block, time.Duration(input.Timeout)*time.Millisecond, input.Tail)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, payload, nil
-	})
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "conductor.background_cancel",
-		Description: "Cancel background tasks.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input CancelInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		payload := map[string]interface{}{}
-		if input.All {
-			payload["cancelled"] = cancelAllTasks(input.Force)
-		} else if input.TaskID != "" {
-			payload["cancelled"] = []map[string]interface{}{cancelTask(input.TaskID, input.Force)}
-		} else {
-			return nil, nil, errors.New("Missing task_id or all")
 		}
 		return nil, payload, nil
 	})
@@ -106,27 +69,10 @@ func runMCP(args []string) int {
 }
 
 func runBatchTool(input BatchInput) (map[string]interface{}, error) {
-	args := []string{"--prompt", input.Prompt}
-	if input.Roles != "" {
-		args = append(args, "--roles", input.Roles)
-	}
-	if input.Agents != "" {
-		args = append(args, "--agents", input.Agents)
-	}
-	if input.Model != "" {
-		args = append(args, "--model", input.Model)
-	}
-	if input.Reasoning != "" {
-		args = append(args, "--reasoning", input.Reasoning)
-	}
-	if input.Config != "" {
-		args = append(args, "--config", input.Config)
-	}
-
-	return runBatchArgs(args)
+	return runBatch(input.Prompt, input.Roles, input.Agents, input.Config, input.Model, input.Reasoning, input.TimeoutMs)
 }
 
-func runTaskTool(input TaskInput) (map[string]interface{}, error) {
+func runTool(input RunInput) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
@@ -148,5 +94,7 @@ func runTaskTool(input TaskInput) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return startTask(spec, input.Prompt)
+
+	timeout := time.Duration(input.TimeoutMs) * time.Millisecond
+	return runCommand(spec, timeout)
 }
