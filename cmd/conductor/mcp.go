@@ -222,8 +222,8 @@ func runTool(input RunInput) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
-	if input.Role == "" {
-		return nil, errors.New("Missing role")
+	if input.Role == "" || input.Role == "auto" {
+		return runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, input.TimeoutMs)
 	}
 	configPath := resolveConfigPath(input.Config)
 
@@ -251,8 +251,19 @@ func runAsyncTool(input RunInput) (map[string]interface{}, error) {
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
-	if input.Role == "" {
-		return nil, errors.New("Missing role")
+	if input.Role == "" || input.Role == "auto" {
+		batch := BatchInput{
+			Prompt:          input.Prompt,
+			Roles:           "auto",
+			Model:           input.Model,
+			Reasoning:       input.Reasoning,
+			Config:          input.Config,
+			TimeoutMs:       input.TimeoutMs,
+			RequireApproval: input.RequireApproval,
+			Mode:            input.Mode,
+			NoDaemon:        input.NoDaemon,
+		}
+		return runBatchAsyncTool(batch)
 	}
 	configPath := resolveConfigPath(input.Config)
 	if !input.NoDaemon {

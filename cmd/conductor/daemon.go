@@ -814,9 +814,7 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 
 	roleNames := []string{}
 	if input.Roles == "auto" {
-		for k := range cfg.Roles {
-			roleNames = append(roleNames, k)
-		}
+		roleNames = autoSelectRoles(input.Prompt, cfg)
 	} else {
 		roleNames = splitList(input.Roles)
 	}

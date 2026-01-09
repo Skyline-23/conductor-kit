@@ -665,9 +665,7 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 
 	roleNames := []string{}
 	if roles == "auto" {
-		for k := range cfg.Roles {
-			roleNames = append(roleNames, k)
-		}
+		roleNames = autoSelectRoles(prompt, cfg)
 	} else {
 		roleNames = splitList(roles)
 	}
@@ -782,9 +780,7 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 
 	roleNames := []string{}
 	if roles == "auto" {
-		for k := range cfg.Roles {
-			roleNames = append(roleNames, k)
-		}
+		roleNames = autoSelectRoles(prompt, cfg)
 	} else {
 		roleNames = splitList(roles)
 	}
