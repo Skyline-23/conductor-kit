@@ -42,12 +42,21 @@ conductor install --mode link --repo ~/.conductor-kit
 ### 1) 스킬 호출
 `conductor`, `ultrawork` / `ulw`, “오케스트레이션” 등의 요청으로 트리거.
 
-### 2) 커맨드 사용 (Codex + Claude)
+### 2) 커맨드 사용
+Claude Code (슬래시 커맨드):
 - `/conductor-plan`
 - `/conductor-search`
 - `/conductor-implement`
 - `/conductor-release`
 - `/conductor-ultrawork`
+
+Codex CLI (커스텀 프롬프트):
+- `/prompts:conductor-plan`
+- `/prompts:conductor-search`
+- `/prompts:conductor-implement`
+- `/prompts:conductor-release`
+- `/prompts:conductor-ultrawork`
+프롬프트는 `~/.codex/prompts` (또는 `$CODEX_HOME/prompts`)에 설치됩니다.
 
 ### 3) 병렬 위임 (MCP 전용)
 Codex CLI:
@@ -73,6 +82,12 @@ Claude Code (`~/.claude/.mcp.json`):
 - `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
 
 참고: 위임 도구는 MCP 전용이며 CLI 서브커맨드는 제공하지 않습니다.
+
+## 제거
+```bash
+conductor uninstall
+```
+`--keep-home`을 사용하면 `~/.conductor-kit`을 보존합니다.
 
 ## 모델 설정 (roles)
 `~/.conductor-kit/conductor.json`에서 역할 -> CLI/모델 라우팅을 설정합니다 (`config/conductor.json`에서 설치).

@@ -42,12 +42,21 @@ conductor install --mode link --repo ~/.conductor-kit
 ### 1) Use the skill
 Trigger by saying: `conductor`, `ultrawork` / `ulw`, or “orchestration”.
 
-### 2) Use commands (Codex + Claude)
+### 2) Use commands
+Claude Code (slash commands):
 - `/conductor-plan`
 - `/conductor-search`
 - `/conductor-implement`
 - `/conductor-release`
 - `/conductor-ultrawork`
+
+Codex CLI (custom prompts):
+- `/prompts:conductor-plan`
+- `/prompts:conductor-search`
+- `/prompts:conductor-implement`
+- `/prompts:conductor-release`
+- `/prompts:conductor-ultrawork`
+Prompts are installed in `~/.codex/prompts` (or `$CODEX_HOME/prompts`).
 
 ### 3) Parallel delegation (MCP-only)
 Codex CLI:
@@ -73,6 +82,12 @@ Then use tools:
 - `conductor.run_batch` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
 
 Note: Delegation tools are MCP-only; no CLI subcommands are provided.
+
+## Uninstall
+```bash
+conductor uninstall
+```
+Use `--keep-home` to preserve `~/.conductor-kit`.
 
 ## Model setup (roles)
 `~/.conductor-kit/conductor.json` controls role -> CLI/model routing (installed from `config/conductor.json`).
