@@ -172,6 +172,11 @@ conductor daemon --mode stop
 팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
 스키마: `config/conductor.schema.json` (툴링용 선택 사항)
 
+## 설정/로그인
+- `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
+- `conductor login codex|claude|gemini` (CLI 로그인 실행)
+- `conductor uninstall` (홈 디렉토리 설치물 제거)
+
 ## 프로젝트 로컬 오버라이드
 - `./.conductor-kit/conductor.json`에 로컬 설정을 두면 글로벌 설정을 덮어씁니다.
 - `conductor install --project`로 `./.claude`에 스킬/커맨드, `./.codex`에 프롬프트를 설치합니다.

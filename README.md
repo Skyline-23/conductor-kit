@@ -174,6 +174,11 @@ Overrides:
 Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
 Schema: `config/conductor.schema.json` (optional for tooling).
 
+## Setup helpers
+- `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
+- `conductor login codex|claude|gemini` (runs CLI login flow)
+- `conductor uninstall` (removes installed skills/commands/config from home)
+
 ## Project-local overrides
 - Place a local config at `./.conductor-kit/conductor.json` to override the global config.
 - Use `conductor install --project` to link skills/commands into `./.claude` and prompts into `./.codex`.
