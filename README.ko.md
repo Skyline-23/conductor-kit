@@ -24,6 +24,12 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install --mode link --repo ~/.conductor-kit
 ```
 
+## 요구 사항
+- 호스트 CLI: Codex CLI 또는 Claude Code (스킬/커맨드는 해당 호스트 안에서 실행됨)
+- 백그라운드 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
+- Go 1.23+ (소스에서 빌드할 때만 필요)
+- MCP 도구 등록을 원하면 `codex` CLI 필요 (`codex mcp add ...`)
+
 ## 포함 기능
 - **스킬**: `conductor` (`skills/conductor/SKILL.md`)
 - **커맨드**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
@@ -61,6 +67,43 @@ conductor background-output --task-id <id>
 # 전체 취소
 conductor background-cancel --all
 ```
+
+## 모델 설정 (roles)
+`~/.conductor-kit/conductor.json`에서 역할 -> CLI/모델 라우팅을 설정합니다 (`config/conductor.json`에서 설치).
+레포의 파일이 기본 템플릿이며, `conductor install`이 이를 `~/.conductor-kit/`로 링크/복사합니다.
+`model`이 비어 있으면 모델 플래그를 전달하지 않아 각 CLI의 기본 모델을 사용합니다.
+
+핵심 필드:
+- `roles.<name>.cli`: 실행할 CLI (PATH에 있어야 함)
+- `roles.<name>.args`: argv 템플릿; `{prompt}` 위치에 프롬프트 삽입
+- `roles.<name>.model_flag`: 모델 플래그 (codex는 `-m`, claude/gemini는 `--model`)
+- `roles.<name>.model`: 기본 모델 문자열 (선택)
+- `roles.<name>.models`: `background-batch --roles ...`용 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
+- `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
+
+예시:
+```json
+{
+  "roles": {
+    "oracle": {
+      "cli": "codex",
+      "args": ["exec", "{prompt}"],
+      "model_flag": "-m",
+      "model": "gpt-5.2-codex",
+      "reasoning_flag": "-c",
+      "reasoning_key": "model_reasoning_effort",
+      "reasoning": "high"
+    }
+  }
+}
+```
+
+오버라이드:
+- `conductor background-task --role <role> --model <model> --reasoning <level>`
+- `conductor background-batch --roles <role(s)> --model <model[,model]> --reasoning <level>`
+  (`--model` 오버라이드는 `--roles` 모드에서만 적용됨, `--agents`는 제외)
+- `conductor background-batch --config /path/to/conductor.json` 또는 `CONDUCTOR_CONFIG=/path/to/conductor.json`
+팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
 
 ## MCP 도구 (선택)
 ```bash
