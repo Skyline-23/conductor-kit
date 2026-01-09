@@ -20,6 +20,7 @@ Do the following:
     - `go build -o ~/.local/bin/conductor ./cmd/conductor`
     - `conductor install --mode link --repo /path/to/conductor-kit --force`
   - After delegation, print a user-visible line with agents: `Delegation results received: <agents>`.
+  - For audit, use `conductor.run_history` or `conductor.run_info`.
 - Run the full orchestration loop: search -> plan -> execute -> verify -> cleanup.
 - Always produce a short plan (3-6 steps) before any edits.
 - Make small, safe changes; prefer reuse over new dependencies.

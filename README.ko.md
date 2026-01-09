@@ -28,7 +28,9 @@ conductor install --mode link --repo ~/.conductor-kit
 - 호스트 CLI: Codex CLI 또는 Claude Code (스킬/커맨드는 해당 호스트 안에서 실행됨)
 - 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
 - Go 1.23+ (소스에서 빌드할 때만 필요)
-- MCP 도구 등록을 원하면 `codex` CLI 필요 (`codex mcp add ...`)
+- MCP 도구 등록:
+  - Codex CLI: `codex mcp add ...`
+  - Claude Code: `~/.claude/.mcp.json` (아래 참고)
 
 ## 포함 기능
 - **스킬**: `conductor` (`skills/conductor/SKILL.md`)
@@ -48,8 +50,21 @@ conductor install --mode link --repo ~/.conductor-kit
 - `/conductor-ultrawork`
 
 ### 3) 병렬 위임 (MCP 전용)
+Codex CLI:
 ```bash
 codex mcp add conductor -- conductor mcp
+```
+
+Claude Code (`~/.claude/.mcp.json`):
+```json
+{
+  "mcpServers": {
+    "conductor": {
+      "command": "conductor",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
 이후 도구 호출:
@@ -65,12 +80,16 @@ codex mcp add conductor -- conductor mcp
 `model`이 비어 있으면 모델 플래그를 전달하지 않아 각 CLI의 기본 모델을 사용합니다.
 
 핵심 필드:
+- `defaults.timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
+- `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
 - `roles.<name>.cli`: 실행할 CLI (PATH에 있어야 함)
 - `roles.<name>.args`: argv 템플릿; `{prompt}` 위치에 프롬프트 삽입
 - `roles.<name>.model_flag`: 모델 플래그 (codex는 `-m`, claude/gemini는 `--model`)
 - `roles.<name>.model`: 기본 모델 문자열 (선택)
 - `roles.<name>.models`: `conductor.run_batch`용 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
+- `roles.<name>.env` / `roles.<name>.cwd`: env/cwd 오버라이드
+- `roles.<name>.timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role 오버라이드
 
 예시:
 ```json
@@ -95,6 +114,15 @@ codex mcp add conductor -- conductor mcp
   (`model` 오버라이드는 `roles` 모드에서만 적용됨, `agents`는 제외)
 - `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` 또는 `CONDUCTOR_CONFIG=/path/to/conductor.json`
 팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
+스키마: `config/conductor.schema.json` (툴링용 선택 사항)
+
+## 진단
+- `conductor config-validate` (`~/.conductor-kit/conductor.json` 유효성 검사)
+- `conductor doctor` (설정 + CLI 가용성 점검)
+
+## 관측/기록
+- `conductor.run_history` with `{ "limit": 20 }`
+- `conductor.run_info` with `{ "run_id": "<id>" }`
 
 ## MCP 도구 (tool-calling UI 권장)
 ```bash
@@ -103,6 +131,8 @@ codex mcp add conductor -- conductor mcp
 도구 목록:
 - `conductor.run`
 - `conductor.run_batch`
+- `conductor.run_history`
+- `conductor.run_info`
 
 ## 레포 구조
 ```

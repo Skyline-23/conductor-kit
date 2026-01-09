@@ -28,7 +28,9 @@ conductor install --mode link --repo ~/.conductor-kit
 - A host CLI: Codex CLI or Claude Code (skills/commands run inside these hosts).
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
-- `codex` CLI if you want to register MCP tools (`codex mcp add ...`).
+- MCP registration:
+  - Codex CLI: `codex mcp add ...`
+  - Claude Code: `~/.claude/.mcp.json` (see below)
 
 ## What you get
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)
@@ -48,8 +50,21 @@ Trigger by saying: `conductor`, `ultrawork` / `ulw`, or “orchestration”.
 - `/conductor-ultrawork`
 
 ### 3) Parallel delegation (MCP-only)
+Codex CLI:
 ```bash
 codex mcp add conductor -- conductor mcp
+```
+
+Claude Code (`~/.claude/.mcp.json`):
+```json
+{
+  "mcpServers": {
+    "conductor": {
+      "command": "conductor",
+      "args": ["mcp"]
+    }
+  }
+}
 ```
 
 Then use tools:
@@ -65,12 +80,16 @@ The repo file is the default template; `conductor install` links/copies it into 
 If `model` is empty, no model flag is passed and the CLI default is used.
 
 Key fields:
+- `defaults.timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
+- `defaults.log_prompt`: store prompt text in run history (default: false)
 - `roles.<name>.cli`: executable to run (must be on PATH)
 - `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go
 - `roles.<name>.model_flag`: model flag (e.g. `-m` for codex, `--model` for claude/gemini)
 - `roles.<name>.model`: default model string (optional)
 - `roles.<name>.models`: fan-out list for `conductor.run_batch` (string or `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: optional reasoning config (codex supports `-c model_reasoning_effort`)
+- `roles.<name>.env` / `roles.<name>.cwd`: env/cwd overrides
+- `roles.<name>.timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role overrides
 
 Example:
 ```json
@@ -95,6 +114,15 @@ Overrides:
   (model overrides apply only to `roles` mode, not `agents`)
 - `conductor.run_batch` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` or `CONDUCTOR_CONFIG=/path/to/conductor.json`
 Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
+Schema: `config/conductor.schema.json` (optional for tooling).
+
+## Diagnostics
+- `conductor config-validate` (validates `~/.conductor-kit/conductor.json`)
+- `conductor doctor` (checks config + CLI availability)
+
+## Observability
+- `conductor.run_history` with `{ "limit": 20 }`
+- `conductor.run_info` with `{ "run_id": "<id>" }`
 
 ## MCP tools (recommended for tool-calling UI)
 ```bash
@@ -103,6 +131,8 @@ codex mcp add conductor -- conductor mcp
 Tools:
 - `conductor.run`
 - `conductor.run_batch`
+- `conductor.run_history`
+- `conductor.run_info`
 
 ## Repo layout
 ```

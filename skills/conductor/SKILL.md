@@ -118,6 +118,7 @@ If the host supports it, prefer its native model switching first; delegate only 
     - Override model/reasoning: `{ "roles": "oracle", "model": "<model>", "reasoning": "<level>", "prompt": "<request>" }`
   - Delegation is MCP-only; do not use CLI `background-*` commands.
   - Always print a user-visible line after delegation: `Delegation results received: <agents>` (no raw logs).
+  - If you need auditability, use `conductor.run_history` / `conductor.run_info`.
 
 ## Safety rules (non-negotiable)
 - Never commit/push unless explicitly asked.
