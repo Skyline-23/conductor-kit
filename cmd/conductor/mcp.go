@@ -355,18 +355,13 @@ func runTool(input RunInput, report progressReporter) (map[string]interface{}, e
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
-	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
-	if input.Role == "" || input.Role == "auto" {
-		payload, err := runBatch(input.Prompt, "auto", input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs, report)
-		if err != nil {
-			return payload, err
-		}
-		cfg, cfgErr := loadConfig(resolveConfigPath(input.Config))
-		if cfgErr == nil && resolveSummaryOnly(input.SummaryOnly, cfg) {
-			return summarizeBatchPayload(payload), nil
-		}
-		return payload, nil
+	if input.Role == "" {
+		return nil, errors.New("Missing role")
 	}
+	if input.Role == "auto" {
+		return nil, errors.New("role:auto is not supported; specify a role")
+	}
+	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
 	configPath := resolveConfigPath(input.Config)
 
 	var cfg Config
@@ -399,20 +394,11 @@ func runAsyncTool(input RunInput, report progressReporter) (map[string]interface
 	if input.Prompt == "" {
 		return nil, errors.New("Missing prompt")
 	}
-	if input.Role == "" || input.Role == "auto" {
-		batch := BatchInput{
-			Prompt:          input.Prompt,
-			Roles:           "auto",
-			Model:           input.Model,
-			Reasoning:       input.Reasoning,
-			Config:          input.Config,
-			TimeoutMs:       input.TimeoutMs,
-			IdleTimeoutMs:   input.IdleTimeoutMs,
-			RequireApproval: input.RequireApproval,
-			Mode:            input.Mode,
-			NoDaemon:        input.NoDaemon,
-		}
-		return runBatchAsyncTool(batch, report)
+	if input.Role == "" {
+		return nil, errors.New("Missing role")
+	}
+	if input.Role == "auto" {
+		return nil, errors.New("role:auto is not supported; specify a role")
 	}
 	configPath := resolveConfigPath(input.Config)
 	if !input.NoDaemon {

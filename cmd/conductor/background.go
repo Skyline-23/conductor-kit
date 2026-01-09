@@ -995,6 +995,9 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 	if roles == "" {
 		return nil, errors.New("Missing roles")
 	}
+	if roles == "auto" {
+		return nil, errors.New("role:auto is not supported; specify roles explicitly")
+	}
 	configPath = resolveConfigPath(configPath)
 
 	results := []map[string]interface{}{}
@@ -1025,18 +1028,11 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 
 	tasks := []DelegatedTask{}
 	if roles == "auto" {
-		tasks = autoPlanTasks(prompt, cfg, effectiveRouterTimeoutAsync(timeoutMs))
+		tasks = nil
 	} else {
 		tasks = tasksFromRoles(splitList(roles), prompt)
 	}
 	if len(tasks) == 0 {
-		note := ""
-		if roles == "auto" {
-			note = "auto routing disabled or produced no roles; specify roles explicitly"
-		}
-		if note != "" {
-			return map[string]interface{}{"status": "no_roles", "note": note}, nil
-		}
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}
 	agentList = []string{}
@@ -1153,6 +1149,9 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 	if roles == "" {
 		return nil, errors.New("Missing roles")
 	}
+	if roles == "auto" {
+		return nil, errors.New("role:auto is not supported; specify roles explicitly")
+	}
 	configPath = resolveConfigPath(configPath)
 
 	results := []map[string]interface{}{}
@@ -1182,18 +1181,11 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 
 	tasks := []DelegatedTask{}
 	if roles == "auto" {
-		tasks = autoPlanTasks(prompt, cfg, effectiveRouterTimeout(timeoutMs))
+		tasks = nil
 	} else {
 		tasks = tasksFromRoles(splitList(roles), prompt)
 	}
 	if len(tasks) == 0 {
-		note := ""
-		if roles == "auto" {
-			note = "auto routing disabled or produced no roles; specify roles explicitly"
-		}
-		if note != "" {
-			return map[string]interface{}{"status": "no_roles", "note": note}, nil
-		}
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}
 	agentList = []string{}

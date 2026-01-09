@@ -8,11 +8,6 @@
     "retry_backoff_ms": 500,
     "log_prompt": false
   },
-  "routing": {
-    "mode": "manual",
-    "router_role": "oracle",
-    "always": []
-  },
   "daemon": {
     "host": "127.0.0.1",
     "port": 51842,
