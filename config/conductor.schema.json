@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Conductor Config",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "max_parallel": { "type": "integer", "minimum": 0 },
+        "retry": { "type": "integer", "minimum": 0 },
+        "retry_backoff_ms": { "type": "integer", "minimum": 0 },
+        "log_prompt": { "type": "boolean" }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cli": { "type": "string" },
+          "args": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "model_flag": { "type": "string" },
+          "model": { "type": "string" },
+          "models": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string" },
+                    "reasoning_effort": { "type": "string" },
+                    "reasoning": { "type": "string" }
+                  }
+                }
+              ]
+            }
+          },
+          "reasoning_flag": { "type": "string" },
+          "reasoning_key": { "type": "string" },
+          "reasoning": { "type": "string" },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "cwd": { "type": "string" },
+          "timeout_ms": { "type": "integer", "minimum": 0 },
+          "max_parallel": { "type": "integer", "minimum": 0 },
+          "retry": { "type": "integer", "minimum": 0 },
+          "retry_backoff_ms": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["cli", "args"]
+      }
+    }
+  },
+  "required": ["roles"]
+}

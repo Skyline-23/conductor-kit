@@ -6,18 +6,33 @@ import (
 )
 
 type Config struct {
-	Roles map[string]RoleConfig `json:"roles"`
+	Defaults Defaults              `json:"defaults"`
+	Roles    map[string]RoleConfig `json:"roles"`
+}
+
+type Defaults struct {
+	TimeoutMs      int  `json:"timeout_ms"`
+	MaxParallel    int  `json:"max_parallel"`
+	Retry          int  `json:"retry"`
+	RetryBackoffMs int  `json:"retry_backoff_ms"`
+	LogPrompt      bool `json:"log_prompt"`
 }
 
 type RoleConfig struct {
-	CLI           string       `json:"cli"`
-	Args          []string     `json:"args"`
-	ModelFlag     string       `json:"model_flag"`
-	Model         string       `json:"model"`
-	Models        []ModelEntry `json:"models"`
-	ReasoningFlag string       `json:"reasoning_flag"`
-	ReasoningKey  string       `json:"reasoning_key"`
-	Reasoning     string       `json:"reasoning"`
+	CLI            string            `json:"cli"`
+	Args           []string          `json:"args"`
+	ModelFlag      string            `json:"model_flag"`
+	Model          string            `json:"model"`
+	Models         []ModelEntry      `json:"models"`
+	ReasoningFlag  string            `json:"reasoning_flag"`
+	ReasoningKey   string            `json:"reasoning_key"`
+	Reasoning      string            `json:"reasoning"`
+	Env            map[string]string `json:"env"`
+	Cwd            string            `json:"cwd"`
+	TimeoutMs      int               `json:"timeout_ms"`
+	MaxParallel    int               `json:"max_parallel"`
+	Retry          int               `json:"retry"`
+	RetryBackoffMs int               `json:"retry_backoff_ms"`
 }
 
 type ModelEntry struct {
@@ -64,6 +79,47 @@ func loadConfig(path string) (Config, error) {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+func loadConfigOrEmpty(path string) (Config, error) {
+	cfg, err := loadConfig(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Config{}, nil
+		}
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+const (
+	defaultTimeoutMs      = 120000
+	defaultMaxParallel    = 4
+	defaultRetry          = 0
+	defaultRetryBackoffMs = 500
+)
+
+func normalizeDefaults(d Defaults) Defaults {
+	if d.TimeoutMs <= 0 {
+		d.TimeoutMs = defaultTimeoutMs
+	}
+	if d.MaxParallel <= 0 {
+		d.MaxParallel = defaultMaxParallel
+	}
+	if d.Retry < 0 {
+		d.Retry = defaultRetry
+	}
+	if d.RetryBackoffMs < 0 {
+		d.RetryBackoffMs = defaultRetryBackoffMs
+	}
+	return d
+}
+
+func effectiveInt(roleVal, defaultVal int) int {
+	if roleVal > 0 {
+		return roleVal
+	}
+	return defaultVal
 }
 
 func expandModelEntries(cfg RoleConfig, modelOverride, reasoningOverride string) []ModelEntry {

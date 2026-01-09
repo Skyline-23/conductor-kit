@@ -1,4 +1,11 @@
 {
+  "defaults": {
+    "timeout_ms": 120000,
+    "max_parallel": 4,
+    "retry": 0,
+    "retry_backoff_ms": 500,
+    "log_prompt": false
+  },
   "roles": {
     "oracle": {
       "cli": "codex",
