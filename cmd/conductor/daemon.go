@@ -816,11 +816,7 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 	logPrompt := defaults.LogPrompt
 
 	tasks := []DelegatedTask{}
-	if input.Roles == "auto" {
-		return nil, errors.New("role:auto is not supported; specify roles explicitly")
-	} else {
-		tasks = tasksFromRoles(splitList(input.Roles), input.Prompt)
-	}
+	tasks = tasksFromRoles(splitList(input.Roles), input.Prompt)
 	if len(tasks) == 0 {
 		return nil, errors.New("no_roles")
 	}
@@ -859,6 +855,9 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 			}
 			results = append(results, specEntry{agent: role, spec: spec})
 		}
+	}
+	if len(results) == 0 {
+		return nil, errors.New("no_roles")
 	}
 	_ = agentList
 	return results, nil

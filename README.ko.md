@@ -234,7 +234,6 @@ codex mcp add conductor -- conductor mcp
 - `conductor.daemon_status` (daemon)
 참고: 호스트가 progress token을 제공하면 Conductor가 batch/async 실행 중 MCP progress 알림을 보냅니다.
 참고: `conductor.run_batch`는 동기 실행이므로 `conductor.run_batch_async`를 권장합니다.
-참고: `role: auto`는 지원하지 않으므로 역할을 명시해야 합니다.
 
 ## 레포 구조
 ```

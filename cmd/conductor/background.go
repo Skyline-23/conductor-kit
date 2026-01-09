@@ -995,9 +995,6 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 	if roles == "" {
 		return nil, errors.New("Missing roles")
 	}
-	if roles == "auto" {
-		return nil, errors.New("role:auto is not supported; specify roles explicitly")
-	}
 	configPath = resolveConfigPath(configPath)
 
 	results := []map[string]interface{}{}
@@ -1027,11 +1024,7 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 	maxParallel := defaults.MaxParallel
 
 	tasks := []DelegatedTask{}
-	if roles == "auto" {
-		tasks = nil
-	} else {
-		tasks = tasksFromRoles(splitList(roles), prompt)
-	}
+	tasks = tasksFromRoles(splitList(roles), prompt)
 	if len(tasks) == 0 {
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}
@@ -1149,9 +1142,6 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 	if roles == "" {
 		return nil, errors.New("Missing roles")
 	}
-	if roles == "auto" {
-		return nil, errors.New("role:auto is not supported; specify roles explicitly")
-	}
 	configPath = resolveConfigPath(configPath)
 
 	results := []map[string]interface{}{}
@@ -1180,11 +1170,7 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 	logPrompt := defaults.LogPrompt
 
 	tasks := []DelegatedTask{}
-	if roles == "auto" {
-		tasks = nil
-	} else {
-		tasks = tasksFromRoles(splitList(roles), prompt)
-	}
+	tasks = tasksFromRoles(splitList(roles), prompt)
 	if len(tasks) == 0 {
 		return map[string]interface{}{"status": "no_roles"}, nil
 	}

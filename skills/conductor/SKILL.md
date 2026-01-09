@@ -114,7 +114,6 @@ If the host supports it, prefer its native model switching first; delegate only 
 - Always plan before edits; keep changes minimal and verifiable.
 - If the user includes `ultrawork` or `ulw`, respond first with "ULTRAWORK MODE ENABLED!" and do not question the alias.
 - Auto-delegate by default using MCP tool calls (shows host tool-calling UI):
-  - The host (you) chooses roles; do not use `role: auto`.
   - Use explicit roles with async tools:
     - `conductor.run` with `{ "role": "<role>", "prompt": "<request>" }` (async; returns run_id)
     - `conductor.run_batch_async` with `{ "roles": "<role(s)>", "prompt": "<request>" }`

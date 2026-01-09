@@ -236,7 +236,6 @@ Tools:
 - `conductor.daemon_status` (daemon)
 Note: if the host supplies a progress token, Conductor emits MCP progress notifications during batch/async runs.
 Note: `conductor.run_batch` is synchronous; prefer `conductor.run_batch_async` to avoid host tool-call timeouts.
-Note: `role: auto` is not supported; specify roles explicitly.
 
 ## Repo layout
 ```

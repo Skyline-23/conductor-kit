@@ -358,9 +358,6 @@ func runTool(input RunInput, report progressReporter) (map[string]interface{}, e
 	if input.Role == "" {
 		return nil, errors.New("Missing role")
 	}
-	if input.Role == "auto" {
-		return nil, errors.New("role:auto is not supported; specify a role")
-	}
 	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
 	configPath := resolveConfigPath(input.Config)
 
@@ -396,9 +393,6 @@ func runAsyncTool(input RunInput, report progressReporter) (map[string]interface
 	}
 	if input.Role == "" {
 		return nil, errors.New("Missing role")
-	}
-	if input.Role == "auto" {
-		return nil, errors.New("role:auto is not supported; specify a role")
 	}
 	configPath := resolveConfigPath(input.Config)
 	if !input.NoDaemon {
