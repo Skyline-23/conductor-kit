@@ -51,6 +51,16 @@ func splitList(val string) []string {
 	return out
 }
 
+func expandPath(path string) string {
+	if path == "" {
+		return path
+	}
+	if strings.HasPrefix(path, "~") {
+		return filepath.Join(os.Getenv("HOME"), strings.TrimPrefix(path, "~"))
+	}
+	return path
+}
+
 func printJSON(payload map[string]interface{}) {
 	out, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Println(string(out))

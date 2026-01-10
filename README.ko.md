@@ -142,7 +142,7 @@ conductor daemon --mode stop
 - `roles.<name>.models`: `conductor.run_batch`용 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd 오버라이드
-- `roles.<name>.ready_cmd` / `ready_args` / `ready_timeout_ms`: 로그인 확인용 사전 체크 커맨드 (인터랙티브 로그인 프롬프트 방지)
+- `roles.<name>.auth_env` / `auth_files`: `conductor status`가 확인하는 인증 힌트 (CLI 실행 없음)
 - `roles.<name>.timeout_ms` / `roles.<name>.idle_timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role 오버라이드
 
 기본값(생략 시):

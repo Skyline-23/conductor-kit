@@ -43,9 +43,8 @@ type ApprovalConfig struct {
 type RoleConfig struct {
 	CLI            string            `json:"cli"`
 	Args           []string          `json:"args"`
-	ReadyCmd       string            `json:"ready_cmd"`
-	ReadyArgs      []string          `json:"ready_args"`
-	ReadyTimeoutMs int               `json:"ready_timeout_ms"`
+	AuthEnv        []string          `json:"auth_env"`
+	AuthFiles      []string          `json:"auth_files"`
 	ModelFlag      string            `json:"model_flag"`
 	Model          string            `json:"model"`
 	Models         []ModelEntry      `json:"models"`

@@ -25,42 +25,33 @@
     "oracle": {
       "cli": "codex",
       "model": "gpt-5.2-codex",
-      "reasoning": "medium"
+      "reasoning": "medium",
+      "auth_env": ["OPENAI_API_KEY"]
     },
     "librarian": {
       "cli": "gemini",
       "model": "gemini-3-flash-preview",
-      "ready_cmd": "gemini",
-      "ready_args": ["auth", "status"],
-      "ready_timeout_ms": 5000
+      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
     },
     "explore": {
       "cli": "gemini",
       "model": "gemini-3-flash-preview",
-      "ready_cmd": "gemini",
-      "ready_args": ["auth", "status"],
-      "ready_timeout_ms": 5000
+      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
     },
     "frontend-ui-ux-engineer": {
       "cli": "gemini",
       "model": "gemini-3-pro-preview",
-      "ready_cmd": "gemini",
-      "ready_args": ["auth", "status"],
-      "ready_timeout_ms": 5000
+      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
     },
     "document-writer": {
       "cli": "gemini",
       "model": "gemini-3-flash-preview",
-      "ready_cmd": "gemini",
-      "ready_args": ["auth", "status"],
-      "ready_timeout_ms": 5000
+      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
     },
     "multimodal-looker": {
       "cli": "gemini",
       "model": "gemini-3-flash-preview",
-      "ready_cmd": "gemini",
-      "ready_args": ["auth", "status"],
-      "ready_timeout_ms": 5000
+      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
     }
   }
 }

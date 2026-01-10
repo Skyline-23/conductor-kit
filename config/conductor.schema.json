@@ -63,12 +63,14 @@
             "type": "array",
             "items": { "type": "string" }
           },
-          "ready_cmd": { "type": "string" },
-          "ready_args": {
+          "auth_env": {
             "type": "array",
             "items": { "type": "string" }
           },
-          "ready_timeout_ms": { "type": "integer", "minimum": 0 },
+          "auth_files": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "model_flag": { "type": "string" },
           "model": { "type": "string" },
           "models": {

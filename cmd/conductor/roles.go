@@ -1,6 +1,10 @@
 package main
 
-import "sort"
+import (
+	"os"
+	"sort"
+	"strings"
+)
 
 func roleNames(cfg Config) []string {
 	names := make([]string, 0, len(cfg.Roles))
@@ -25,6 +29,12 @@ func listRolesPayload(cfg Config, configPath string) map[string]interface{} {
 		}
 		if roleCfg.Reasoning != "" {
 			entry["reasoning"] = roleCfg.Reasoning
+		}
+		if len(roleCfg.AuthEnv) > 0 {
+			entry["auth_env"] = roleCfg.AuthEnv
+		}
+		if len(roleCfg.AuthFiles) > 0 {
+			entry["auth_files"] = roleCfg.AuthFiles
 		}
 		roles = append(roles, entry)
 	}
@@ -62,20 +72,12 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 			status = "missing_cli"
 			entry["error"] = "missing CLI on PATH: " + roleCfg.CLI
 			ok = false
-		} else if roleCfg.ReadyCmd != "" {
-			spec := CmdSpec{
-				ReadyCmd:       roleCfg.ReadyCmd,
-				ReadyArgs:      roleCfg.ReadyArgs,
-				ReadyTimeoutMs: roleCfg.ReadyTimeoutMs,
-				Env:            roleCfg.Env,
-				Cwd:            roleCfg.Cwd,
-			}
-			if err := checkReady(spec); err != nil {
-				status = "not_ready"
-				entry["error"] = err.Error()
+		} else {
+			authStatus, authErr := checkAuthHints(roleCfg)
+			status = authStatus
+			if authErr != "" {
+				entry["error"] = authErr
 				ok = false
-			} else {
-				status = "ready"
 			}
 		}
 		entry["status"] = status
@@ -86,6 +88,48 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 		"roles":  roles,
 		"config": configPath,
 	}, ok
+}
+
+func checkAuthHints(roleCfg RoleConfig) (string, string) {
+	env := roleCfg.AuthEnv
+	files := roleCfg.AuthFiles
+	missingEnv := []string{}
+	missingFiles := []string{}
+	for _, key := range env {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if os.Getenv(key) == "" {
+			missingEnv = append(missingEnv, key)
+		}
+	}
+	for _, path := range files {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if !pathExists(expandPath(path)) {
+			missingFiles = append(missingFiles, path)
+		}
+	}
+	if len(env) == 0 && len(files) == 0 {
+		return "unknown", "no auth hints configured"
+	}
+	if len(missingEnv) == 0 && len(missingFiles) == 0 {
+		return "ready", ""
+	}
+	errMsg := ""
+	if len(missingEnv) > 0 {
+		errMsg = "missing env: " + strings.Join(missingEnv, ", ")
+	}
+	if len(missingFiles) > 0 {
+		if errMsg != "" {
+			errMsg += "; "
+		}
+		errMsg += "missing files: " + strings.Join(missingFiles, ", ")
+	}
+	return "not_ready", errMsg
 }
 
 func unknownRolePayload(cfg Config, role, configPath string) map[string]interface{} {

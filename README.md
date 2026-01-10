@@ -144,7 +144,7 @@ Key fields:
 - `roles.<name>.models`: fan-out list for `conductor.run_batch` (string or `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: optional reasoning config (codex supports `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd overrides
-- `roles.<name>.ready_cmd` / `ready_args` / `ready_timeout_ms`: optional preflight command to confirm the CLI is logged in (prevents interactive login prompts)
+- `roles.<name>.auth_env` / `auth_files`: auth hints checked by `conductor status` (no CLI execution)
 - `roles.<name>.timeout_ms` / `roles.<name>.idle_timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role overrides
 
 Defaults (if omitted):

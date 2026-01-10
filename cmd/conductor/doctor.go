@@ -133,9 +133,6 @@ func validateConfig(cfg Config) []string {
 		if role.RetryBackoffMs < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.retry_backoff_ms must be >= 0", name))
 		}
-		if role.ReadyTimeoutMs < 0 {
-			errors = append(errors, fmt.Sprintf("roles.%s.ready_timeout_ms must be >= 0", name))
-		}
 	}
 	return errors
 }
