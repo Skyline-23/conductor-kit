@@ -16,8 +16,8 @@ func main() {
 		os.Exit(runUninstall(rest))
 	case "settings":
 		os.Exit(runSettings(rest))
-	case "login":
-		os.Exit(runLogin(rest))
+	case "status":
+		os.Exit(runStatus(rest))
 	case "config-validate":
 		os.Exit(runConfigValidate(rest))
 	case "doctor":
@@ -39,7 +39,7 @@ func resolveCommand(args []string) (string, []string) {
 		"install":         true,
 		"uninstall":       true,
 		"settings":        true,
-		"login":           true,
+		"status":          true,
 		"config-validate": true,
 		"doctor":          true,
 		"daemon":          true,
@@ -59,7 +59,7 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-kit-install":         "install",
 		"conductor-uninstall":           "uninstall",
 		"conductor-settings":            "settings",
-		"conductor-login":               "login",
+		"conductor-status":              "status",
 		"conductor-config-validate":     "config-validate",
 		"conductor-doctor":              "doctor",
 		"conductor-daemon":              "daemon",
@@ -68,11 +68,11 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-mcp.exe":             "mcp",
 		"conductor-config-validate.exe": "config-validate",
 		"conductor-doctor.exe":          "doctor",
-		"conductor-login.exe":           "login",
 		"conductor-settings.exe":        "settings",
 		"conductor-uninstall.exe":       "uninstall",
 		"conductor-mcp-bundle.exe":      "mcp-bundle",
 		"conductor-daemon.exe":          "daemon",
+		"conductor-status.exe":          "status",
 	}
 
 	exe := filepath.Base(os.Args[0])
@@ -96,7 +96,7 @@ Commands:
   install              Install skills, commands, bins, and config
   uninstall            Remove skills, commands, bins, and config
   settings             Update role CLI/model settings
-  login                Run CLI login flow (codex/claude/gemini)
+  status               Check CLI availability and readiness
   config-validate      Validate conductor config JSON
   doctor               Check config and CLI availability
   daemon               Run local orchestration daemon
@@ -105,7 +105,7 @@ Commands:
 
 Aliases:
   conductor-kit, conductor-kit-install
-  conductor-uninstall, conductor-settings, conductor-login
+  conductor-uninstall, conductor-settings, conductor-status
   conductor-config-validate, conductor-doctor
   conductor-daemon
   conductor-mcp-bundle

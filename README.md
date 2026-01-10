@@ -182,7 +182,7 @@ Schema: `config/conductor.schema.json` (optional for tooling).
 - `conductor settings` (TUI wizard; use `--no-tui` for plain prompts)
 - `conductor settings --list-models --cli codex` (show available models)
 - `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
-- `conductor login codex|claude|gemini` (runs CLI login flow)
+- `conductor status` (check CLI availability and readiness)
 - `conductor uninstall` (removes installed skills/commands/config from home)
 
 ## Project-local overrides
@@ -230,6 +230,7 @@ Tools:
 - `conductor.run_history`
 - `conductor.run_info`
 - `conductor.roles`
+- `conductor.status`
 - `conductor.queue_list` (daemon)
 - `conductor.approval_list` (daemon)
 - `conductor.approval_approve` (daemon)

@@ -164,6 +164,19 @@ func runMCP(args []string) int {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.status",
+		Description: "Check CLI availability and readiness for configured roles.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input RolesInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		configPath := resolveConfigPath(input.Config)
+		cfg, err := loadConfig(configPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		payload, _ := statusPayload(cfg, configPath)
+		return nil, payload, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "conductor.queue_list",
 		Description: "List queued/running/completed runs from the daemon.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input QueueListInput) (*mcp.CallToolResult, map[string]interface{}, error) {

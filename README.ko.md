@@ -180,7 +180,7 @@ conductor daemon --mode stop
 - `conductor settings` (TUI 설정; 일반 프롬프트는 `--no-tui`)
 - `conductor settings --list-models --cli codex` (모델 목록 출력)
 - `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
-- `conductor login codex|claude|gemini` (CLI 로그인 실행)
+- `conductor status` (CLI 가용성/준비 상태 확인)
 - `conductor uninstall` (홈 디렉토리 설치물 제거)
 
 ## 프로젝트 로컬 오버라이드
@@ -228,6 +228,7 @@ codex mcp add conductor -- conductor mcp
 - `conductor.run_history`
 - `conductor.run_info`
 - `conductor.roles`
+- `conductor.status`
 - `conductor.queue_list` (daemon)
 - `conductor.approval_list` (daemon)
 - `conductor.approval_approve` (daemon)

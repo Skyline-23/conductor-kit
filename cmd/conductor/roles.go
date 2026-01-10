@@ -35,6 +35,59 @@ func listRolesPayload(cfg Config, configPath string) map[string]interface{} {
 	}
 }
 
+func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool) {
+	names := roleNames(cfg)
+	roles := make([]map[string]interface{}, 0, len(names))
+	ok := true
+	for _, name := range names {
+		roleCfg := cfg.Roles[name]
+		entry := map[string]interface{}{
+			"role": name,
+		}
+		if roleCfg.CLI != "" {
+			entry["cli"] = roleCfg.CLI
+		}
+		if roleCfg.Model != "" {
+			entry["model"] = roleCfg.Model
+		}
+		if roleCfg.Reasoning != "" {
+			entry["reasoning"] = roleCfg.Reasoning
+		}
+		status := "unknown"
+		if roleCfg.CLI == "" {
+			status = "invalid"
+			entry["error"] = "missing cli"
+			ok = false
+		} else if !isCommandAvailable(roleCfg.CLI) {
+			status = "missing_cli"
+			entry["error"] = "missing CLI on PATH: " + roleCfg.CLI
+			ok = false
+		} else if roleCfg.ReadyCmd != "" {
+			spec := CmdSpec{
+				ReadyCmd:       roleCfg.ReadyCmd,
+				ReadyArgs:      roleCfg.ReadyArgs,
+				ReadyTimeoutMs: roleCfg.ReadyTimeoutMs,
+				Env:            roleCfg.Env,
+				Cwd:            roleCfg.Cwd,
+			}
+			if err := checkReady(spec); err != nil {
+				status = "not_ready"
+				entry["error"] = err.Error()
+				ok = false
+			} else {
+				status = "ready"
+			}
+		}
+		entry["status"] = status
+		roles = append(roles, entry)
+	}
+	return map[string]interface{}{
+		"count":  len(roles),
+		"roles":  roles,
+		"config": configPath,
+	}, ok
+}
+
 func unknownRolePayload(cfg Config, role, configPath string) map[string]interface{} {
 	return map[string]interface{}{
 		"status": "unknown_role",

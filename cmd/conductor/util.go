@@ -74,7 +74,7 @@ func conductorBinAliases() []string {
 		"conductor-daemon",
 		"conductor-mcp-bundle",
 		"conductor-mcp",
-		"conductor-login",
+		"conductor-status",
 		"conductor-settings",
 		"conductor-uninstall",
 	}
