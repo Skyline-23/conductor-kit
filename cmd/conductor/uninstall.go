@@ -91,6 +91,19 @@ func runUninstall(args []string) int {
 		removeIfEmpty(filepath.Dir(configDest), *dryRun)
 	}
 
+	if !*noConfig {
+		projectRoot := ""
+		if *project {
+			cwd, _ := os.Getwd()
+			projectRoot = cwd
+		}
+		configPath := openCodeConfigPath(*opencodeHome, projectRoot)
+		if err := removeOpenCodeMCP(configPath, *dryRun); err != nil {
+			fmt.Printf("OpenCode MCP removal failed: %v\n", err)
+			return 1
+		}
+	}
+
 	fmt.Println("Done.")
 	return 0
 }

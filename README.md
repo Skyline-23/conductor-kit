@@ -37,6 +37,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - MCP registration:
   - Codex CLI: `codex mcp add ...`
   - Claude Code: `~/.claude/.mcp.json` (see below)
+  - OpenCode: auto-registered in `~/.config/opencode/opencode.json` (or `opencode.json` for `--project`) by `conductor install`
 
 ## What you get
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)

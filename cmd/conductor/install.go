@@ -135,6 +135,19 @@ func runInstall(args []string) int {
 		}
 	}
 
+	if installConfig {
+		projectRoot := ""
+		if *project {
+			cwd, _ := os.Getwd()
+			projectRoot = cwd
+		}
+		configPath := openCodeConfigPath(*opencodeHome, projectRoot)
+		if err := ensureOpenCodeMCP(configPath, *dryRun); err != nil {
+			fmt.Printf("OpenCode MCP registration failed: %v\n", err)
+			return 1
+		}
+	}
+
 	fmt.Println("Done.")
 	return 0
 }

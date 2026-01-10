@@ -37,6 +37,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - MCP 도구 등록:
   - Codex CLI: `codex mcp add ...`
   - Claude Code: `~/.claude/.mcp.json` (아래 참고)
+  - OpenCode: `conductor install`이 `~/.config/opencode/opencode.json`(또는 `opencode.json`)에 자동 등록
 
 ## 포함 기능
 - **스킬**: `conductor` (`skills/conductor/SKILL.md`)
