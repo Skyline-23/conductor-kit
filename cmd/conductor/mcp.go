@@ -152,6 +152,18 @@ func runMCP(args []string) int {
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "conductor.roles",
+		Description: "List available roles from the config.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input RolesInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		configPath := resolveConfigPath(input.Config)
+		cfg, err := loadConfig(configPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, listRolesPayload(cfg, configPath), nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "conductor.queue_list",
 		Description: "List queued/running/completed runs from the daemon.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input QueueListInput) (*mcp.CallToolResult, map[string]interface{}, error) {
@@ -367,6 +379,9 @@ func runTool(input RunInput, report progressReporter) (map[string]interface{}, e
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := cfg.Roles[input.Role]; !ok {
+		return unknownRolePayload(cfg, input.Role, configPath), nil
+	}
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 
@@ -395,6 +410,13 @@ func runAsyncTool(input RunInput, report progressReporter) (map[string]interface
 		return nil, errors.New("Missing role")
 	}
 	configPath := resolveConfigPath(input.Config)
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := cfg.Roles[input.Role]; !ok {
+		return unknownRolePayload(cfg, input.Role, configPath), nil
+	}
 	if !input.NoDaemon {
 		if baseURL := resolveDaemonURL(configPath); baseURL != "" {
 			if payload, err := daemonRun(baseURL, input); err == nil {
@@ -403,12 +425,6 @@ func runAsyncTool(input RunInput, report progressReporter) (map[string]interface
 		}
 	}
 
-	var cfg Config
-	var err error
-	cfg, err = loadConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
 	defaults := normalizeDefaults(cfg.Defaults)
 	logPrompt := defaults.LogPrompt
 

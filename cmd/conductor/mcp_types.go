@@ -63,3 +63,7 @@ type QueueListInput struct {
 type ApprovalInput struct {
 	RunID string `json:"run_id"`
 }
+
+type RolesInput struct {
+	Config string `json:"config,omitempty"`
+}

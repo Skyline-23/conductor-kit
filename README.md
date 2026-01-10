@@ -229,6 +229,7 @@ Tools:
 - `conductor.run_cancel`
 - `conductor.run_history`
 - `conductor.run_info`
+- `conductor.roles`
 - `conductor.queue_list` (daemon)
 - `conductor.approval_list` (daemon)
 - `conductor.approval_approve` (daemon)
