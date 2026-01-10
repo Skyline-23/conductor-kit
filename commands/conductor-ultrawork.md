@@ -11,9 +11,10 @@ Treat `ulw` as an alias of `ultrawork`. Do not ask what it means.
 Do the following:
 - STAGED ORCHESTRATION (MANDATORY; mixed sync + async):
   - First call `conductor.roles` to list available roles; only delegate using those roles.
-  - Stage 1 (Discovery/Scan): run `explore` and/or `librarian` first. Start async runs, then **wait for them to finish** by polling `conductor.run_status` until all are `ok|error|timeout`. Do not proceed until complete.
-  - Stage 2 (Analysis/Plan): based on Stage 1 results, run `oracle` and/or domain engineer. Again, start async runs and **wait until all are complete** before continuing.
-  - Stage 3 (Review/Alt): if scope is ambiguous or risk is high, run a reviewer/alternative role and **wait** before finalizing.
+  - Stage 1 (Discovery/Scan): choose 1-2 roles optimized for repo scanning or information gathering. Start async runs, then **wait for them to finish** by polling `conductor.run_status` until all are `ok|error|timeout`. Do not proceed until complete.
+  - Stage 2 (Analysis/Plan): based on Stage 1 results, choose roles optimized for reasoning/architecture or domain expertise. Start async runs and **wait until all are complete** before continuing.
+  - Stage 3 (Review/Alt): if scope is ambiguous or risk is high, choose a reviewer/alternative role and **wait** before finalizing.
+  - Do not hardcode role names in the prompt. Select roles based on capability and availability.
   - Delegation is mandatory; only skip for trivial one-file edits.
   - Default to **3+ roles** total (scan + alternative + review); add more for ambiguous scope.
   - Use:

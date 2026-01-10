@@ -118,9 +118,10 @@ If the host supports it, prefer its native model switching first; delegate only 
 - If the user includes `ultrawork` or `ulw`, respond first with "ULTRAWORK MODE ENABLED!" and do not question the alias.
 - Auto-delegate by default using MCP tool calls (shows host tool-calling UI), in **staged order**:
   - Call `conductor.roles` first and only delegate to registered roles.
-  - Stage 1 (Discovery/Scan): run `explore` and/or `librarian` first. Start async runs and **wait for completion** by polling `conductor.run_status` until all finish.
-  - Stage 2 (Analysis/Plan): based on Stage 1 results, run `oracle` and/or an engineer role. Start async runs and **wait for completion** before proceeding.
-  - Stage 3 (Review/Alt): if scope is ambiguous or risk is high, run a reviewer/alternative role and **wait** before finalizing.
+  - Stage 1 (Discovery/Scan): choose roles optimized for repo scanning or information gathering. Start async runs and **wait for completion** by polling `conductor.run_status` until all finish.
+  - Stage 2 (Analysis/Plan): based on Stage 1 results, choose roles optimized for reasoning/architecture or domain expertise. Start async runs and **wait for completion** before proceeding.
+  - Stage 3 (Review/Alt): if scope is ambiguous or risk is high, choose a reviewer/alternative role and **wait** before finalizing.
+  - Do not hardcode role names in the prompt. Select roles based on capability and availability.
   - Use explicit roles with async tools:
     - `conductor.run` with `{ "role": "<role>", "prompt": "<request>" }` (async; returns run_id)
     - `conductor.run_batch_async` with `{ "roles": "<role(s)>", "prompt": "<request>" }`
