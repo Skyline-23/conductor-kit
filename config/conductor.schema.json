@@ -63,14 +63,6 @@
             "type": "array",
             "items": { "type": "string" }
           },
-          "auth_env": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "auth_files": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
           "model_flag": { "type": "string" },
           "model": { "type": "string" },
           "models": {
@@ -93,6 +85,12 @@
           "reasoning_flag": { "type": "string" },
           "reasoning_key": { "type": "string" },
           "reasoning": { "type": "string" },
+          "ready_cmd": { "type": "string" },
+          "ready_args": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "ready_timeout_ms": { "type": "integer" },
           "env": {
             "type": "object",
             "additionalProperties": { "type": "string" }

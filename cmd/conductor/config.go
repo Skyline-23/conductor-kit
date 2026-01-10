@@ -43,14 +43,15 @@ type ApprovalConfig struct {
 type RoleConfig struct {
 	CLI            string            `json:"cli"`
 	Args           []string          `json:"args"`
-	AuthEnv        []string          `json:"auth_env"`
-	AuthFiles      []string          `json:"auth_files"`
 	ModelFlag      string            `json:"model_flag"`
 	Model          string            `json:"model"`
 	Models         []ModelEntry      `json:"models"`
 	ReasoningFlag  string            `json:"reasoning_flag"`
 	ReasoningKey   string            `json:"reasoning_key"`
 	Reasoning      string            `json:"reasoning"`
+	ReadyCmd       string            `json:"ready_cmd"`
+	ReadyArgs      []string          `json:"ready_args"`
+	ReadyTimeoutMs int               `json:"ready_timeout_ms"`
 	Env            map[string]string `json:"env"`
 	Cwd            string            `json:"cwd"`
 	TimeoutMs      int               `json:"timeout_ms"`

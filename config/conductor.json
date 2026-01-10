@@ -25,33 +25,30 @@
     "oracle": {
       "cli": "codex",
       "model": "gpt-5.2-codex",
-      "reasoning": "medium",
-      "auth_env": ["OPENAI_API_KEY"]
+      "reasoning": "medium"
+    },
+    "claude": {
+      "cli": "claude"
     },
     "librarian": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview",
-      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+      "model": "gemini-3-flash-preview"
     },
     "explore": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview",
-      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+      "model": "gemini-3-flash-preview"
     },
     "frontend-ui-ux-engineer": {
       "cli": "gemini",
-      "model": "gemini-3-pro-preview",
-      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+      "model": "gemini-3-pro-preview"
     },
     "document-writer": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview",
-      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+      "model": "gemini-3-flash-preview"
     },
     "multimodal-looker": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview",
-      "auth_env": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+      "model": "gemini-3-flash-preview"
     }
   }
 }

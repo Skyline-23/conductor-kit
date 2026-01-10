@@ -142,7 +142,7 @@ conductor daemon --mode stop
 - `roles.<name>.models`: `conductor.run_batch`용 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd 오버라이드
-- `roles.<name>.auth_env` / `auth_files`: `conductor status`가 확인하는 인증 힌트 (CLI 실행 없음)
+- `conductor status`: CLI별 로컬 인증 저장소를 확인 (codex: `~/.codex/auth.json`, gemini: `~/.gemini/oauth_creds.json` 또는 키체인, claude: 키체인 `Claude Code-credentials`)하며 CLI는 실행하지 않음
 - `roles.<name>.timeout_ms` / `roles.<name>.idle_timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role 오버라이드
 
 기본값(생략 시):
