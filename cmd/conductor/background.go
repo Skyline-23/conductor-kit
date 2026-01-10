@@ -89,7 +89,7 @@ func buildSpecFromAgent(agent, prompt string, defaults Defaults, logPrompt bool)
 func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverride string, logPrompt bool) (CmdSpec, error) {
 	roleCfg, ok := cfg.Roles[role]
 	if !ok {
-		return CmdSpec{}, fmt.Errorf("Missing role config for: %s", role)
+		return CmdSpec{}, fmt.Errorf("%s", unknownRoleMessage(cfg, role))
 	}
 	roleCfg, err := normalizeRoleConfig(roleCfg)
 	if err != nil {
@@ -1041,7 +1041,7 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 		role := task.Role
 		roleCfg, ok := cfg.Roles[role]
 		if !ok {
-			results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": "unknown role"})
+			results = append(results, unknownRoleResult(cfg, role))
 			continue
 		}
 		if roleCfg.MaxParallel > 0 && roleCfg.MaxParallel < maxParallel {
@@ -1187,7 +1187,7 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 		role := task.Role
 		roleCfg, ok := cfg.Roles[role]
 		if !ok {
-			results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": "unknown role"})
+			results = append(results, unknownRoleResult(cfg, role))
 			continue
 		}
 		models := expandModelEntries(roleCfg, modelOverride, reasoningOverride)

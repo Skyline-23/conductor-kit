@@ -784,6 +784,9 @@ func buildSpecForInput(input RunInput, configPath string) (CmdSpec, error) {
 	if err != nil {
 		return CmdSpec{}, err
 	}
+	if _, ok := cfg.Roles[input.Role]; !ok {
+		return CmdSpec{}, fmt.Errorf("%s", unknownRoleMessage(cfg, input.Role))
+	}
 	spec, err := buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
 	if err != nil {
 		return CmdSpec{}, err
@@ -819,6 +822,22 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 	tasks = tasksFromRoles(splitList(input.Roles), input.Prompt)
 	if len(tasks) == 0 {
 		return nil, errors.New("no_roles")
+	}
+	missing := []string{}
+	seenMissing := map[string]bool{}
+	for _, task := range tasks {
+		if task.Role == "" {
+			continue
+		}
+		if _, ok := cfg.Roles[task.Role]; !ok {
+			if !seenMissing[task.Role] {
+				seenMissing[task.Role] = true
+				missing = append(missing, task.Role)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("Unknown role(s): %s (available: %s)", strings.Join(missing, ", "), strings.Join(roleNames(cfg), ", "))
 	}
 	agentList = []string{}
 	seenRoles := map[string]bool{}

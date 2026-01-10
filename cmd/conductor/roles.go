@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 )
 
 func roleNames(cfg Config) []string {
@@ -84,9 +86,27 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 
 func unknownRolePayload(cfg Config, role, configPath string) map[string]interface{} {
 	return map[string]interface{}{
-		"status": "unknown_role",
-		"role":   role,
+		"status":  "unknown_role",
+		"role":    role,
+		"roles":   roleNames(cfg),
+		"config":  configPath,
+		"message": unknownRoleMessage(cfg, role),
+	}
+}
+
+func unknownRoleMessage(cfg Config, role string) string {
+	available := roleNames(cfg)
+	if len(available) == 0 {
+		return fmt.Sprintf("Unknown role: %s (no roles configured)", role)
+	}
+	return fmt.Sprintf("Unknown role: %s (available: %s)", role, strings.Join(available, ", "))
+}
+
+func unknownRoleResult(cfg Config, role string) map[string]interface{} {
+	return map[string]interface{}{
+		"agent":  role,
+		"status": "error",
+		"error":  unknownRoleMessage(cfg, role),
 		"roles":  roleNames(cfg),
-		"config": configPath,
 	}
 }
