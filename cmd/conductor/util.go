@@ -61,6 +61,17 @@ func expandPath(path string) string {
 	return path
 }
 
+func defaultOpenCodeHome() string {
+	if val := os.Getenv("OPENCODE_CONFIG_DIR"); val != "" {
+		return val
+	}
+	xdg := os.Getenv("XDG_CONFIG_HOME")
+	if xdg == "" {
+		xdg = filepath.Join(os.Getenv("HOME"), ".config")
+	}
+	return filepath.Join(xdg, "opencode")
+}
+
 func printJSON(payload map[string]interface{}) {
 	out, _ := json.MarshalIndent(payload, "", "  ")
 	fmt.Println(string(out))

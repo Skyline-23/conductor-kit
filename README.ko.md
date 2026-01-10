@@ -1,6 +1,6 @@
 # conductor-kit
 
-Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬퍼**입니다.
+Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬퍼**이며, OpenCode 전역 설치도 지원합니다.
 오케스트레이션 루프(검색 -> 계획 -> 실행 -> 검증 -> 정리)를 강제하고, 필요 시 MCP 병렬 위임을 지원합니다.
 
 **언어**: [English](README.md) | 한국어
@@ -10,7 +10,7 @@ Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬�
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 
-# Homebrew post_install이 Codex + Claude에 자동 링크함
+# Homebrew post_install이 Codex + Claude + OpenCode에 자동 링크함
 # 필요 시 재실행:
 conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
 ```
@@ -24,13 +24,13 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install --mode link --repo ~/.conductor-kit
 ```
 
-프로젝트 로컬 설치:
+프로젝트 로컬 설치(.claude/.codex/.opencode):
 ```bash
 conductor install --mode link --repo ~/.conductor-kit --project
 ```
 
 ## 요구 사항
-- 호스트 CLI: Codex CLI 또는 Claude Code (스킬/커맨드는 해당 호스트 안에서 실행됨)
+- 호스트 CLI: Codex CLI, Claude Code, 또는 OpenCode (스킬/커맨드는 해당 호스트 안에서 실행됨)
 - 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
 - Go 1.23+ (소스에서 빌드할 때만 필요)
 - Homebrew cask 설치는 macOS 전용입니다 (Linux는 수동 설치 사용).
@@ -64,6 +64,15 @@ Codex CLI (커스텀 프롬프트):
 - `/prompts:conductor-release`
 - `/prompts:conductor-ultrawork`
 프롬프트는 `~/.codex/prompts` (또는 `$CODEX_HOME/prompts`)에 설치됩니다.
+
+OpenCode (슬래시 커맨드):
+- `/conductor-plan`
+- `/conductor-search`
+- `/conductor-implement`
+- `/conductor-release`
+- `/conductor-ultrawork`
+커맨드는 `~/.config/opencode/command` (또는 `./.opencode/command`)에 설치됩니다.
+스킬은 `~/.config/opencode/skill` (또는 `./.opencode/skill`)에 설치됩니다.
 
 ### 3) 병렬 위임 (MCP 전용)
 Codex CLI:
@@ -181,11 +190,11 @@ conductor daemon --mode stop
 - `conductor settings --list-models --cli codex` (모델 목록 출력)
 - `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
 - `conductor status` (CLI 가용성/준비 상태 확인)
-- `conductor uninstall` (홈 디렉토리 설치물 제거)
+- `conductor uninstall` (홈 디렉토리 설치물 제거, OpenCode 포함)
 
 ## 프로젝트 로컬 오버라이드
 - `./.conductor-kit/conductor.json`에 로컬 설정을 두면 글로벌 설정을 덮어씁니다.
-- `conductor install --project`로 `./.claude`에 스킬/커맨드, `./.codex`에 프롬프트를 설치합니다.
+- `conductor install --project`로 `./.claude`에 스킬/커맨드, `./.codex`에 프롬프트, `./.opencode`에 OpenCode 커맨드/스킬을 설치합니다.
 
 ## 진단
 - `conductor config-validate` (`~/.conductor-kit/conductor.json` 유효성 검사)

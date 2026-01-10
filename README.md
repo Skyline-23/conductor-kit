@@ -1,6 +1,6 @@
 # conductor-kit
 
-A global skills pack and lightweight Go helper for **Codex CLI** and **Claude Code**.
+A global skills pack and lightweight Go helper for **Codex CLI** and **Claude Code**, with optional **OpenCode** command/skill install.
 It enforces a consistent orchestration loop (search -> plan -> execute -> verify -> cleanup) and supports parallel delegation via MCP tool calls.
 
 **Language**: English | [한국어](README.ko.md)
@@ -10,7 +10,7 @@ It enforces a consistent orchestration loop (search -> plan -> execute -> verify
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 
-# Homebrew post_install links skills/commands into Codex + Claude
+# Homebrew post_install links skills/commands into Codex + Claude + OpenCode
 # Re-run if needed:
 conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
 ```
@@ -24,13 +24,13 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install --mode link --repo ~/.conductor-kit
 ```
 
-Project-local install:
+Project-local install (links into .claude/.codex/.opencode):
 ```bash
 conductor install --mode link --repo ~/.conductor-kit --project
 ```
 
 ## Requirements
-- A host CLI: Codex CLI or Claude Code (skills/commands run inside these hosts).
+- A host CLI: Codex CLI, Claude Code, or OpenCode (commands/skills load inside these hosts).
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
 - Homebrew cask install is macOS-only (Linux users should use manual install).
@@ -64,6 +64,15 @@ Codex CLI (custom prompts):
 - `/prompts:conductor-release`
 - `/prompts:conductor-ultrawork`
 Prompts are installed in `~/.codex/prompts` (or `$CODEX_HOME/prompts`).
+
+OpenCode (slash commands):
+- `/conductor-plan`
+- `/conductor-search`
+- `/conductor-implement`
+- `/conductor-release`
+- `/conductor-ultrawork`
+Commands are installed in `~/.config/opencode/command` (or `./.opencode/command`).
+Skills are installed in `~/.config/opencode/skill` (or `./.opencode/skill`).
 
 ### 3) Parallel delegation (MCP-only)
 Codex CLI:
@@ -183,11 +192,11 @@ Schema: `config/conductor.schema.json` (optional for tooling).
 - `conductor settings --list-models --cli codex` (show available models)
 - `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
 - `conductor status` (check CLI availability and readiness)
-- `conductor uninstall` (removes installed skills/commands/config from home)
+- `conductor uninstall` (removes installed skills/commands/config from home, including OpenCode)
 
 ## Project-local overrides
 - Place a local config at `./.conductor-kit/conductor.json` to override the global config.
-- Use `conductor install --project` to link skills/commands into `./.claude` and prompts into `./.codex`.
+- Use `conductor install --project` to link skills/commands into `./.claude`, prompts into `./.codex`, and OpenCode assets into `./.opencode`.
 
 ## Diagnostics
 - `conductor config-validate` (validates `~/.conductor-kit/conductor.json`)

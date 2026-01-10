@@ -21,9 +21,10 @@ func runUninstall(args []string) int {
 	fs.SetOutput(io.Discard)
 	skillsOnly := fs.Bool("skills-only", false, "remove only skills")
 	commandsOnly := fs.Bool("commands-only", false, "remove only commands")
-	project := fs.Bool("project", false, "uninstall from local project .claude/.codex")
+	project := fs.Bool("project", false, "uninstall from local project .claude/.codex/.opencode")
 	codexHome := fs.String("codex-home", getenv("CODEX_HOME", filepath.Join(os.Getenv("HOME"), ".codex")), "codex home")
 	claudeHome := fs.String("claude-home", filepath.Join(os.Getenv("HOME"), ".claude"), "claude home")
+	opencodeHome := fs.String("opencode-home", defaultOpenCodeHome(), "opencode home")
 	binDir := fs.String("bin-dir", getenv("CONDUCTOR_BIN", filepath.Join(os.Getenv("HOME"), ".local", "bin")), "bin dir")
 	noBins := fs.Bool("no-bins", false, "skip bin removal")
 	noConfig := fs.Bool("no-config", false, "skip config removal")
@@ -46,6 +47,7 @@ func runUninstall(args []string) int {
 		cwd, _ := os.Getwd()
 		*codexHome = filepath.Join(cwd, ".codex")
 		*claudeHome = filepath.Join(cwd, ".claude")
+		*opencodeHome = filepath.Join(cwd, ".opencode")
 		configDest = filepath.Join(cwd, ".conductor-kit", "conductor.json")
 		bundlesDest = filepath.Join(cwd, ".conductor-kit", "mcp-bundles.json")
 	}
@@ -54,20 +56,23 @@ func runUninstall(args []string) int {
 	removeSkills := !*commandsOnly
 
 	targets := []struct {
-		name string
-		home string
-	}{{"codex", *codexHome}, {"claude", *claudeHome}}
+		name        string
+		home        string
+		skillsDir   string
+		commandsDir string
+	}{
+		{"codex", *codexHome, "skills", "prompts"},
+		{"claude", *claudeHome, "skills", "commands"},
+		{"opencode", *opencodeHome, "skill", "command"},
+	}
 
 	for _, t := range targets {
 		if removeSkills {
-			skillsDir := filepath.Join(t.home, "skills", "conductor")
+			skillsDir := filepath.Join(t.home, t.skillsDir, "conductor")
 			removePath(skillsDir, *dryRun)
 		}
 		if removeCommands {
-			commandsDir := filepath.Join(t.home, "commands")
-			if t.name == "codex" {
-				commandsDir = filepath.Join(t.home, "prompts")
-			}
+			commandsDir := filepath.Join(t.home, t.commandsDir)
 			for _, name := range conductorCommandFiles {
 				removePath(filepath.Join(commandsDir, name), *dryRun)
 			}
@@ -95,7 +100,7 @@ func uninstallHelp() string {
 
 Usage:
   conductor uninstall [--skills-only|--commands-only]
-                      [--project] [--codex-home PATH] [--claude-home PATH]
+                      [--project] [--codex-home PATH] [--claude-home PATH] [--opencode-home PATH]
                       [--no-bins] [--bin-dir PATH] [--no-config]
                       [--force] [--dry-run]
 `

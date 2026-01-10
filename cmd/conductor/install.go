@@ -15,9 +15,10 @@ func runInstall(args []string) int {
 	mode := fs.String("mode", "link", "link|copy")
 	skillsOnly := fs.Bool("skills-only", false, "install only skills")
 	commandsOnly := fs.Bool("commands-only", false, "install only commands")
-	project := fs.Bool("project", false, "install into local project .claude/.codex")
+	project := fs.Bool("project", false, "install into local project .claude/.codex/.opencode")
 	codexHome := fs.String("codex-home", getenv("CODEX_HOME", filepath.Join(os.Getenv("HOME"), ".codex")), "codex home")
 	claudeHome := fs.String("claude-home", filepath.Join(os.Getenv("HOME"), ".claude"), "claude home")
+	opencodeHome := fs.String("opencode-home", defaultOpenCodeHome(), "opencode home")
 	binDir := fs.String("bin-dir", getenv("CONDUCTOR_BIN", filepath.Join(os.Getenv("HOME"), ".local", "bin")), "bin dir")
 	noBins := fs.Bool("no-bins", false, "skip bin install")
 	noConfig := fs.Bool("no-config", false, "skip config install")
@@ -56,6 +57,7 @@ func runInstall(args []string) int {
 		cwd, _ := os.Getwd()
 		*codexHome = filepath.Join(cwd, ".codex")
 		*claudeHome = filepath.Join(cwd, ".claude")
+		*opencodeHome = filepath.Join(cwd, ".opencode")
 		configDest = filepath.Join(cwd, ".conductor-kit", "conductor.json")
 		bundlesDest = filepath.Join(cwd, ".conductor-kit", "mcp-bundles.json")
 	}
@@ -79,26 +81,28 @@ func runInstall(args []string) int {
 	}
 
 	targets := []struct {
-		name string
-		home string
-	}{{"codex", *codexHome}, {"claude", *claudeHome}}
+		name          string
+		home          string
+		skillsDir     string
+		commandsDir   string
+		commandsLabel string
+	}{
+		{"codex", *codexHome, "skills", "prompts", "prompts"},
+		{"claude", *claudeHome, "skills", "commands", "commands"},
+		{"opencode", *opencodeHome, "skill", "command", "command"},
+	}
 
 	for _, t := range targets {
 		if installSkills {
 			fmt.Printf("Install skills -> %s: %s\n", t.name, t.home)
-			skillsDir := filepath.Join(t.home, "skills")
+			skillsDir := filepath.Join(t.home, t.skillsDir)
 			ensureDir(skillsDir, *dryRun)
 			dest := filepath.Join(skillsDir, "conductor")
 			doLinkOrCopy(skillsSource, dest, *mode, *force, *dryRun)
 		}
 		if installCommands {
-			commandsDir := filepath.Join(t.home, "commands")
-			label := "commands"
-			if t.name == "codex" {
-				commandsDir = filepath.Join(t.home, "prompts")
-				label = "prompts"
-			}
-			fmt.Printf("Install %s -> %s: %s\n", label, t.name, t.home)
+			commandsDir := filepath.Join(t.home, t.commandsDir)
+			fmt.Printf("Install %s -> %s: %s\n", t.commandsLabel, t.name, t.home)
 			ensureDir(commandsDir, *dryRun)
 			entries, _ := os.ReadDir(commandsSource)
 			for _, entry := range entries {
@@ -140,7 +144,8 @@ func installHelp() string {
 
 Usage:
   conductor install [--mode link|copy] [--skills-only|--commands-only]
-                    [--project] [--codex-home PATH] [--claude-home PATH] [--force] [--dry-run]
+                    [--project] [--codex-home PATH] [--claude-home PATH] [--opencode-home PATH]
+                    [--force] [--dry-run]
                     [--no-bins] [--bin-dir PATH] [--no-config] [--repo PATH]
 `
 }

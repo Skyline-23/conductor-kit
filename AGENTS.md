@@ -6,7 +6,7 @@ Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-open
 ## Scope (In)
 - Keep a single core `conductor` skill under `skills/` as the source of truth.
 - Provide root-level docs (e.g., `README.md`) that describe install and usage.
-- Provide global install via link/copy into `~/.codex` and `~/.claude`.
+- Provide global install via link/copy into `~/.codex`, `~/.claude`, and `~/.config/opencode`.
 - Provide shared markdown commands under `commands/` (Codex + Claude).
 - Provide a Go helper CLI in `cmd/conductor` for install + MCP server + delegation tools.
 - Provide role/model routing config in `config/conductor.json`.

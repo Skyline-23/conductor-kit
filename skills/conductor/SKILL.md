@@ -21,6 +21,7 @@ Keep this repo as the single source of truth and link or copy `skills/conductor`
 
 - Claude Code: `~/.claude/skills`
 - Codex CLI: `~/.codex/skills` (or `$CODEX_HOME/skills`)
+- OpenCode: `~/.config/opencode/skill` (or `./.opencode/skill`)
 
 See `README.md` for detailed steps.
 
