@@ -38,6 +38,19 @@
           "note": "Add an AST MCP server command here."
         }
       ]
+    },
+    "gemini-official": {
+      "servers": [
+        {
+          "name": "gemini-cloud-assist",
+          "command": "npx",
+          "args": [
+            "-y",
+            "@google-cloud/gemini-cloud-assist-mcp@latest"
+          ],
+          "note": "Requires gcloud auth application-default login, Node.js 20+, and roles/serviceusage.serviceUsageAdmin + roles/geminicloudassist.user."
+        }
+      ]
     }
   }
 }
