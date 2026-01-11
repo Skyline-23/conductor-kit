@@ -146,6 +146,14 @@ func runInstall(args []string) int {
 			fmt.Printf("OpenCode MCP registration failed: %v\n", err)
 			return 1
 		}
+		if err := ensureClaudeMCP(bundlesDest, *claudeHome, *dryRun); err != nil {
+			fmt.Printf("Claude MCP registration failed: %v\n", err)
+			return 1
+		}
+		if err := ensureCodexMCP(bundlesDest, *dryRun); err != nil {
+			fmt.Printf("Codex MCP registration failed: %v\n", err)
+			return 1
+		}
 	}
 
 	fmt.Println("Done.")

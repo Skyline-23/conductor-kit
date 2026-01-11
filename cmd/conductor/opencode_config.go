@@ -9,7 +9,7 @@ import (
 	"reflect"
 )
 
-const opencodeMCPName = "conductor"
+var opencodeMCPNames = []string{"conductor", "gemini-cloud-assist"}
 
 func openCodeConfigPath(opencodeHome, projectRoot string) string {
 	if projectRoot != "" {
@@ -96,15 +96,29 @@ func upsertOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	desired := map[string]interface{}{
-		"type":    "local",
-		"command": []string{"conductor", "mcp"},
-		"enabled": true,
+	desireds := map[string]map[string]interface{}{
+		"conductor": {
+			"type":    "local",
+			"command": []string{"conductor", "mcp"},
+			"enabled": true,
+		},
+		"gemini-cloud-assist": {
+			"type":    "local",
+			"command": []string{"npx", "-y", "@google-cloud/gemini-cloud-assist-mcp@latest"},
+			"enabled": true,
+		},
 	}
-	if existing, ok := mcp[opencodeMCPName]; ok && reflect.DeepEqual(existing, desired) {
+	updated := false
+	for name, desired := range desireds {
+		if existing, ok := mcp[name]; ok && reflect.DeepEqual(existing, desired) {
+			continue
+		}
+		mcp[name] = desired
+		updated = true
+	}
+	if !updated {
 		return changed, nil
 	}
-	mcp[opencodeMCPName] = desired
 	return true, nil
 }
 
@@ -117,10 +131,17 @@ func deleteOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
 	if !ok {
 		return false, fmt.Errorf("OpenCode config mcp is not an object")
 	}
-	if _, ok := mcp[opencodeMCPName]; !ok {
+	changed := false
+	for _, name := range opencodeMCPNames {
+		if _, ok := mcp[name]; !ok {
+			continue
+		}
+		delete(mcp, name)
+		changed = true
+	}
+	if !changed {
 		return false, nil
 	}
-	delete(mcp, opencodeMCPName)
 	if len(mcp) == 0 {
 		delete(cfg, "mcp")
 	}

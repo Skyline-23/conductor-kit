@@ -102,6 +102,14 @@ func runUninstall(args []string) int {
 			fmt.Printf("OpenCode MCP removal failed: %v\n", err)
 			return 1
 		}
+		if err := removeClaudeMCP(*claudeHome, *dryRun); err != nil {
+			fmt.Printf("Claude MCP removal failed: %v\n", err)
+			return 1
+		}
+		if err := removeCodexMCP(*dryRun); err != nil {
+			fmt.Printf("Codex MCP removal failed: %v\n", err)
+			return 1
+		}
 	}
 
 	fmt.Println("Done.")
