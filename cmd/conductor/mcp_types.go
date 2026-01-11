@@ -11,7 +11,7 @@ type BatchInput struct {
 	SummaryOnly     *bool  `json:"summary_only,omitempty"`
 	RequireApproval bool   `json:"require_approval,omitempty"`
 	Mode            string `json:"mode,omitempty"`
-	NoDaemon        bool   `json:"no_daemon,omitempty"`
+	NoRuntime       bool   `json:"no_runtime,omitempty"`
 }
 
 type RunInput struct {
@@ -25,7 +25,7 @@ type RunInput struct {
 	SummaryOnly     *bool  `json:"summary_only,omitempty"`
 	RequireApproval bool   `json:"require_approval,omitempty"`
 	Mode            string `json:"mode,omitempty"`
-	NoDaemon        bool   `json:"no_daemon,omitempty"`
+	NoRuntime       bool   `json:"no_runtime,omitempty"`
 }
 
 type StatusInput struct {
