@@ -92,7 +92,6 @@ func conductorBinAliases() []string {
 		"conductor-kit-install",
 		"conductor-config-validate",
 		"conductor-doctor",
-		"conductor-daemon",
 		"conductor-mcp-bundle",
 		"conductor-mcp",
 		"conductor-status",

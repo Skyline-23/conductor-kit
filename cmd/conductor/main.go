@@ -22,8 +22,6 @@ func main() {
 		os.Exit(runConfigValidate(rest))
 	case "doctor":
 		os.Exit(runDoctor(rest))
-	case "daemon":
-		os.Exit(runDaemon(rest))
 	case "mcp-bundle":
 		os.Exit(runMCPBundle(rest))
 	case "mcp":
@@ -42,7 +40,6 @@ func resolveCommand(args []string) (string, []string) {
 		"status":          true,
 		"config-validate": true,
 		"doctor":          true,
-		"daemon":          true,
 		"mcp-bundle":      true,
 		"mcp":             true,
 	}
@@ -62,7 +59,6 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-status":              "status",
 		"conductor-config-validate":     "config-validate",
 		"conductor-doctor":              "doctor",
-		"conductor-daemon":              "daemon",
 		"conductor-mcp-bundle":          "mcp-bundle",
 		"conductor-mcp":                 "mcp",
 		"conductor-mcp.exe":             "mcp",
@@ -71,7 +67,6 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-settings.exe":        "settings",
 		"conductor-uninstall.exe":       "uninstall",
 		"conductor-mcp-bundle.exe":      "mcp-bundle",
-		"conductor-daemon.exe":          "daemon",
 		"conductor-status.exe":          "status",
 	}
 
@@ -99,7 +94,6 @@ Commands:
   status               Check CLI availability and readiness
   config-validate      Validate conductor config JSON
   doctor               Check config and CLI availability
-  daemon               Run local orchestration daemon
   mcp-bundle           Render MCP bundle templates for hosts
   mcp                  Run MCP server (stdio)
 
@@ -107,7 +101,6 @@ Aliases:
   conductor-kit, conductor-kit-install
   conductor-uninstall, conductor-settings, conductor-status
   conductor-config-validate, conductor-doctor
-  conductor-daemon
   conductor-mcp-bundle
   conductor-mcp
 `)
