@@ -219,6 +219,7 @@ This runs `conductor uninstall --force` via a cask uninstall hook to clean user-
 - `conductor.run_info` with `{ "run_id": "<id>" }`
 - `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval" }`
 - `conductor.approval_list` to list pending approvals
+- Subscribe to resource `conductor://runtime/queue` for `notifications/resources/updated`
 
 ## Optional MCP bundles
 ```bash

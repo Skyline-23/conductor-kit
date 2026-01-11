@@ -218,6 +218,7 @@ cask uninstall 훅이 `conductor uninstall --force`를 실행해 사용자 설�
 - `conductor.run_info` with `{ "run_id": "<id>" }`
 - `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval" }`
 - `conductor.approval_list` (승인 대기 목록)
+- 리소스 `conductor://runtime/queue` 구독 시 `notifications/resources/updated` 수신
 
 ## 선택적 MCP 번들
 ```bash

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,15 +12,100 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const maxCompletedRuns = 200
+const (
+	maxCompletedRuns        = 200
+	runtimeQueueResourceURI = "conductor://runtime/queue"
+)
 
 var (
 	mcpRuntimeMu         sync.Mutex
 	mcpRuntime           *Runtime
 	mcpRuntimeConfigPath string
+	runtimeNotifyMu      sync.Mutex
+	runtimeNotify        func(context.Context) error
 )
+
+func setRuntimeNotify(notify func(context.Context) error) {
+	runtimeNotifyMu.Lock()
+	runtimeNotify = notify
+	runtimeNotifyMu.Unlock()
+}
+
+func notifyRuntimeChanged() {
+	runtimeNotifyMu.Lock()
+	notify := runtimeNotify
+	runtimeNotifyMu.Unlock()
+	if notify == nil {
+		return
+	}
+	_ = notify(context.Background())
+}
+
+func runtimeQueueSnapshot(runtime *Runtime) map[string]interface{} {
+	if runtime == nil {
+		return map[string]interface{}{"status": "runtime_not_running"}
+	}
+	runtime.mu.Lock()
+	queued := append([]*RunItem{}, runtime.queue...)
+	running := make([]*RunItem, 0, len(runtime.running))
+	for _, item := range runtime.running {
+		running = append(running, item)
+	}
+	completed := append([]*RunItem{}, runtime.completed...)
+	modeHash := runtime.lastMode
+	maxParallel := runtime.cfg.MaxParallel
+	runtime.mu.Unlock()
+
+	queueViews := make([]map[string]interface{}, 0, len(queued))
+	for _, item := range queued {
+		queueViews = append(queueViews, item.view())
+	}
+	runningViews := make([]map[string]interface{}, 0, len(running))
+	for _, item := range running {
+		runningViews = append(runningViews, item.view())
+	}
+	completedViews := make([]map[string]interface{}, 0, len(completed))
+	for _, item := range completed {
+		completedViews = append(completedViews, item.view())
+	}
+
+	return map[string]interface{}{
+		"status":          "ok",
+		"mode_hash":       modeHash,
+		"max_parallel":    maxParallel,
+		"queued":          len(queueViews),
+		"running":         len(runningViews),
+		"completed":       len(completedViews),
+		"queue":           queueViews,
+		"running_items":   runningViews,
+		"completed_items": completedViews,
+		"updated_at":      time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func runtimeQueueResourceHandler(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	if req.Params.URI != runtimeQueueResourceURI {
+		return nil, fmt.Errorf("unknown resource: %s", req.Params.URI)
+	}
+	snapshot := runtimeQueueSnapshot(mcpRuntimeSnapshot())
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.ReadResourceResult{
+		Contents: []*mcp.ResourceContents{
+			{
+				URI:      runtimeQueueResourceURI,
+				MIMEType: "application/json",
+				Text:     string(payload),
+			},
+		},
+	}, nil
+}
 
 type RunItem struct {
 	ID              string
@@ -244,35 +331,44 @@ func mcpRuntimeRunBatch(input BatchInput) (map[string]interface{}, error) {
 
 func (d *Runtime) enqueue(item *RunItem) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.handleModeChange(item.ModeHash)
+	_ = d.handleModeChange(item.ModeHash)
 	d.queue = append(d.queue, item)
+	d.mu.Unlock()
+	notifyRuntimeChanged()
 }
 
-func (d *Runtime) handleModeChange(newHash string) {
+func (d *Runtime) handleModeChange(newHash string) bool {
 	if newHash == "" {
-		return
+		return false
 	}
 	if d.lastMode == "" {
 		d.lastMode = newHash
-		return
+		return false
 	}
 	if d.lastMode == newHash {
-		return
+		return false
 	}
+	changed := false
 	switch d.cfg.Queue.OnModeChange {
 	case "cancel_pending":
-		d.cancelPendingLocked("mode_changed")
+		if d.cancelPendingLocked("mode_changed") {
+			changed = true
+		}
 	case "cancel_running":
-		d.cancelPendingLocked("mode_changed")
-		d.cancelRunningLocked()
+		if d.cancelPendingLocked("mode_changed") {
+			changed = true
+		}
+		if d.cancelRunningLocked() {
+			changed = true
+		}
 	}
 	d.lastMode = newHash
+	return changed
 }
 
-func (d *Runtime) cancelPendingLocked(reason string) {
+func (d *Runtime) cancelPendingLocked(reason string) bool {
 	if len(d.queue) == 0 {
-		return
+		return false
 	}
 	for _, item := range d.queue {
 		item.Status = "canceled"
@@ -281,43 +377,60 @@ func (d *Runtime) cancelPendingLocked(reason string) {
 		d.appendCompletedLocked(item)
 	}
 	d.queue = []*RunItem{}
+	return true
 }
 
-func (d *Runtime) cancelRunningLocked() {
+func (d *Runtime) cancelRunningLocked() bool {
+	if len(d.running) == 0 {
+		return false
+	}
 	for id, item := range d.running {
 		item.Error = "mode_changed"
 		_, _ = cancelRun(id, false)
 	}
+	return true
 }
 
 func (d *Runtime) approve(runID string) bool {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	changed := false
 	for _, item := range d.queue {
 		if item.ID == runID && item.Status == "awaiting_approval" {
 			item.Status = "queued"
-			return true
+			changed = true
+			break
 		}
 	}
-	return false
+	d.mu.Unlock()
+	if changed {
+		notifyRuntimeChanged()
+	}
+	return changed
 }
 
 func (d *Runtime) reject(runID string) bool {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	changed := false
 	for i, item := range d.queue {
 		if item.ID == runID {
 			item.Status = "rejected"
 			item.EndedAt = time.Now().UTC()
 			d.queue = append(d.queue[:i], d.queue[i+1:]...)
 			d.appendCompletedLocked(item)
-			return true
+			changed = true
+			break
 		}
 	}
-	return false
+	d.mu.Unlock()
+	if changed {
+		notifyRuntimeChanged()
+	}
+	return changed
 }
 
 func (d *Runtime) cancel(runID string, force bool) string {
+	changed := false
+	cancelRunning := false
 	d.mu.Lock()
 	for i, item := range d.queue {
 		if item.ID == runID {
@@ -325,19 +438,25 @@ func (d *Runtime) cancel(runID string, force bool) string {
 			item.EndedAt = time.Now().UTC()
 			d.queue = append(d.queue[:i], d.queue[i+1:]...)
 			d.appendCompletedLocked(item)
+			changed = true
 			d.mu.Unlock()
+			if changed {
+				notifyRuntimeChanged()
+			}
 			return "canceled"
 		}
 	}
 	if _, ok := d.running[runID]; ok {
-		d.mu.Unlock()
+		cancelRunning = true
+	}
+	d.mu.Unlock()
+	if cancelRunning {
 		res, _ := cancelRun(runID, force)
 		if status, ok := res["status"].(string); ok {
 			return status
 		}
 		return "cancelled"
 	}
-	d.mu.Unlock()
 	return "not_found"
 }
 
@@ -415,18 +534,24 @@ func (d *Runtime) tick() {
 			return
 		}
 		_, err := startAsyncWithID(next.ID, next.Spec)
+		changed := false
 		d.mu.Lock()
 		if err != nil {
 			next.Status = "error"
 			next.Error = err.Error()
 			next.EndedAt = time.Now().UTC()
 			d.appendCompletedLocked(next)
+			changed = true
 		} else {
 			next.Status = "running"
 			next.StartedAt = time.Now().UTC()
 			d.running[next.ID] = next
+			changed = true
 		}
 		d.mu.Unlock()
+		if changed {
+			notifyRuntimeChanged()
+		}
 	}
 }
 
@@ -446,6 +571,7 @@ func (d *Runtime) syncRunning() {
 		if status == "running" {
 			continue
 		}
+		changed := false
 		d.mu.Lock()
 		item, ok := d.running[id]
 		if ok {
@@ -459,8 +585,12 @@ func (d *Runtime) syncRunning() {
 			}
 			delete(d.running, id)
 			d.appendCompletedLocked(item)
+			changed = true
 		}
 		d.mu.Unlock()
+		if changed {
+			notifyRuntimeChanged()
+		}
 	}
 }
 

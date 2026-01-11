@@ -15,7 +15,34 @@ func runMCP(args []string) int {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "conductor-kit",
 		Version: "0.1.0",
-	}, nil)
+	}, &mcp.ServerOptions{
+		HasResources: true,
+		SubscribeHandler: func(ctx context.Context, req *mcp.SubscribeRequest) error {
+			if req.Params.URI != runtimeQueueResourceURI {
+				return fmt.Errorf("unknown resource: %s", req.Params.URI)
+			}
+			return nil
+		},
+		UnsubscribeHandler: func(ctx context.Context, req *mcp.UnsubscribeRequest) error {
+			if req.Params.URI != runtimeQueueResourceURI {
+				return fmt.Errorf("unknown resource: %s", req.Params.URI)
+			}
+			return nil
+		},
+	})
+
+	server.AddResource(&mcp.Resource{
+		URI:         runtimeQueueResourceURI,
+		Name:        "Runtime queue",
+		Description: "Live runtime queue state for conductor.",
+		MIMEType:    "application/json",
+	}, runtimeQueueResourceHandler)
+	setRuntimeNotify(func(ctx context.Context) error {
+		return server.ResourceUpdated(ctx, &mcp.ResourceUpdatedNotificationParams{
+			URI: runtimeQueueResourceURI,
+		})
+	})
+	defer setRuntimeNotify(nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "conductor.run",
