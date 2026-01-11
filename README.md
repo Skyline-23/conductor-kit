@@ -34,7 +34,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
 - Homebrew cask install is macOS-only (Linux users should use manual install).
-- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (core + gemini-official bundles).
+- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (core + gemini-cli + claude-cli bundles).
 
 ## What you get
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)
@@ -76,6 +76,8 @@ Skills are installed in `~/.config/opencode/skill` (or `./.opencode/skill`).
 Codex CLI:
 ```bash
 codex mcp add conductor -- conductor mcp
+codex mcp add gemini-cli -- conductor mcp-gemini
+codex mcp add claude-cli -- conductor mcp-claude
 ```
 
 Claude Code (`~/.claude/.mcp.json`):
@@ -85,6 +87,14 @@ Claude Code (`~/.claude/.mcp.json`):
     "conductor": {
       "command": "conductor",
       "args": ["mcp"]
+    },
+    "gemini-cli": {
+      "command": "conductor",
+      "args": ["mcp-gemini"]
+    },
+    "claude-cli": {
+      "command": "conductor",
+      "args": ["mcp-claude"]
     }
   }
 }
@@ -94,7 +104,15 @@ Then use tools:
 - `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }` (async; returns run_id)
 - `conductor.run_batch_async` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
 - Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
+- `gemini.prompt` with `{ "prompt": "<task>", "model": "gemini-2.5-flash" }`
+- `gemini.batch` with `{ "prompt": "<task>", "models": "gemini-2.5-flash,gemini-2.5-pro" }`
+- `gemini.auth_status`
+- `claude.prompt` with `{ "prompt": "<task>", "model": "claude-3-5-sonnet" }`
+- `claude.batch` with `{ "prompt": "<task>", "models": "claude-3-5-sonnet,claude-3-5-haiku" }`
+- `claude.auth_status`
 
+Note: Gemini MCP uses the Gemini CLI login (no gcloud ADC).
+Note: Claude MCP uses the Claude CLI login (permission-mode defaults to dontAsk).
 Note: Delegation tools are MCP-only; CLI subcommands cover install/config/diagnostics.
 
 ### 4) Async delegation (default)
@@ -209,6 +227,12 @@ conductor mcp-bundle --host claude --bundle core --repo /path/to/conductor-kit -
 
 # Codex CLI (prints codex mcp add commands)
 conductor mcp-bundle --host codex --bundle core --repo /path/to/conductor-kit
+
+# Gemini CLI MCP (uses Gemini CLI login)
+conductor mcp-bundle --host claude --bundle gemini-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
+
+# Claude CLI MCP (uses Claude CLI login)
+conductor mcp-bundle --host claude --bundle claude-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
 
 # Gemini Cloud Assist MCP (official)
 # Requires gcloud auth application-default login + Node.js 20+

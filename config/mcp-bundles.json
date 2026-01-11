@@ -51,6 +51,26 @@
           "note": "Requires gcloud auth application-default login, Node.js 20+, and roles/serviceusage.serviceUsageAdmin + roles/geminicloudassist.user."
         }
       ]
+    },
+    "gemini-cli": {
+      "servers": [
+        {
+          "name": "gemini-cli",
+          "command": "conductor",
+          "args": ["mcp-gemini"],
+          "note": "Uses Gemini CLI login (gemini -p ...) for MCP bridge."
+        }
+      ]
+    },
+    "claude-cli": {
+      "servers": [
+        {
+          "name": "claude-cli",
+          "command": "conductor",
+          "args": ["mcp-claude"],
+          "note": "Uses Claude CLI login (claude -p ...) for MCP bridge."
+        }
+      ]
     }
   }
 }

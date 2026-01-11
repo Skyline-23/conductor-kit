@@ -9,7 +9,7 @@ import (
 	"reflect"
 )
 
-var opencodeMCPNames = []string{"conductor", "gemini-cloud-assist"}
+var opencodeMCPNames = []string{"conductor", "gemini-cli", "claude-cli", "gemini-cloud-assist"}
 
 func openCodeConfigPath(opencodeHome, projectRoot string) string {
 	if projectRoot != "" {
@@ -102,9 +102,14 @@ func upsertOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
 			"command": []string{"conductor", "mcp"},
 			"enabled": true,
 		},
-		"gemini-cloud-assist": {
+		"gemini-cli": {
 			"type":    "local",
-			"command": []string{"npx", "-y", "@google-cloud/gemini-cloud-assist-mcp@latest"},
+			"command": []string{"conductor", "mcp-gemini"},
+			"enabled": true,
+		},
+		"claude-cli": {
+			"type":    "local",
+			"command": []string{"conductor", "mcp-claude"},
 			"enabled": true,
 		},
 	}

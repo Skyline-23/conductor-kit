@@ -34,7 +34,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
 - Go 1.23+ (소스에서 빌드할 때만 필요)
 - Homebrew cask 설치는 macOS 전용입니다 (Linux는 수동 설치 사용).
-- MCP 도구 등록: `conductor install`이 Codex + Claude + OpenCode에 자동 등록 (core + gemini-official 번들)
+- MCP 도구 등록: `conductor install`이 Codex + Claude + OpenCode에 자동 등록 (core + gemini-cli + claude-cli 번들)
 
 ## 포함 기능
 - **스킬**: `conductor` (`skills/conductor/SKILL.md`)
@@ -76,6 +76,8 @@ OpenCode (슬래시 커맨드):
 Codex CLI:
 ```bash
 codex mcp add conductor -- conductor mcp
+codex mcp add gemini-cli -- conductor mcp-gemini
+codex mcp add claude-cli -- conductor mcp-claude
 ```
 
 Claude Code (`~/.claude/.mcp.json`):
@@ -85,6 +87,14 @@ Claude Code (`~/.claude/.mcp.json`):
     "conductor": {
       "command": "conductor",
       "args": ["mcp"]
+    },
+    "gemini-cli": {
+      "command": "conductor",
+      "args": ["mcp-gemini"]
+    },
+    "claude-cli": {
+      "command": "conductor",
+      "args": ["mcp-claude"]
     }
   }
 }
@@ -94,7 +104,15 @@ Claude Code (`~/.claude/.mcp.json`):
 - `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }` (비동기; run_id 반환)
 - `conductor.run_batch_async` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
 - 상태 확인: `conductor.run_status` with `{ "run_id": "<id>" }`
+- `gemini.prompt` with `{ "prompt": "<task>", "model": "gemini-2.5-flash" }`
+- `gemini.batch` with `{ "prompt": "<task>", "models": "gemini-2.5-flash,gemini-2.5-pro" }`
+- `gemini.auth_status`
+- `claude.prompt` with `{ "prompt": "<task>", "model": "claude-3-5-sonnet" }`
+- `claude.batch` with `{ "prompt": "<task>", "models": "claude-3-5-sonnet,claude-3-5-haiku" }`
+- `claude.auth_status`
 
+참고: Gemini MCP는 Gemini CLI 로그인만 사용합니다 (gcloud ADC 불필요).
+참고: Claude MCP는 Claude CLI 로그인을 사용하며 permission-mode 기본값은 dontAsk입니다.
 참고: 위임 도구는 MCP 전용이며, CLI 서브커맨드는 설치/설정/진단용입니다.
 
 ### 4) 비동기 위임 (기본)
@@ -208,6 +226,12 @@ conductor mcp-bundle --host claude --bundle core --repo /path/to/conductor-kit -
 
 # Codex CLI (codex mcp add 명령 출력)
 conductor mcp-bundle --host codex --bundle core --repo /path/to/conductor-kit
+
+# Gemini CLI MCP (Gemini CLI 로그인 사용)
+conductor mcp-bundle --host claude --bundle gemini-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
+
+# Claude CLI MCP (Claude CLI 로그인 사용)
+conductor mcp-bundle --host claude --bundle claude-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
 
 # Gemini Cloud Assist MCP (공식)
 # gcloud auth application-default login 및 Node.js 20+ 필요
