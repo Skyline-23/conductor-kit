@@ -9,7 +9,7 @@ import (
 	"reflect"
 )
 
-var opencodeMCPNames = []string{"conductor", "gemini-cli", "claude-cli", "gemini-cloud-assist"}
+var opencodeMCPNames = []string{"conductor", "gemini-cli", "claude-cli", "codex-cli", "gemini-cloud-assist"}
 
 func openCodeConfigPath(opencodeHome, projectRoot string) string {
 	if projectRoot != "" {
@@ -112,7 +112,13 @@ func upsertOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
 			"command": []string{"conductor", "mcp-claude"},
 			"enabled": true,
 		},
+		"codex-cli": {
+			"type":    "local",
+			"command": []string{"conductor", "mcp-codex"},
+			"enabled": true,
+		},
 	}
+
 	updated := false
 	for name, desired := range desireds {
 		if existing, ok := mcp[name]; ok && reflect.DeepEqual(existing, desired) {

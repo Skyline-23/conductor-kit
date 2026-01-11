@@ -34,7 +34,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
 - Homebrew cask install is macOS-only (Linux users should use manual install).
-- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (core + gemini-cli + claude-cli bundles).
+- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (core + gemini-cli + claude-cli + codex-cli bundles).
 
 ## What you get
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)
@@ -95,6 +95,10 @@ Claude Code (`~/.claude/.mcp.json`):
     "claude-cli": {
       "command": "conductor",
       "args": ["mcp-claude"]
+    },
+    "codex-cli": {
+      "command": "conductor",
+      "args": ["mcp-codex"]
     }
   }
 }
@@ -110,9 +114,13 @@ Then use tools:
 - `claude.prompt` with `{ "prompt": "<task>", "model": "claude-3-5-sonnet" }`
 - `claude.batch` with `{ "prompt": "<task>", "models": "claude-3-5-sonnet,claude-3-5-haiku" }`
 - `claude.auth_status`
+- `codex.prompt` with `{ "prompt": "<task>", "model": "gpt-5.2-codex" }`
+- `codex.batch` with `{ "prompt": "<task>", "models": "gpt-5.2-codex,gpt-4.1" }`
+- `codex.auth_status`
 
 Note: Gemini MCP uses the Gemini CLI login (no gcloud ADC).
 Note: Claude MCP uses the Claude CLI login (permission-mode defaults to dontAsk).
+Note: Codex MCP uses the Codex CLI login (codex exec --json).
 Note: Delegation tools are MCP-only; CLI subcommands cover install/config/diagnostics.
 
 ### 4) Async delegation (default)
@@ -234,6 +242,9 @@ conductor mcp-bundle --host claude --bundle gemini-cli --repo /path/to/conductor
 
 # Claude CLI MCP (uses Claude CLI login)
 conductor mcp-bundle --host claude --bundle claude-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
+
+# Codex CLI MCP (uses Codex CLI login)
+conductor mcp-bundle --host claude --bundle codex-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
 
 # Gemini Cloud Assist MCP (official)
 # Requires gcloud auth application-default login + Node.js 20+

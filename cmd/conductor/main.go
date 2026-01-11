@@ -30,6 +30,8 @@ func main() {
 		os.Exit(runGeminiMCP(rest))
 	case "mcp-claude":
 		os.Exit(runClaudeMCP(rest))
+	case "mcp-codex":
+		os.Exit(runCodexMCP(rest))
 	default:
 		printHelp()
 		os.Exit(1)
@@ -48,6 +50,7 @@ func resolveCommand(args []string) (string, []string) {
 		"mcp":             true,
 		"mcp-gemini":      true,
 		"mcp-claude":      true,
+		"mcp-codex":       true,
 	}
 
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -57,19 +60,21 @@ func resolveCommand(args []string) (string, []string) {
 	}
 
 	alias := map[string]string{
-		"conductor":                     "",
-		"conductor-kit":                 "install",
-		"conductor-kit-install":         "install",
-		"conductor-uninstall":           "uninstall",
-		"conductor-settings":            "settings",
-		"conductor-status":              "status",
-		"conductor-config-validate":     "config-validate",
-		"conductor-doctor":              "doctor",
-		"conductor-mcp-bundle":          "mcp-bundle",
-		"conductor-mcp":                 "mcp",
-		"conductor-mcp-gemini":          "mcp-gemini",
-		"conductor-mcp-claude":          "mcp-claude",
-		"conductor-mcp.exe":             "mcp",
+		"conductor":                 "",
+		"conductor-kit":             "install",
+		"conductor-kit-install":     "install",
+		"conductor-uninstall":       "uninstall",
+		"conductor-settings":        "settings",
+		"conductor-status":          "status",
+		"conductor-config-validate": "config-validate",
+		"conductor-doctor":          "doctor",
+		"conductor-mcp-bundle":      "mcp-bundle",
+		"conductor-mcp":             "mcp",
+		"conductor-mcp-gemini":      "mcp-gemini",
+		"conductor-mcp-claude":      "mcp-claude",
+		"conductor-mcp-codex":       "mcp-codex",
+		"conductor-mcp.exe":         "mcp",
+
 		"conductor-config-validate.exe": "config-validate",
 		"conductor-doctor.exe":          "doctor",
 		"conductor-settings.exe":        "settings",
@@ -77,6 +82,7 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-mcp-bundle.exe":      "mcp-bundle",
 		"conductor-mcp-gemini.exe":      "mcp-gemini",
 		"conductor-mcp-claude.exe":      "mcp-claude",
+		"conductor-mcp-codex.exe":       "mcp-codex",
 		"conductor-status.exe":          "status",
 	}
 
@@ -108,6 +114,7 @@ Commands:
   mcp                  Run MCP server (stdio)
   mcp-gemini           Run Gemini CLI MCP server (stdio)
   mcp-claude           Run Claude CLI MCP server (stdio)
+  mcp-codex            Run Codex CLI MCP server (stdio)
 
 Aliases:
   conductor-kit, conductor-kit-install
@@ -117,5 +124,6 @@ Aliases:
   conductor-mcp
   conductor-mcp-gemini
   conductor-mcp-claude
+  conductor-mcp-codex
 `)
 }

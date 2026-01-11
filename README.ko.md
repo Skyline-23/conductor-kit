@@ -34,7 +34,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
 - Go 1.23+ (소스에서 빌드할 때만 필요)
 - Homebrew cask 설치는 macOS 전용입니다 (Linux는 수동 설치 사용).
-- MCP 도구 등록: `conductor install`이 Codex + Claude + OpenCode에 자동 등록 (core + gemini-cli + claude-cli 번들)
+- MCP 도구 등록: `conductor install`이 Codex + Claude + OpenCode에 자동 등록 (core + gemini-cli + claude-cli + codex-cli 번들)
 
 ## 포함 기능
 - **스킬**: `conductor` (`skills/conductor/SKILL.md`)
@@ -95,6 +95,10 @@ Claude Code (`~/.claude/.mcp.json`):
     "claude-cli": {
       "command": "conductor",
       "args": ["mcp-claude"]
+    },
+    "codex-cli": {
+      "command": "conductor",
+      "args": ["mcp-codex"]
     }
   }
 }
@@ -110,9 +114,13 @@ Claude Code (`~/.claude/.mcp.json`):
 - `claude.prompt` with `{ "prompt": "<task>", "model": "claude-3-5-sonnet" }`
 - `claude.batch` with `{ "prompt": "<task>", "models": "claude-3-5-sonnet,claude-3-5-haiku" }`
 - `claude.auth_status`
+- `codex.prompt` with `{ "prompt": "<task>", "model": "gpt-5.2-codex" }`
+- `codex.batch` with `{ "prompt": "<task>", "models": "gpt-5.2-codex,gpt-4.1" }`
+- `codex.auth_status`
 
 참고: Gemini MCP는 Gemini CLI 로그인만 사용합니다 (gcloud ADC 불필요).
 참고: Claude MCP는 Claude CLI 로그인을 사용하며 permission-mode 기본값은 dontAsk입니다.
+참고: Codex MCP는 Codex CLI 로그인을 사용합니다 (codex exec --json).
 참고: 위임 도구는 MCP 전용이며, CLI 서브커맨드는 설치/설정/진단용입니다.
 
 ### 4) 비동기 위임 (기본)
@@ -233,6 +241,9 @@ conductor mcp-bundle --host claude --bundle gemini-cli --repo /path/to/conductor
 
 # Claude CLI MCP (Claude CLI 로그인 사용)
 conductor mcp-bundle --host claude --bundle claude-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
+
+# Codex CLI MCP (Codex CLI 로그인 사용)
+conductor mcp-bundle --host claude --bundle codex-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
 
 # Gemini Cloud Assist MCP (공식)
 # gcloud auth application-default login 및 Node.js 20+ 필요

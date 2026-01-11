@@ -71,6 +71,16 @@
           "note": "Uses Claude CLI login (claude -p ...) for MCP bridge."
         }
       ]
+    },
+    "codex-cli": {
+      "servers": [
+        {
+          "name": "codex-cli",
+          "command": "conductor",
+          "args": ["mcp-codex"],
+          "note": "Uses Codex CLI login (codex exec --json) for MCP bridge."
+        }
+      ]
     }
   }
 }
