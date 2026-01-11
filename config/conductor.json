@@ -8,9 +8,7 @@
     "retry_backoff_ms": 500,
     "log_prompt": false
   },
-  "daemon": {
-    "host": "127.0.0.1",
-    "port": 51842,
+  "runtime": {
     "max_parallel": 4,
     "queue": {
       "on_mode_change": "none"

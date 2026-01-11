@@ -9,7 +9,7 @@ import (
 type Config struct {
 	Defaults Defaults              `json:"defaults"`
 	Roles    map[string]RoleConfig `json:"roles"`
-	Daemon   DaemonConfig          `json:"daemon"`
+	Runtime  RuntimeConfig         `json:"runtime"`
 }
 
 type Defaults struct {
@@ -22,9 +22,7 @@ type Defaults struct {
 	SummaryOnly    bool `json:"summary_only"`
 }
 
-type DaemonConfig struct {
-	Host        string         `json:"host"`
-	Port        int            `json:"port"`
+type RuntimeConfig struct {
 	MaxParallel int            `json:"max_parallel"`
 	Queue       QueueConfig    `json:"queue"`
 	Approval    ApprovalConfig `json:"approval"`
