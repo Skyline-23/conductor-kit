@@ -36,7 +36,7 @@ If the host supports markdown commands, install the `commands/` files and use th
 
 ## Cross-CLI delegation (multi-agent, multi-model)
 
-By default, the active host (Codex CLI or Claude Code) is the orchestrator. A local `conductor` daemon is optional for queueing/approvals/remote monitoring; treat it as a helper runtime, not a replacement for the host.
+By default, the active host (Codex CLI or Claude Code) is the orchestrator. The MCP server includes a built-in queue/approval runtime; treat it as a helper runtime, not a replacement for the host.
 
 Always delegate first and in parallel. Delegation is mandatory for discovery/review/alternatives; only skip for a trivial one-file edit.
 
@@ -127,9 +127,10 @@ If the host supports it, prefer its native model switching first; delegate only 
     - `conductor.run_batch_async` with `{ "roles": "<role(s)>", "prompt": "<request>" }`
     - Override model/reasoning: `{ "roles": "<role(s)>", "model": "<model>", "reasoning": "<level>", "prompt": "<request>" }`
   - Poll with `conductor.run_status` (host tool calls time out around 60s; avoid `run_wait`)
-  - If a daemon is running, you can list/approve runs:
-    - `conductor.queue_list` / `conductor.approval_list`
-    - `conductor.approval_approve` / `conductor.approval_reject`
+- Use the queue/approval tools when needed:
+  - `conductor.queue_list` / `conductor.approval_list`
+  - `conductor.approval_approve` / `conductor.approval_reject`
+
   - Delegation is MCP-only; do not use CLI `background-*` commands.
   - Always print a user-visible line after each stage: `Delegation results received: <agents>` (no raw logs).
   - If you need auditability, use `conductor.run_history` / `conductor.run_info`.

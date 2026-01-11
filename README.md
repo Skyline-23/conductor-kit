@@ -10,7 +10,7 @@ It enforces a consistent orchestration loop (search -> plan -> execute -> verify
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 
-# Homebrew post_install links skills/commands into Codex + Claude + OpenCode
+# Homebrew post_install links skills/commands and registers MCP for Codex + Claude + OpenCode
 # Re-run if needed:
 conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
 ```
@@ -34,16 +34,13 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
 - Homebrew cask install is macOS-only (Linux users should use manual install).
-- MCP registration:
-  - Codex CLI: `codex mcp add ...`
-  - Claude Code: `~/.claude/.mcp.json` (see below)
-  - OpenCode: auto-registered in `~/.config/opencode/opencode.json` (or `opencode.json` for `--project`) by `conductor install`
+- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (core + gemini-official bundles).
 
 ## What you get
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)
 - **Commands**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
 - **Go helper**: `conductor` binary for install + MCP server + delegation tools
-- **Optional runtime**: local daemon for queued/approved async runs
+- **Built-in runtime**: MCP server queues + approvals for async runs
 - **Config**: `~/.conductor-kit/conductor.json` (role -> CLI/model mapping)
 
 ## Usage
@@ -98,7 +95,7 @@ Then use tools:
 - `conductor.run_batch_async` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
 - Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
 
-Note: Delegation tools are MCP-only; CLI subcommands are only for daemon setup.
+Note: Delegation tools are MCP-only; CLI subcommands cover install/config/diagnostics.
 
 ### 4) Async delegation (default)
 - Start async run: `conductor.run` or `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
@@ -107,30 +104,21 @@ Note: Delegation tools are MCP-only; CLI subcommands are only for daemon setup.
 - Wait for completion: `conductor.run_wait` (note: host tool-call timeouts may cut this off)
 - Cancel: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
 
-### 5) Local daemon (queue + approvals, optional)
-Start a local daemon to queue async runs, enforce approvals, and expose run listings.
+### 5) Queue + approvals (built-in)
+The MCP server includes a queue/approval runtime for async runs.
 
-```bash
-conductor daemon --mode start --detach
-conductor daemon --mode status
-conductor daemon --mode stop
-```
-
-When the daemon is running, async MCP tools automatically route through it (unless `no_daemon: true`).
-New tools:
+Tools:
 - `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval", "limit": 50 }`
 - `conductor.approval_list`
 - `conductor.approval_approve` with `{ "run_id": "<id>" }`
 - `conductor.approval_reject` with `{ "run_id": "<id>" }`
-- `conductor.daemon_status`
+- `conductor.runtime_status`
 
 Optional flags for async tools:
 - `require_approval: true` (force approval even if defaults say no)
 - `mode: "string"` (override mode hash for batching)
-- `no_daemon: true` (bypass daemon)
+- `no_runtime: true` (bypass queue/approval runtime)
 - `summary_only: true` (hide stdout/stderr and return read/changed file summaries)
-
-Set `CONDUCTOR_DAEMON_URL` to target a remote daemon.
 
 
 ## Model setup (roles)
@@ -142,11 +130,10 @@ Key fields:
 - `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
 - `defaults.log_prompt`: store prompt text in run history (default: false)
 - `defaults.summary_only`: hide raw stdout/stderr in MCP results and return read/changed file summaries only
-- `daemon.host` / `daemon.port`: local daemon bind address
-- `daemon.max_parallel`: daemon worker limit (defaults to `defaults.max_parallel`)
-- `daemon.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
-- `daemon.approval.required`: force approvals for all runs
-- `daemon.approval.roles` / `daemon.approval.agents`: require approval for specific roles or CLI agents
+- `runtime.max_parallel`: queue worker limit (defaults to `defaults.max_parallel`)
+- `runtime.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
+- `runtime.approval.required`: force approvals for all runs
+- `runtime.approval.roles` / `runtime.approval.agents`: require approval for specific roles or CLI agents
 - `roles.<name>.cli`: executable to run (must be on PATH)
 - `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go (optional for codex/claude/gemini)
 - `roles.<name>.model_flag`: model flag (optional for codex/claude/gemini)
@@ -222,6 +209,10 @@ conductor mcp-bundle --host claude --bundle core --repo /path/to/conductor-kit -
 
 # Codex CLI (prints codex mcp add commands)
 conductor mcp-bundle --host codex --bundle core --repo /path/to/conductor-kit
+
+# Gemini Cloud Assist MCP (official)
+# Requires gcloud auth application-default login + Node.js 20+
+conductor mcp-bundle --host claude --bundle gemini-official --repo /path/to/conductor-kit --out .claude/.mcp.json
 ```
 Bundle config lives at `~/.conductor-kit/mcp-bundles.json` (installed by `conductor install`).
 
@@ -241,11 +232,11 @@ Tools:
 - `conductor.run_info`
 - `conductor.roles`
 - `conductor.status`
-- `conductor.queue_list` (daemon)
-- `conductor.approval_list` (daemon)
-- `conductor.approval_approve` (daemon)
-- `conductor.approval_reject` (daemon)
-- `conductor.daemon_status` (daemon)
+- `conductor.queue_list`
+- `conductor.approval_list`
+- `conductor.approval_approve`
+- `conductor.approval_reject`
+- `conductor.runtime_status`
 Note: if the host supplies a progress token, Conductor emits MCP progress notifications during batch/async runs.
 Note: `conductor.run_batch` is synchronous; prefer `conductor.run_batch_async` to avoid host tool-call timeouts.
 

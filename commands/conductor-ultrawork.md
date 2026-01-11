@@ -28,7 +28,7 @@ Do the following:
   - For audit, use `conductor.run_history` or `conductor.run_info`.
 - Always wait for all delegated runs to finish before responding. If a run is stuck, keep polling; do not answer until you have all results or the user cancels.
 - Poll progress with `conductor.run_status` (avoid `run_wait` due to host tool-call timeout).
-  - If a daemon is running, list/approve runs with `conductor.queue_list` and `conductor.approval_*`.
+  - List/approve runs with `conductor.queue_list` and `conductor.approval_*`.
 - Run the full orchestration loop: search -> plan -> execute -> verify -> cleanup.
 - Always produce a short plan (3-6 steps) before any edits.
 - Make small, safe changes; prefer reuse over new dependencies.

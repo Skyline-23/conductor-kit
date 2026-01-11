@@ -26,7 +26,7 @@ Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-open
 ## Current State
 - `skills/conductor/SKILL.md` exists.
 - `commands/` contains mode-switch commands (plan/search/implement/release/ultrawork).
-- `cmd/conductor` provides install/uninstall, settings/login helpers, diagnostics, local daemon, MCP server, and delegation tools (`run`, `run_batch`, async, history, queue/approval).
+- `cmd/conductor` provides install/uninstall, settings/login helpers, diagnostics, MCP server, and delegation tools (`run`, `run_batch`, async, history, queue/approval/runtime).
 - Release uses Homebrew cask (with uninstall hook) instead of formula.
 - `config/conductor.json` defines role -> CLI/model mapping with CLI-native defaults (no provider prefix) and oracle reasoning.
 
@@ -35,7 +35,7 @@ Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-open
 2) Provide optional MCP bundle templates and host-specific setup helpers.
 3) Add project-local overrides (config discovery + optional local install).
 4) Happy-inspired orchestration upgrades (OpenCode-free):
-   - Optional local daemon + control API for run lifecycle and listing.
+   - Optional local runtime + control API for run lifecycle and listing.
    - Message queue + mode hash batching for safe restarts.
    - Permission/approval workflow for background tasks.
    - Orchestration policy inspired by oh-my-opencode (background-first fan-out, status polling, gated approvals).
