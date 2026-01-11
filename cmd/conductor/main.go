@@ -26,6 +26,10 @@ func main() {
 		os.Exit(runMCPBundle(rest))
 	case "mcp":
 		os.Exit(runMCP(rest))
+	case "mcp-gemini":
+		os.Exit(runGeminiMCP(rest))
+	case "mcp-claude":
+		os.Exit(runClaudeMCP(rest))
 	default:
 		printHelp()
 		os.Exit(1)
@@ -42,6 +46,8 @@ func resolveCommand(args []string) (string, []string) {
 		"doctor":          true,
 		"mcp-bundle":      true,
 		"mcp":             true,
+		"mcp-gemini":      true,
+		"mcp-claude":      true,
 	}
 
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -61,12 +67,16 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor-doctor":              "doctor",
 		"conductor-mcp-bundle":          "mcp-bundle",
 		"conductor-mcp":                 "mcp",
+		"conductor-mcp-gemini":          "mcp-gemini",
+		"conductor-mcp-claude":          "mcp-claude",
 		"conductor-mcp.exe":             "mcp",
 		"conductor-config-validate.exe": "config-validate",
 		"conductor-doctor.exe":          "doctor",
 		"conductor-settings.exe":        "settings",
 		"conductor-uninstall.exe":       "uninstall",
 		"conductor-mcp-bundle.exe":      "mcp-bundle",
+		"conductor-mcp-gemini.exe":      "mcp-gemini",
+		"conductor-mcp-claude.exe":      "mcp-claude",
 		"conductor-status.exe":          "status",
 	}
 
@@ -96,6 +106,8 @@ Commands:
   doctor               Check config and CLI availability
   mcp-bundle           Render MCP bundle templates for hosts
   mcp                  Run MCP server (stdio)
+  mcp-gemini           Run Gemini CLI MCP server (stdio)
+  mcp-claude           Run Claude CLI MCP server (stdio)
 
 Aliases:
   conductor-kit, conductor-kit-install
@@ -103,5 +115,7 @@ Aliases:
   conductor-config-validate, conductor-doctor
   conductor-mcp-bundle
   conductor-mcp
+  conductor-mcp-gemini
+  conductor-mcp-claude
 `)
 }

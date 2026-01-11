@@ -94,6 +94,8 @@ func conductorBinAliases() []string {
 		"conductor-doctor",
 		"conductor-mcp-bundle",
 		"conductor-mcp",
+		"conductor-mcp-gemini",
+		"conductor-mcp-claude",
 		"conductor-status",
 		"conductor-settings",
 		"conductor-uninstall",
