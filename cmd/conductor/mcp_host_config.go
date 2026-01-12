@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	mcpBundleNames = []string{"core", "gemini-cli", "claude-cli", "codex-cli"}
-	claudeMCPNames = []string{"conductor", "gemini-cli", "claude-cli", "codex-cli", "gemini-cloud-assist"}
-	codexMCPNames  = []string{"conductor", "gemini-cli", "claude-cli", "codex-cli", "gemini-cloud-assist"}
+	mcpBundleNames = []string{"gemini-cli", "claude-cli", "codex-cli"}
+	claudeMCPNames = []string{"gemini-cli", "claude-cli", "codex-cli"}
+	codexMCPNames  = []string{"gemini-cli", "claude-cli", "codex-cli"}
 )
 
 func claudeMCPPath(claudeHome string) string {
@@ -82,7 +82,6 @@ func removeClaudeMCP(claudeHome string, dryRun bool) error {
 
 func ensureCodexMCP(bundlesPath string, dryRun bool) error {
 	if dryRun {
-		fmt.Println("Register Codex MCP -> codex mcp add conductor -- conductor mcp")
 		fmt.Println("Register Codex MCP -> codex mcp add gemini-cli -- conductor mcp-gemini")
 		fmt.Println("Register Codex MCP -> codex mcp add claude-cli -- conductor mcp-claude")
 		fmt.Println("Register Codex MCP -> codex mcp add codex-cli -- conductor mcp-codex")

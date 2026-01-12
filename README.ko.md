@@ -1,7 +1,7 @@
 # conductor-kit
 
 Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬퍼**이며, OpenCode 전역 설치도 지원합니다.
-오케스트레이션 루프(검색 -> 계획 -> 실행 -> 검증 -> 정리)를 강제하고, 필요 시 MCP 병렬 위임을 지원합니다.
+오케스트레이션 루프(검색 -> 계획 -> 실행 -> 검증 -> 정리)를 강제하고, CLI MCP 브릿지로 위임을 지원합니다.
 
 **언어**: [English](README.md) | 한국어
 
@@ -34,13 +34,13 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - 위임용 CLI를 최소 1개 PATH에 설치: `codex`, `claude`, `gemini` (config 역할과 일치)
 - Go 1.23+ (소스에서 빌드할 때만 필요)
 - Homebrew cask 설치는 macOS 전용입니다 (Linux는 수동 설치 사용).
-- MCP 도구 등록: `conductor install`이 Codex + Claude + OpenCode에 자동 등록 (core + gemini-cli + claude-cli + codex-cli 번들)
+- MCP 도구 등록: `conductor install`이 Codex + Claude + OpenCode에 자동 등록 (gemini-cli + claude-cli + codex-cli 번들)
 
 ## 포함 기능
 - **스킬**: `conductor` (`skills/conductor/SKILL.md`)
 - **커맨드**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
-- **Go 헬퍼**: `conductor` 바이너리(설치/MCP/위임 도구)
-- **내장 런타임**: MCP 서버 큐/승인 기반 비동기 실행
+- **Go 헬퍼**: `conductor` 바이너리(설치/MCP 브릿지)
+- **CLI MCP 브릿지**: gemini/claude/codex CLI 래퍼
 - **설정**: `~/.conductor-kit/conductor.json` (역할 -> CLI/모델 매핑)
 
 ## 사용법
@@ -72,22 +72,18 @@ OpenCode (슬래시 커맨드):
 커맨드는 `~/.config/opencode/command` (또는 `./.opencode/command`)에 설치됩니다.
 스킬은 `~/.config/opencode/skill` (또는 `./.opencode/skill`)에 설치됩니다.
 
-### 3) 병렬 위임 (MCP 전용)
+### 3) CLI MCP 브릿지
 Codex CLI:
 ```bash
-codex mcp add conductor -- conductor mcp
 codex mcp add gemini-cli -- conductor mcp-gemini
 codex mcp add claude-cli -- conductor mcp-claude
+codex mcp add codex-cli -- conductor mcp-codex
 ```
 
 Claude Code (`~/.claude/.mcp.json`):
 ```json
 {
   "mcpServers": {
-    "conductor": {
-      "command": "conductor",
-      "args": ["mcp"]
-    },
     "gemini-cli": {
       "command": "conductor",
       "args": ["mcp-gemini"]
@@ -105,9 +101,6 @@ Claude Code (`~/.claude/.mcp.json`):
 ```
 
 이후 도구 호출:
-- `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }` (비동기; run_id 반환)
-- `conductor.run_batch_async` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
-- 상태 확인: `conductor.run_status` with `{ "run_id": "<id>" }`
 - `gemini.prompt` with `{ "prompt": "<task>", "model": "gemini-2.5-flash" }`
 - `gemini.batch` with `{ "prompt": "<task>", "models": "gemini-2.5-flash,gemini-2.5-pro" }`
 - `gemini.auth_status`
@@ -123,29 +116,6 @@ Claude Code (`~/.claude/.mcp.json`):
 참고: Codex MCP는 Codex CLI 로그인을 사용합니다 (codex exec --json).
 참고: 위임 도구는 MCP 전용이며, CLI 서브커맨드는 설치/설정/진단용입니다.
 
-### 4) 비동기 위임 (기본)
-- 비동기 시작: `conductor.run` 또는 `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
-- 배치 비동기: `conductor.run_batch_async` with `{ "roles": "oracle,librarian", "prompt": "<task>" }`
-- 상태 확인: `conductor.run_status` with `{ "run_id": "<id>" }`
-- 완료 대기: `conductor.run_wait` (호스트 tool-call 타임아웃으로 중단될 수 있음)
-- 취소: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
-
-### 5) 큐 + 승인 (내장)
-MCP 서버에 큐/승인 런타임이 내장되어 있습니다.
-
-도구:
-- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval", "limit": 50 }`
-- `conductor.approval_list`
-- `conductor.approval_approve` with `{ "run_id": "<id>" }`
-- `conductor.approval_reject` with `{ "run_id": "<id>" }`
-- `conductor.runtime_status`
-
-비동기 옵션:
-- `require_approval: true` (강제 승인)
-- `mode: "string"` (모드 해시 지정)
-- `no_runtime: true` (큐/승인 런타임 우회)
-- `summary_only: true` (stdout/stderr 숨기고 읽음/변경 파일 요약만 반환)
-
 ## 모델 설정 (roles)
 `~/.conductor-kit/conductor.json`에서 역할 -> CLI/모델 라우팅을 설정합니다 (`config/conductor.json`에서 설치).
 레포의 파일이 기본 템플릿이며, `conductor install`이 이를 `~/.conductor-kit/`로 링크/복사합니다.
@@ -154,16 +124,11 @@ MCP 서버에 큐/승인 런타임이 내장되어 있습니다.
 핵심 필드:
 - `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
 - `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
-- `defaults.summary_only`: MCP 결과에서 stdout/stderr를 숨기고 읽음/변경 파일 요약만 반환
-- `runtime.max_parallel`: 큐 동시 실행 제한 (기본값: `defaults.max_parallel`)
-- `runtime.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
-- `runtime.approval.required`: 전체 승인 강제
-- `runtime.approval.roles` / `runtime.approval.agents`: 특정 역할/CLI 에이전트 승인 강제
 - `roles.<name>.cli`: 실행할 CLI (PATH에 있어야 함)
 - `roles.<name>.args`: argv 템플릿; `{prompt}` 위치에 프롬프트 삽입 (codex/claude/gemini는 생략 가능)
 - `roles.<name>.model_flag`: 모델 플래그 (codex/claude/gemini는 생략 가능)
 - `roles.<name>.model`: 기본 모델 문자열 (선택)
-- `roles.<name>.models`: `conductor.run_batch`용 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
+- `roles.<name>.models`: 배치 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd 오버라이드
 - `conductor status`: CLI별 로컬 인증 저장소를 확인 (codex: `~/.codex/auth.json`, gemini: `~/.gemini/oauth_creds.json` 또는 키체인, claude: 키체인 `Claude Code-credentials`)하며 CLI는 실행하지 않음
@@ -194,9 +159,7 @@ MCP 서버에 큐/승인 런타임이 내장되어 있습니다.
 ```
 
 오버라이드:
-- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }` (비동기)
-- `conductor.run_batch_async` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
-- `conductor.run_batch_async` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` 또는 `CONDUCTOR_CONFIG=/path/to/conductor.json`
+- `CONDUCTOR_CONFIG=/path/to/conductor.json`로 커스텀 설정 지정
 팁: `~/.conductor-kit/conductor.json`을 직접 수정하고, 기본값으로 되돌리고 싶을 때만 `conductor install`을 재실행하세요.
 스키마: `config/conductor.schema.json` (툴링용 선택 사항)
 
@@ -222,58 +185,22 @@ brew uninstall --cask conductor-kit
 cask uninstall 훅이 `conductor uninstall --force`를 실행해 사용자 설치물을 정리합니다.
 
 ## 관측/기록
-- `conductor.run_history` with `{ "limit": 20 }`
-- `conductor.run_info` with `{ "run_id": "<id>" }`
-- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval" }`
-- `conductor.approval_list` (승인 대기 목록)
-- 리소스 `conductor://runtime/queue` 구독 시 `notifications/resources/updated` 수신
+- `conductor status` (CLI 인증/가용성 확인)
+- CLI MCP 브릿지 출력(`gemini.prompt`, `claude.prompt`, `codex.prompt`)
 
 ## 선택적 MCP 번들
 ```bash
 # Claude Code (.claude/.mcp.json)
-conductor mcp-bundle --host claude --bundle core --repo /path/to/conductor-kit --out .claude/.mcp.json
-
-# Codex CLI (codex mcp add 명령 출력)
-conductor mcp-bundle --host codex --bundle core --repo /path/to/conductor-kit
-
-# Gemini CLI MCP (Gemini CLI 로그인 사용)
 conductor mcp-bundle --host claude --bundle gemini-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
-
-# Claude CLI MCP (Claude CLI 로그인 사용)
 conductor mcp-bundle --host claude --bundle claude-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
-
-# Codex CLI MCP (Codex CLI 로그인 사용)
 conductor mcp-bundle --host claude --bundle codex-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
 
-# Gemini Cloud Assist MCP (공식)
-# gcloud auth application-default login 및 Node.js 20+ 필요
-conductor mcp-bundle --host claude --bundle gemini-official --repo /path/to/conductor-kit --out .claude/.mcp.json
+# Codex CLI (codex mcp add 명령 출력)
+conductor mcp-bundle --host codex --bundle gemini-cli --repo /path/to/conductor-kit
+conductor mcp-bundle --host codex --bundle claude-cli --repo /path/to/conductor-kit
+conductor mcp-bundle --host codex --bundle codex-cli --repo /path/to/conductor-kit
 ```
 번들 설정은 `~/.conductor-kit/mcp-bundles.json`에 설치됩니다.
-
-## MCP 도구 (tool-calling UI 권장)
-```bash
-codex mcp add conductor -- conductor mcp
-```
-도구 목록:
-- `conductor.run`
-- `conductor.run_batch`
-- `conductor.run_async`
-- `conductor.run_batch_async`
-- `conductor.run_status`
-- `conductor.run_wait`
-- `conductor.run_cancel`
-- `conductor.run_history`
-- `conductor.run_info`
-- `conductor.roles`
-- `conductor.status`
-- `conductor.queue_list`
-- `conductor.approval_list`
-- `conductor.approval_approve`
-- `conductor.approval_reject`
-- `conductor.runtime_status`
-참고: 호스트가 progress token을 제공하면 Conductor가 batch/async 실행 중 MCP progress 알림을 보냅니다.
-참고: `conductor.run_batch`는 동기 실행이므로 `conductor.run_batch_async`를 권장합니다.
 
 ## 레포 구조
 ```

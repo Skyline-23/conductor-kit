@@ -2,22 +2,10 @@
   "defaults": {
     "timeout_ms": 120000,
     "idle_timeout_ms": 0,
-    "summary_only": true,
     "max_parallel": 4,
     "retry": 0,
     "retry_backoff_ms": 500,
     "log_prompt": false
-  },
-  "runtime": {
-    "max_parallel": 4,
-    "queue": {
-      "on_mode_change": "none"
-    },
-    "approval": {
-      "required": false,
-      "roles": [],
-      "agents": []
-    }
   },
   "roles": {
     "oracle": {

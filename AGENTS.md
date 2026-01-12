@@ -1,14 +1,14 @@
 # Conductor Kit - Agent Instructions
 
 ## Mission
-Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-opencode but not dependent on OpenCode. Keep the pack skills-first, and provide a small Go helper CLI for install, MCP orchestration (sync/async), and optional MCP tool bundles.
+Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-opencode but not dependent on OpenCode. Keep the pack skills-first, and provide a small Go helper CLI for install, CLI MCP bridges, and optional MCP tool bundles.
 
 ## Scope (In)
 - Keep a single core `conductor` skill under `skills/` as the source of truth.
 - Provide root-level docs (e.g., `README.md`) that describe install and usage.
 - Provide global install via link/copy into `~/.codex`, `~/.claude`, and `~/.config/opencode`.
 - Provide shared markdown commands under `commands/` (Codex + Claude).
-- Provide a Go helper CLI in `cmd/conductor` for install + MCP server + delegation tools.
+- Provide a Go helper CLI in `cmd/conductor` for install + CLI MCP bridge servers.
 - Provide role/model routing config in `config/conductor.json`.
 
 ## Out of Scope
@@ -26,22 +26,17 @@ Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-open
 ## Current State
 - `skills/conductor/SKILL.md` exists.
 - `commands/` contains mode-switch commands (plan/search/implement/release/ultrawork).
-- `cmd/conductor` provides install/uninstall, settings/login helpers, diagnostics, MCP server, and delegation tools (`run`, `run_batch`, async, history, queue/approval/runtime).
+- `cmd/conductor` provides install/uninstall, settings/login helpers, diagnostics, and CLI MCP bridge servers.
 - Release uses Homebrew cask (with uninstall hook) instead of formula.
 - `config/conductor.json` defines role -> CLI/model mapping with CLI-native defaults (no provider prefix) and oracle reasoning.
 
 ## Work Plan
-1) Add async MCP tools with status/wait/cancel + basic notifications via polling.
-2) Provide optional MCP bundle templates and host-specific setup helpers.
-3) Add project-local overrides (config discovery + optional local install).
-4) Happy-inspired orchestration upgrades (OpenCode-free):
-   - Optional local runtime + control API for run lifecycle and listing.
-   - Message queue + mode hash batching for safe restarts.
-   - Permission/approval workflow for background tasks.
-   - Orchestration policy inspired by oh-my-opencode (background-first fan-out, status polling, gated approvals).
-5) Keep docs and skill instructions consistent with the Go helper CLI.
-6) Validate Go CLI flags and JSON config behavior.
-7) Keep model defaults aligned to CLI-native naming (no provider prefixes) and validate in doctor output.
+1) Provide optional MCP bundle templates and host-specific setup helpers.
+2) Add project-local overrides (config discovery + optional local install).
+3) Expand CLI MCP bridge coverage and behavior.
+4) Keep docs and skill instructions consistent with the Go helper CLI.
+5) Validate Go CLI flags and JSON config behavior.
+6) Keep model defaults aligned to CLI-native naming (no provider prefixes) and validate in doctor output.
 
 ## Operating Notes
 - Make small, surgical changes.

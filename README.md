@@ -1,7 +1,7 @@
 # conductor-kit
 
 A global skills pack and lightweight Go helper for **Codex CLI** and **Claude Code**, with optional **OpenCode** command/skill install.
-It enforces a consistent orchestration loop (search -> plan -> execute -> verify -> cleanup) and supports parallel delegation via MCP tool calls.
+It enforces a consistent orchestration loop (search -> plan -> execute -> verify -> cleanup) and supports CLI MCP bridges for delegation.
 
 **Language**: English | [한국어](README.ko.md)
 
@@ -34,13 +34,13 @@ conductor install --mode link --repo ~/.conductor-kit --project
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
 - Go 1.23+ (only if building from source).
 - Homebrew cask install is macOS-only (Linux users should use manual install).
-- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (core + gemini-cli + claude-cli + codex-cli bundles).
+- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (gemini-cli + claude-cli + codex-cli bundles).
 
 ## What you get
 - **Skill**: `conductor` (`skills/conductor/SKILL.md`)
 - **Commands**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
-- **Go helper**: `conductor` binary for install + MCP server + delegation tools
-- **Built-in runtime**: MCP server queues + approvals for async runs
+- **Go helper**: `conductor` binary for install + MCP bridge servers
+- **CLI MCP bridges**: gemini/claude/codex CLI wrappers
 - **Config**: `~/.conductor-kit/conductor.json` (role -> CLI/model mapping)
 
 ## Usage
@@ -72,22 +72,18 @@ OpenCode (slash commands):
 Commands are installed in `~/.config/opencode/command` (or `./.opencode/command`).
 Skills are installed in `~/.config/opencode/skill` (or `./.opencode/skill`).
 
-### 3) Parallel delegation (MCP-only)
+### 3) CLI MCP bridges
 Codex CLI:
 ```bash
-codex mcp add conductor -- conductor mcp
 codex mcp add gemini-cli -- conductor mcp-gemini
 codex mcp add claude-cli -- conductor mcp-claude
+codex mcp add codex-cli -- conductor mcp-codex
 ```
 
 Claude Code (`~/.claude/.mcp.json`):
 ```json
 {
   "mcpServers": {
-    "conductor": {
-      "command": "conductor",
-      "args": ["mcp"]
-    },
     "gemini-cli": {
       "command": "conductor",
       "args": ["mcp-gemini"]
@@ -105,9 +101,6 @@ Claude Code (`~/.claude/.mcp.json`):
 ```
 
 Then use tools:
-- `conductor.run` with `{ "role": "oracle", "prompt": "<task>" }` (async; returns run_id)
-- `conductor.run_batch_async` with `{ "roles": "oracle,librarian,explore", "prompt": "<task>" }`
-- Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
 - `gemini.prompt` with `{ "prompt": "<task>", "model": "gemini-2.5-flash" }`
 - `gemini.batch` with `{ "prompt": "<task>", "models": "gemini-2.5-flash,gemini-2.5-pro" }`
 - `gemini.auth_status`
@@ -121,31 +114,7 @@ Then use tools:
 Note: Gemini MCP uses the Gemini CLI login (no gcloud ADC).
 Note: Claude MCP uses the Claude CLI login (permission-mode defaults to dontAsk).
 Note: Codex MCP uses the Codex CLI login (codex exec --json).
-Note: Delegation tools are MCP-only; CLI subcommands cover install/config/diagnostics.
-
-### 4) Async delegation (default)
-- Start async run: `conductor.run` or `conductor.run_async` with `{ "role": "oracle", "prompt": "<task>" }`
-- Batch async: `conductor.run_batch_async` with `{ "roles": "oracle,librarian", "prompt": "<task>" }`
-- Poll status: `conductor.run_status` with `{ "run_id": "<id>" }`
-- Wait for completion: `conductor.run_wait` (note: host tool-call timeouts may cut this off)
-- Cancel: `conductor.run_cancel` with `{ "run_id": "<id>", "force": false }`
-
-### 5) Queue + approvals (built-in)
-The MCP server includes a queue/approval runtime for async runs.
-
-Tools:
-- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval", "limit": 50 }`
-- `conductor.approval_list`
-- `conductor.approval_approve` with `{ "run_id": "<id>" }`
-- `conductor.approval_reject` with `{ "run_id": "<id>" }`
-- `conductor.runtime_status`
-
-Optional flags for async tools:
-- `require_approval: true` (force approval even if defaults say no)
-- `mode: "string"` (override mode hash for batching)
-- `no_runtime: true` (bypass queue/approval runtime)
-- `summary_only: true` (hide stdout/stderr and return read/changed file summaries)
-
+Note: CLI bridges are MCP-only; CLI subcommands cover install/config/diagnostics.
 
 ## Model setup (roles)
 `~/.conductor-kit/conductor.json` controls role -> CLI/model routing (installed from `config/conductor.json`).
@@ -155,16 +124,11 @@ If `model` is empty, no model flag is passed and the CLI default is used.
 Key fields:
 - `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
 - `defaults.log_prompt`: store prompt text in run history (default: false)
-- `defaults.summary_only`: hide raw stdout/stderr in MCP results and return read/changed file summaries only
-- `runtime.max_parallel`: queue worker limit (defaults to `defaults.max_parallel`)
-- `runtime.queue.on_mode_change`: `none` | `cancel_pending` | `cancel_running`
-- `runtime.approval.required`: force approvals for all runs
-- `runtime.approval.roles` / `runtime.approval.agents`: require approval for specific roles or CLI agents
 - `roles.<name>.cli`: executable to run (must be on PATH)
 - `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go (optional for codex/claude/gemini)
 - `roles.<name>.model_flag`: model flag (optional for codex/claude/gemini)
 - `roles.<name>.model`: default model string (optional)
-- `roles.<name>.models`: fan-out list for `conductor.run_batch` (string or `{ "name": "...", "reasoning_effort": "..." }`)
+- `roles.<name>.models`: fan-out list for batch usage (string or `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: optional reasoning config (codex supports `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd overrides
 - `conductor status` checks CLI auth state using each CLI's local storage (codex: `~/.codex/auth.json`; gemini: `~/.gemini/oauth_creds.json` or keychain; claude: keychain `Claude Code-credentials`) and never invokes the CLI
@@ -195,9 +159,7 @@ Minimal example:
 ```
 
 Overrides:
-- `conductor.run` with `{ "role": "<role>", "model": "<model>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }` (async)
-- `conductor.run_batch_async` with `{ "roles": "<role(s)>", "model": "<model[,model]>", "reasoning": "<level>", "timeout_ms": 120000, "idle_timeout_ms": 30000, "prompt": "<task>" }`
-- `conductor.run_batch_async` with `{ "config": "/path/to/conductor.json", "prompt": "<task>" }` or `CONDUCTOR_CONFIG=/path/to/conductor.json`
+- Use `CONDUCTOR_CONFIG=/path/to/conductor.json` to point to a custom config
 Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
 Schema: `config/conductor.schema.json` (optional for tooling).
 
@@ -223,58 +185,22 @@ brew uninstall --cask conductor-kit
 This runs `conductor uninstall --force` via a cask uninstall hook to clean user-level installs.
 
 ## Observability
-- `conductor.run_history` with `{ "limit": 20 }`
-- `conductor.run_info` with `{ "run_id": "<id>" }`
-- `conductor.queue_list` with `{ "status": "queued|running|awaiting_approval" }`
-- `conductor.approval_list` to list pending approvals
-- Subscribe to resource `conductor://runtime/queue` for `notifications/resources/updated`
+- `conductor status` (CLI auth and availability)
+- CLI MCP bridges return raw CLI output (`gemini.prompt`, `claude.prompt`, `codex.prompt`)
 
 ## Optional MCP bundles
 ```bash
 # Claude Code (.claude/.mcp.json)
-conductor mcp-bundle --host claude --bundle core --repo /path/to/conductor-kit --out .claude/.mcp.json
-
-# Codex CLI (prints codex mcp add commands)
-conductor mcp-bundle --host codex --bundle core --repo /path/to/conductor-kit
-
-# Gemini CLI MCP (uses Gemini CLI login)
 conductor mcp-bundle --host claude --bundle gemini-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
-
-# Claude CLI MCP (uses Claude CLI login)
 conductor mcp-bundle --host claude --bundle claude-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
-
-# Codex CLI MCP (uses Codex CLI login)
 conductor mcp-bundle --host claude --bundle codex-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
 
-# Gemini Cloud Assist MCP (official)
-# Requires gcloud auth application-default login + Node.js 20+
-conductor mcp-bundle --host claude --bundle gemini-official --repo /path/to/conductor-kit --out .claude/.mcp.json
+# Codex CLI (prints codex mcp add commands)
+conductor mcp-bundle --host codex --bundle gemini-cli --repo /path/to/conductor-kit
+conductor mcp-bundle --host codex --bundle claude-cli --repo /path/to/conductor-kit
+conductor mcp-bundle --host codex --bundle codex-cli --repo /path/to/conductor-kit
 ```
 Bundle config lives at `~/.conductor-kit/mcp-bundles.json` (installed by `conductor install`).
-
-## MCP tools (recommended for tool-calling UI)
-```bash
-codex mcp add conductor -- conductor mcp
-```
-Tools:
-- `conductor.run`
-- `conductor.run_batch`
-- `conductor.run_async`
-- `conductor.run_batch_async`
-- `conductor.run_status`
-- `conductor.run_wait`
-- `conductor.run_cancel`
-- `conductor.run_history`
-- `conductor.run_info`
-- `conductor.roles`
-- `conductor.status`
-- `conductor.queue_list`
-- `conductor.approval_list`
-- `conductor.approval_approve`
-- `conductor.approval_reject`
-- `conductor.runtime_status`
-Note: if the host supplies a progress token, Conductor emits MCP progress notifications during batch/async runs.
-Note: `conductor.run_batch` is synchronous; prefer `conductor.run_batch_async` to avoid host tool-call timeouts.
 
 ## Repo layout
 ```
