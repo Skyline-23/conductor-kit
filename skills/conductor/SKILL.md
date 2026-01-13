@@ -1,59 +1,43 @@
 ---
 name: conductor
-description: Orchestrate multi-agent workflows with MCP delegation. Say "ulw" for full automation.
+description: Multi-agent orchestration with MCP delegation. Say "ulw" for full automation.
 ---
 
 # Conductor
 
-Enforce orchestration over one-shot summarization. Host stays in control; delegates do the work.
+**Delegate first, act later.** Host orchestrates; delegates do the work.
 
-## Trigger Rules
+## Triggers
 
-| Trigger | Mode | Behavior |
-|---------|------|----------|
-| `ulw`, `ultrawork` | Ultrawork | Full loop with staged delegation |
-| review, analyze, 분석, 조사 | Search | Parallel discovery, collect evidence |
-| plan, design, 설계, 계획 | Plan | Read-only, output 3–6 step plan |
-| fix, implement, 수정, 구현 | Implement | TDD, one change at a time |
-| release, deploy, 배포 | Release | Versioning checklist |
+| Keyword | Mode | Action |
+|---------|------|--------|
+| `ulw` | Ultrawork | Full loop with staged delegation |
+| review, analyze, 분석 | Search | Parallel discovery |
+| plan, design, 설계 | Plan | Read-only, 3–6 step plan |
+| fix, implement, 수정 | Implement | TDD, one change at a time |
+| release, deploy, 배포 | Release | Version + changelog checklist |
 
-## Delegation
+## Roles
 
-**Delegate first, act later.**
+| Role | When to use |
+|------|-------------|
+| `oracle` | Architecture, security, algorithms **(mandatory for complex)** |
+| `explore` | File discovery, codebase navigation |
+| `librarian` | Docs, best practices |
+| `multimodal-looker` | Screenshot analysis |
 
-| Role | Use For |
-|------|---------|
-| `oracle` | Deep reasoning, architecture, security **(mandatory for complex tasks)** |
-| `explore` | Codebase navigation, file discovery |
-| `librarian` | Doc lookup, best practices |
-| `frontend-ui-ux-engineer` | UI/UX review, component design |
-| `document-writer` | README, docs, changelogs |
-| `multimodal-looker` | Screenshot/image analysis |
+See `references/` for details on routing, context budget, and output formats.
 
-Details: `references/roles.md`, `references/delegation.md`, `references/formats.md`
+## Loop
 
-## Operating Loop
+1. **Search** → 2. **Plan** → 3. **Execute** → 4. **Verify** → 5. **Cleanup**
 
-```
-Search → Plan → Execute → Verify → Cleanup
-```
+- Search: multiple angles, collect evidence
+- Plan: success criteria per step
+- Execute: minimal edits, no type-safety hacks
+- Verify: test → typecheck → lint
+- Cleanup: summarize, prune context
 
-1. **Search** — Parallel discovery. Multiple angles.
-2. **Plan** — 3–6 steps with success criteria.
-3. **Execute** — Minimal edits. No type-safety hacks.
-4. **Verify** — Test → typecheck → lint.
-5. **Cleanup** — Summarize. Prune context.
+## Safety
 
-## Mode Shortcuts
-
-- **Search**: Evidence over opinions. Parallel searches.
-- **Plan**: Read-only. No edits.
-- **Implement**: TDD. Rollback when stuck.
-- **Release**: Version, changelog, secret scan.
-- **Ultrawork**: `"ULTRAWORK MODE ENABLED!"` → staged delegation → full loop.
-
-## Safety (non-negotiable)
-
-- No commit/push unless asked.
-- No secrets in commits.
-- No destructive commands unless explicit.
+No commit/push, secrets, or destructive commands unless explicitly asked.
