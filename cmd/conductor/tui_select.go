@@ -36,11 +36,11 @@ var (
 
 	badgeReady = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("82")).
-			Render("● ready")
+			Render("● available")
 
 	badgeNotReady = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("214")).
-			Render("○ not authenticated")
+			Render("○ auth unchecked")
 
 	badgeMissing = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
@@ -98,7 +98,7 @@ func loadCLIStatuses(names []string) map[string]cliStatus {
 			available := isCommandAvailable(name)
 			authStatus := "missing"
 			if available {
-				authStatus, _ = checkAuthForCLI(name)
+				authStatus = "unknown"
 			}
 			mu.Lock()
 			statuses[name] = cliStatus{available: available, authStatus: authStatus}
@@ -144,7 +144,7 @@ func initialInstallSelectModel() installSelectModel {
 		}
 		cliItems[i].available = status.available
 		cliItems[i].authStatus = status.authStatus
-		cliItems[i].selected = status.available && (status.authStatus == "ready" || status.authStatus == "unknown")
+		cliItems[i].selected = status.available
 	}
 
 	for i := range mcpItems {
@@ -155,7 +155,7 @@ func initialInstallSelectModel() installSelectModel {
 		}
 		mcpItems[i].available = status.available
 		mcpItems[i].authStatus = status.authStatus
-		mcpItems[i].selected = status.available && (status.authStatus == "ready" || status.authStatus == "unknown")
+		mcpItems[i].selected = status.available
 	}
 
 	return installSelectModel{
