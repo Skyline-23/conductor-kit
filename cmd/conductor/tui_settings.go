@@ -15,6 +15,7 @@ type settingsStep int
 
 const (
 	stepSelectRole settingsStep = iota
+	stepDeleteRole
 	stepSelectCLI
 	stepSelectModel
 	stepSelectReasoning
@@ -27,11 +28,13 @@ type settingsModel struct {
 	cfg        Config
 	configPath string
 
-	step     settingsStep
-	cursor   int
-	options  []tuiOption
-	roleName string
-	roleCfg  RoleConfig
+	step         settingsStep
+	cursor       int
+	options      []tuiOption
+	roleName     string
+	roleCfg      RoleConfig
+	modelCLI     string
+	modelOptions []tuiOption
 
 	textInput textinput.Model
 	quitting  bool
@@ -58,6 +61,10 @@ func (m settingsModel) Init() tea.Cmd {
 }
 
 func (m settingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.step == stepSelectModel {
+		m = m.ensureModelOptions()
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch m.step {
@@ -134,6 +141,8 @@ func (m settingsModel) handleSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.step = stepSelectCLI
 		case stepSelectReasoning:
 			m.step = stepSelectModel
+		case stepDeleteRole:
+			m.step = stepSelectRole
 		case stepConfirm:
 			if m.roleCfg.CLI == "codex" {
 				m.step = stepSelectReasoning
@@ -168,6 +177,9 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.step == stepSelectRole {
+		m.message = ""
+	}
 	selected := options[m.cursor].Value
 
 	switch m.step {
@@ -176,6 +188,10 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 			m.textInput.SetValue("")
 			m.textInput.Placeholder = "Enter role name"
 			m.step = stepInputRole
+		} else if selected == tuiDeleteRole {
+			m.roleName = ""
+			m.roleCfg = RoleConfig{}
+			m.step = stepDeleteRole
 		} else {
 			m.roleName = selected
 			m.roleCfg = m.cfg.Roles[m.roleName]
@@ -189,6 +205,8 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 			m.step = stepInputModel
 		} else {
 			m.roleCfg.CLI = selected
+			m.modelCLI = ""
+			m.modelOptions = nil
 			m.step = stepSelectModel
 		}
 
@@ -211,6 +229,26 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 			m.roleCfg.Reasoning = selected
 		}
 		m.step = stepConfirm
+
+	case stepDeleteRole:
+		if selected == tuiCancelValue {
+			m.step = stepSelectRole
+			return m, nil
+		}
+		if _, ok := m.cfg.Roles[selected]; !ok {
+			m.message = "Role not found."
+			m.step = stepSelectRole
+			return m, nil
+		}
+		delete(m.cfg.Roles, selected)
+		if err := writeConfig(m.configPath, m.cfg); err != nil {
+			m.message = "Error: " + err.Error()
+		} else {
+			m.message = fmt.Sprintf("Deleted %s", selected)
+		}
+		m.roleName = ""
+		m.roleCfg = RoleConfig{}
+		m.step = stepSelectRole
 
 	case stepConfirm:
 		if selected == "save" {
@@ -244,6 +282,37 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m settingsModel) ensureModelOptions() settingsModel {
+	if m.roleCfg.CLI == "" {
+		m.modelCLI = ""
+		m.modelOptions = []tuiOption{{Label: "Manual entry...", Value: tuiManualValue}}
+		return m
+	}
+	if m.modelCLI != m.roleCfg.CLI || m.modelOptions == nil {
+		models, _ := listModelsForCLI(m.roleCfg.CLI, false)
+		if m.roleCfg.Model != "" {
+			found := false
+			for _, model := range models {
+				if model == m.roleCfg.Model {
+					found = true
+					break
+				}
+			}
+			if !found {
+				models = append([]string{m.roleCfg.Model}, models...)
+			}
+		}
+		options := make([]tuiOption, 0, len(models)+1)
+		for _, model := range models {
+			options = append(options, tuiOption{Label: model, Value: model})
+		}
+		options = append(options, tuiOption{Label: "Manual entry...", Value: tuiManualValue})
+		m.modelCLI = m.roleCfg.CLI
+		m.modelOptions = options
+	}
+	return m
+}
+
 func (m settingsModel) getOptions() []tuiOption {
 	switch m.step {
 	case stepSelectRole:
@@ -252,11 +321,14 @@ func (m settingsModel) getOptions() []tuiOption {
 			roles = append(roles, name)
 		}
 		sort.Strings(roles)
-		options := make([]tuiOption, 0, len(roles)+1)
+		options := make([]tuiOption, 0, len(roles)+2)
 		for _, name := range roles {
 			options = append(options, tuiOption{Label: name, Value: name})
 		}
 		options = append(options, tuiOption{Label: "+ New role", Value: tuiNewRole})
+		if len(roles) > 0 {
+			options = append(options, tuiOption{Label: "Delete role...", Value: tuiDeleteRole})
+		}
 		return options
 
 	case stepSelectCLI:
@@ -268,13 +340,8 @@ func (m settingsModel) getOptions() []tuiOption {
 		}
 
 	case stepSelectModel:
-		models, _ := listModelsForCLI(m.roleCfg.CLI, true)
-		options := make([]tuiOption, 0, len(models)+1)
-		for _, model := range models {
-			options = append(options, tuiOption{Label: model, Value: model})
-		}
-		options = append(options, tuiOption{Label: "Manual entry...", Value: tuiManualValue})
-		return options
+		modelState := m.ensureModelOptions()
+		return modelState.modelOptions
 
 	case stepSelectReasoning:
 		return []tuiOption{
@@ -284,6 +351,19 @@ func (m settingsModel) getOptions() []tuiOption {
 			{Label: "high", Value: "high"},
 			{Label: "xhigh", Value: "xhigh"},
 		}
+
+	case stepDeleteRole:
+		roles := make([]string, 0, len(m.cfg.Roles))
+		for name := range m.cfg.Roles {
+			roles = append(roles, name)
+		}
+		sort.Strings(roles)
+		options := make([]tuiOption, 0, len(roles)+1)
+		for _, name := range roles {
+			options = append(options, tuiOption{Label: name, Value: name})
+		}
+		options = append(options, tuiOption{Label: "Cancel", Value: tuiCancelValue})
+		return options
 
 	case stepConfirm:
 		return []tuiOption{
@@ -335,6 +415,9 @@ func (m settingsModel) renderTextInput(sb *strings.Builder) string {
 func (m settingsModel) renderSelection(sb *strings.Builder) string {
 	stepTitle := m.getStepTitle()
 	sb.WriteString(sectionStyle.Render(stepTitle) + "\n\n")
+	if m.message != "" {
+		sb.WriteString(valueStyle.Render(m.message) + "\n\n")
+	}
 
 	if m.roleName != "" {
 		info := labelStyle.Render("Role: ") + roleNameStyle.Render(m.roleName)
@@ -376,6 +459,8 @@ func (m settingsModel) getStepTitle() string {
 		return "Select Model"
 	case stepSelectReasoning:
 		return "Reasoning Effort"
+	case stepDeleteRole:
+		return "Delete Role"
 	case stepConfirm:
 		return "Confirm Changes"
 	default:

@@ -29,6 +29,7 @@ func runSettings(args []string) int {
 	list := fs.Bool("list", false, "list roles")
 	listModels := fs.Bool("list-models", false, "list models for a role or cli")
 	pickModel := fs.Bool("pick-model", false, "pick model interactively")
+	deleteRole := fs.Bool("delete-role", false, "delete a role")
 	interactive := fs.Bool("interactive", false, "run interactive wizard")
 	noTui := fs.Bool("no-tui", false, "disable TUI")
 	if err := fs.Parse(args); err != nil {
@@ -69,6 +70,28 @@ func runSettings(args []string) int {
 		for _, item := range models {
 			fmt.Println("-", item)
 		}
+		return 0
+	}
+
+	if *deleteRole {
+		if *role == "" {
+			fmt.Println("Missing --role for --delete-role.")
+			return 1
+		}
+		if len(cfg.Roles) == 0 {
+			fmt.Println("No roles to delete.")
+			return 1
+		}
+		if _, ok := cfg.Roles[*role]; !ok {
+			fmt.Printf("Role %s not found.\n", *role)
+			return 1
+		}
+		delete(cfg.Roles, *role)
+		if err := writeConfig(path, cfg); err != nil {
+			fmt.Println("Config write error:", err.Error())
+			return 1
+		}
+		fmt.Printf("Deleted role %s in %s\n", *role, path)
 		return 0
 	}
 
@@ -144,6 +167,7 @@ Usage:
   conductor settings --list-models --cli <cli>
   conductor settings --list-models --role <role>
   conductor settings --pick-model --role <role> [--cli <cli>]
+  conductor settings --delete-role --role <role>
   conductor settings --interactive
   conductor settings --no-tui --interactive
   conductor settings --role <name> [--cli <cli>] [--model <model>] [--reasoning <effort>]
@@ -265,6 +289,8 @@ func runSettingsPickModel(cfg Config, path, roleName, cliOverride string, useTui
 const (
 	tuiManualValue = "__manual__"
 	tuiNewRole     = "__new__"
+	tuiDeleteRole  = "__delete__"
+	tuiCancelValue = "__cancel__"
 	tuiKeepValue   = "__keep__"
 )
 
@@ -463,17 +489,17 @@ func tuiSelectOptions(title string, options []tuiOption, current string) (string
 		case '\r', '\n':
 			return options[index].Value, true
 		case 0x1b:
-			if reader.Buffered() == 0 {
+			next, err := reader.ReadByte()
+			if err != nil {
 				return "", false
 			}
-			next, _ := reader.ReadByte()
 			if next != '[' {
 				return "", false
 			}
-			if reader.Buffered() == 0 {
+			key, err := reader.ReadByte()
+			if err != nil {
 				return "", false
 			}
-			key, _ := reader.ReadByte()
 			switch key {
 			case 'A':
 				if index > 0 {
