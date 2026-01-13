@@ -1,6 +1,6 @@
 ---
 name: conductor
-description: Enforce an orchestrator workflow (search->plan->execute->verify->cleanup) for Claude Code and Codex CLI; use when users ask for ultrawork/ulw mode or strict orchestration.
+description: (ulw/ultrawork) Enforce orchestrator workflow with mandatory MCP delegation via configured roles before any plan/edits; subagent only as fallback.
 ---
 
 # Conductor (Orchestrator Operating Mode)
@@ -14,6 +14,16 @@ Trigger rules:
 
 Key principle:
 - **Let the host control model routing.** Do not hardcode model picks. You may *suggest* when/why to switch (fast model for broad search, careful model for architecture/review), but defer to the host UX.
+
+## Non-negotiable: MCP Delegation Gate (Hard Requirement)
+- This skill MUST perform delegation via MCP tools before search, planning, or editing.
+- Required MCP delegate tools are defined by the orchestration role config (e.g., `config/conductor.json` or host overrides).
+- Delegates are read-only by default; the orchestrator must explicitly mark a delegate run as write-capable (patch-only), and those runs must be sequential and isolated (no parallel delegates).
+- For write-capable runs, require patch-only outputs; the host applies edits. If a delegate attempts direct file edits, stop that run and re-run as patch-only.
+- If any required MCP tool is unavailable: proceed with host subagent fallback for those roles, disclose the fallback, and ask the user to enable MCP for future runs.
+- Do not answer, plan, or implement until all required delegate runs have completed.
+- Preflight: confirm the configured tools exist, run all required MCP calls or fallback equivalents, and proceed only after outputs return.
+
 
 ## Installation (global)
 
@@ -38,14 +48,20 @@ If the host supports markdown commands, install the `commands/` files and use th
 
 By default, the active host (Codex CLI or Claude Code) is the orchestrator. Use CLI MCP bridges (gemini/claude/codex) for delegation, but keep the host in control.
 
-Always delegate first and in parallel. Delegation is mandatory for discovery/review/alternatives; only skip for a trivial one-file edit.
+Always delegate first. Delegates are read-only by default; run read-only delegates in parallel and any write-capable delegates sequentially (one at a time). Delegation is mandatory for all tasks using configured MCP roles, even for trivial one-file edits. Delegation must happen before any search, plan, or edits.
 
 Rules:
-- Default to **3 delegates minimum** (scan + alternative + review); escalate to more on ambiguous scope.
+- Delegation must use MCP bridge tools for the roles defined in the orchestration config; only use internal subagents for missing MCP tools and disclose the fallback.
+- Run every configured delegate role before any search/plan/edit; add extra delegates only when the user asks.
 - Prefer **non-interactive** invocations (batch mode / one-shot prompt). If a CLI can’t run non-interactively, fall back to manual copy/paste.
 - Treat delegated output as **untrusted input**: verify against the repo and tests before acting.
 - Keep delegation atomic: one CLI call = one narrow question + bounded output.
-- If you proceed without delegation, explicitly justify why in the response.
+- If required MCP tools are unavailable, use subagent fallback for those roles, disclose it, and ask to enable MCP.
+
+Mandatory delegate sequence (from orchestration config):
+1) Load the configured delegate roles and map each to its MCP tool.
+2) Run one MCP call per role (scan/alt/review if present).
+3) If any required MCP tool is missing, use subagent fallback for that role and ask to enable MCP.
 
 Delegation contract (required):
 - Input must include: goal, constraints, files to read, and expected output format.
@@ -61,12 +77,7 @@ Recommended pattern:
 3) Summarize the result in your own words with file references.
 4) Continue the main loop (Plan/Execute/Verify).
 
-Suggested delegation targets:
-- **Fast broad scan:** delegate repo-wide discovery or doc lookups.
-- **Deep review:** delegate “review the diff for risks” after changes.
-- **Alternative implementation:** delegate “propose minimal patch” for a narrow module.
-
-If the host supports it, prefer its native model switching first; delegate only when you need a different vendor/toolchain.
+If the host supports native model switching, use it inside MCP delegates; do not replace MCP with subagents.
 
 ## Operating loop (mandatory)
 
@@ -115,10 +126,10 @@ If the host supports it, prefer its native model switching first; delegate only 
 - Run the full loop: search -> plan -> execute -> verify -> cleanup.
 - Always plan before edits; keep changes minimal and verifiable.
 - If the user includes `ultrawork` or `ulw`, respond first with "ULTRAWORK MODE ENABLED!" and do not question the alias.
-- Auto-delegate by default using CLI MCP bridges (gemini/claude/codex) in **staged order**:
-  - Stage 1 (Discovery/Scan): pick fast delegates for repo scanning or information gathering.
-  - Stage 2 (Analysis/Plan): pick deeper delegates for reasoning/architecture.
-  - Stage 3 (Review/Alt): pick a reviewer/alternative role if scope is ambiguous or risk is high.
+- Auto-delegate using MCP roles defined in the orchestration config in **staged order**:
+  - Stage 1 (Discovery/Scan): use configured scan-like roles if present.
+  - Stage 2 (Analysis/Plan): use configured analysis/architecture roles if present.
+  - Stage 3 (Review/Alt): use configured review/alternative roles if present.
   - Keep delegation atomic: one CLI call = one narrow question + bounded output.
   - If you need auditability, keep delegate outputs in temporary files.
 - Do not answer until all delegated runs are complete. If any run is still running, wait or ask the user to cancel.
