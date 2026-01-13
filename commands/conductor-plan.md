@@ -1,16 +1,10 @@
 ---
-description: "Plan mode: read-only. Clarify scope, list assumptions/constraints, and provide a 3-6 step plan with success criteria."
-argument-hint: "task or change"
+description: "Plan mode: read-only planning with no edits."
+argument-hint: "task to plan"
 ---
 
-You are in Conductor Plan mode.
+Load conductor skill. Activate plan mode.
 
-Do the following:
-- Do not write or edit files.
-- Ask at most one blocking question if critical info is missing; otherwise proceed.
-- Summarize scope in 2-4 lines.
-- List assumptions and constraints explicitly.
-- Provide a 3-6 step plan, ordered, each step with a verifiable success criterion.
-- Call out risks or unknowns.
+Read-only. No edits allowed. Output 3-6 steps with success criteria.
 
-Keep output concise and scannable.
+Refer to skills/conductor/SKILL.md for detailed instructions.

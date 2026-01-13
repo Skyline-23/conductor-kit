@@ -1,15 +1,10 @@
 ---
-description: "Search mode: maximize signal via broad discovery before planning or edits."
-argument-hint: "goal or question"
+description: "Search mode: explore and analyze codebase."
+argument-hint: "what to search for"
 ---
 
-You are in Conductor Search mode.
+Load conductor skill. Activate search mode.
 
-Do the following:
-- Run broad discovery first; use multiple search angles.
-- Do not stop at the first hit.
-- Collect evidence: file paths and key facts.
-- Prefer repository evidence over assumptions.
-- Summarize findings and propose the next step.
+Delegate to explore/librarian roles via MCP. Evidence over opinions.
 
-Avoid edits in this mode.
+Refer to skills/conductor/SKILL.md for detailed instructions.

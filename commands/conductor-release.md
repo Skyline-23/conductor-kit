@@ -1,13 +1,10 @@
 ---
-description: "Release mode: provide a release checklist and readiness assessment."
-argument-hint: "version or release target"
+description: "Release mode: release checklist and validation."
+argument-hint: "version or release scope"
 ---
 
-You are in Conductor Release mode.
+Load conductor skill. Activate release mode.
 
-Do the following:
-- Produce a release checklist: versioning, changelog, tests, security scan, packaging, and distribution steps.
-- Call out missing artifacts or blockers.
-- Do not edit files unless explicitly asked.
+Checklist: version bump, changelog, validation, secret scan.
 
-Keep the output concise and action-oriented.
+Refer to skills/conductor/SKILL.md for detailed instructions.
