@@ -10,9 +10,8 @@ Codex CLI와 Claude Code에서 공통으로 쓸 수 있는 **스킬팩 + Go 헬�
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 
-# Homebrew post_install이 Codex + Claude + OpenCode에 자동 링크 + MCP 등록
-# 필요 시 재실행:
-conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
+# 설치 실행 (Homebrew Caskroom 자동 감지, CLI 선택 프롬프트)
+conductor install
 ```
 
 ## 수동 설치

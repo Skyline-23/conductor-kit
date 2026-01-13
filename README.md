@@ -10,9 +10,8 @@ It enforces a consistent orchestration loop (search -> plan -> execute -> verify
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 
-# Homebrew post_install links skills/commands and registers MCP for Codex + Claude + OpenCode
-# Re-run if needed:
-conductor install --mode link --repo "$(brew --prefix)/Caskroom/conductor-kit/$(brew list --cask --versions conductor-kit | awk '{print $2}')" --force
+# Run install (auto-detects Homebrew Caskroom, prompts for CLI selection)
+conductor install
 ```
 
 ## Manual install

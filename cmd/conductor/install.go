@@ -25,7 +25,7 @@ func runInstall(args []string) int {
 	repoRoot := fs.String("repo", "", "repo root (default: cwd)")
 	force := fs.Bool("force", false, "overwrite existing")
 	dryRun := fs.Bool("dry-run", false, "print actions only")
-	interactive := fs.Bool("interactive", false, "prompt for CLI selection")
+	_ = fs.Bool("interactive", false, "prompt for CLI selection (default when TTY)")
 	cliFlag := fs.String("cli", "", "comma-separated CLIs to install (codex,claude,opencode)")
 
 	if err := fs.Parse(args); err != nil {
@@ -44,8 +44,7 @@ func runInstall(args []string) int {
 
 	root := *repoRoot
 	if root == "" {
-		cwd, _ := os.Getwd()
-		root = cwd
+		root = detectRepoRoot()
 	}
 
 	skillsSource := filepath.Join(root, "skills", "conductor")
@@ -97,7 +96,7 @@ func runInstall(args []string) int {
 	selectedCLIs := map[string]bool{"codex": true, "claude": true, "opencode": true}
 	if *cliFlag != "" {
 		selectedCLIs = parseCLIFlag(*cliFlag)
-	} else if *interactive && !*dryRun {
+	} else if !*dryRun && isTerminal(os.Stdout) {
 		selectedCLIs = promptCLISelection()
 	}
 
@@ -239,6 +238,37 @@ func doLinkOrCopy(src, dest, mode string, force, dryRun bool) {
 		return
 	}
 	_ = copyFile(src, dest)
+}
+
+func detectRepoRoot() string {
+	candidates := []string{
+		filepath.Join(os.Getenv("HOME"), ".conductor-kit"),
+		"/opt/homebrew/Caskroom/conductor-kit",
+		"/usr/local/Caskroom/conductor-kit",
+	}
+
+	for _, base := range candidates {
+		if base == "" {
+			continue
+		}
+		if strings.Contains(base, "Caskroom") {
+			versions, _ := os.ReadDir(base)
+			for i := len(versions) - 1; i >= 0; i-- {
+				ver := versions[i]
+				if ver.IsDir() {
+					candidate := filepath.Join(base, ver.Name())
+					if pathExists(filepath.Join(candidate, "skills", "conductor")) {
+						return candidate
+					}
+				}
+			}
+		} else if pathExists(filepath.Join(base, "skills", "conductor")) {
+			return base
+		}
+	}
+
+	cwd, _ := os.Getwd()
+	return cwd
 }
 
 func linkMatches(dest, src string) bool {
