@@ -25,6 +25,8 @@ func runInstall(args []string) int {
 	repoRoot := fs.String("repo", "", "repo root (default: cwd)")
 	force := fs.Bool("force", false, "overwrite existing")
 	dryRun := fs.Bool("dry-run", false, "print actions only")
+	interactive := fs.Bool("interactive", false, "prompt for CLI selection")
+	cliFlag := fs.String("cli", "", "comma-separated CLIs to install (codex,claude,opencode)")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Println(installHelp())
@@ -80,7 +82,7 @@ func runInstall(args []string) int {
 		return 1
 	}
 
-	targets := []struct {
+	allTargets := []struct {
 		name          string
 		home          string
 		skillsDir     string
@@ -90,6 +92,31 @@ func runInstall(args []string) int {
 		{"codex", *codexHome, "skills", "prompts", "prompts"},
 		{"claude", *claudeHome, "skills", "commands", "commands"},
 		{"opencode", *opencodeHome, "skill", "command", "command"},
+	}
+
+	selectedCLIs := map[string]bool{"codex": true, "claude": true, "opencode": true}
+	if *cliFlag != "" {
+		selectedCLIs = parseCLIFlag(*cliFlag)
+	} else if *interactive && !*dryRun {
+		selectedCLIs = promptCLISelection()
+	}
+
+	var targets []struct {
+		name          string
+		home          string
+		skillsDir     string
+		commandsDir   string
+		commandsLabel string
+	}
+	for _, t := range allTargets {
+		if selectedCLIs[t.name] {
+			targets = append(targets, t)
+		}
+	}
+
+	if len(targets) == 0 {
+		fmt.Println("No CLIs selected. Nothing to install.")
+		return 0
 	}
 
 	for _, t := range targets {
@@ -277,4 +304,19 @@ func copyDir(src, dest string) error {
 		}
 	}
 	return nil
+}
+
+func parseCLIFlag(flag string) map[string]bool {
+	result := map[string]bool{}
+	for _, cli := range strings.Split(flag, ",") {
+		cli = strings.TrimSpace(strings.ToLower(cli))
+		if cli == "codex" || cli == "claude" || cli == "opencode" {
+			result[cli] = true
+		}
+	}
+	return result
+}
+
+func promptCLISelection() map[string]bool {
+	return promptCLISelectionTUI()
 }
