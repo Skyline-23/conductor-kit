@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -75,18 +76,44 @@ type installSelectModel struct {
 	done     bool
 }
 
+type cliStatus struct {
+	available  bool
+	authStatus string
+}
+
+func loadCLIStatuses(names []string) map[string]cliStatus {
+	statuses := make(map[string]cliStatus, len(names))
+	seen := map[string]bool{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, name := range names {
+		name := strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			available := isCommandAvailable(name)
+			authStatus := "missing"
+			if available {
+				authStatus, _ = checkAuthForCLI(name)
+			}
+			mu.Lock()
+			statuses[name] = cliStatus{available: available, authStatus: authStatus}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return statuses
+}
+
 func initialInstallSelectModel() installSelectModel {
 	cliItems := []selectableItem{
 		{name: "codex", description: "OpenAI Codex CLI"},
 		{name: "claude", description: "Anthropic Claude Code"},
 		{name: "opencode", description: "OpenCode CLI"},
-	}
-
-	for i := range cliItems {
-		cliItems[i].available = isCommandAvailable(cliItems[i].name)
-		status, _ := checkAuthForCLI(cliItems[i].name)
-		cliItems[i].authStatus = status
-		cliItems[i].selected = cliItems[i].available && (status == "ready" || status == "unknown")
 	}
 
 	mcpItems := []selectableItem{
@@ -101,12 +128,34 @@ func initialInstallSelectModel() installSelectModel {
 		"mcp-gemini": "gemini",
 	}
 
+	names := []string{}
+	for _, item := range cliItems {
+		names = append(names, item.name)
+	}
+	for _, cli := range mcpCLIMap {
+		names = append(names, cli)
+	}
+	statuses := loadCLIStatuses(names)
+
+	for i := range cliItems {
+		status, ok := statuses[cliItems[i].name]
+		if !ok {
+			status = cliStatus{available: false, authStatus: "missing"}
+		}
+		cliItems[i].available = status.available
+		cliItems[i].authStatus = status.authStatus
+		cliItems[i].selected = status.available && (status.authStatus == "ready" || status.authStatus == "unknown")
+	}
+
 	for i := range mcpItems {
 		cli := mcpCLIMap[mcpItems[i].name]
-		mcpItems[i].available = isCommandAvailable(cli)
-		status, _ := checkAuthForCLI(cli)
-		mcpItems[i].authStatus = status
-		mcpItems[i].selected = mcpItems[i].available && (status == "ready" || status == "unknown")
+		status, ok := statuses[cli]
+		if !ok {
+			status = cliStatus{available: false, authStatus: "missing"}
+		}
+		mcpItems[i].available = status.available
+		mcpItems[i].authStatus = status.authStatus
+		mcpItems[i].selected = status.available && (status.authStatus == "ready" || status.authStatus == "unknown")
 	}
 
 	return installSelectModel{
