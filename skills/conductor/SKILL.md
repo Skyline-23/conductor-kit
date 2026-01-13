@@ -25,10 +25,10 @@ The active host (Claude Code, Codex CLI, etc.) is the orchestrator. Use CLI MCP 
 
 **Delegate first, act later.** Do not search, plan, or edit until delegation completes.
 
-See: `reference/delegation.md` for full rules, context budget, and failure handling.
+See: `references/delegation.md` for full rules, context budget, and failure handling.
 
 ### Role Routing
-Route to appropriate role based on task type. See: `reference/roles.md`
+Route to appropriate role based on task type. See: `references/roles.md`
 
 | Role | Use For |
 |------|---------|
@@ -38,7 +38,7 @@ Route to appropriate role based on task type. See: `reference/roles.md`
 | `multimodal-looker` | Screenshot/image analysis |
 
 ### Output Format
-All delegates must return structured JSON. See: `reference/formats.md`
+All delegates must return structured JSON. See: `references/formats.md`
 
 ```json
 {
@@ -90,6 +90,6 @@ All delegates must return structured JSON. See: `reference/formats.md`
 
 ## Reference Files
 
-- `reference/roles.md` — Role routing guide and task mapping
-- `reference/delegation.md` — Context budget, failure handling, delegation sequence
-- `reference/formats.md` — Output format standards for all delegate types
+- `references/roles.md` — Role routing guide and task mapping
+- `references/delegation.md` — Context budget, failure handling, delegation sequence
+- `references/formats.md` — Output format standards for all delegate types
