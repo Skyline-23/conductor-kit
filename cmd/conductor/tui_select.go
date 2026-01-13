@@ -44,47 +44,83 @@ var (
 	badgeMissing = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
 			Render("○ not installed")
+
+	stepStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")).
+			Render
 )
 
-type cliItem struct {
+type selectableItem struct {
 	name        string
 	description string
 	selected    bool
 	authStatus  string
-	authDetail  string
 	available   bool
 }
 
-type cliSelectModel struct {
-	items    []cliItem
+type installStep int
+
+const (
+	stepSelectCLIs installStep = iota
+	stepSelectMCPs
+	stepConfirmInstall
+)
+
+type installSelectModel struct {
+	step     installStep
+	cliItems []selectableItem
+	mcpItems []selectableItem
 	cursor   int
 	quitting bool
 	done     bool
 }
 
-func initialCLISelectModel() cliSelectModel {
-	items := []cliItem{
+func initialInstallSelectModel() installSelectModel {
+	cliItems := []selectableItem{
 		{name: "codex", description: "OpenAI Codex CLI"},
 		{name: "claude", description: "Anthropic Claude Code"},
 		{name: "opencode", description: "OpenCode CLI"},
 	}
 
-	for i := range items {
-		items[i].available = isCommandAvailable(items[i].name)
-		status, detail := checkAuthForCLI(items[i].name)
-		items[i].authStatus = status
-		items[i].authDetail = detail
-		items[i].selected = items[i].available && (status == "ready" || status == "unknown")
+	for i := range cliItems {
+		cliItems[i].available = isCommandAvailable(cliItems[i].name)
+		status, _ := checkAuthForCLI(cliItems[i].name)
+		cliItems[i].authStatus = status
+		cliItems[i].selected = cliItems[i].available && (status == "ready" || status == "unknown")
 	}
 
-	return cliSelectModel{items: items}
+	mcpItems := []selectableItem{
+		{name: "mcp-codex", description: "Codex CLI bridge"},
+		{name: "mcp-claude", description: "Claude CLI bridge"},
+		{name: "mcp-gemini", description: "Gemini CLI bridge"},
+	}
+
+	mcpCLIMap := map[string]string{
+		"mcp-codex":  "codex",
+		"mcp-claude": "claude",
+		"mcp-gemini": "gemini",
+	}
+
+	for i := range mcpItems {
+		cli := mcpCLIMap[mcpItems[i].name]
+		mcpItems[i].available = isCommandAvailable(cli)
+		status, _ := checkAuthForCLI(cli)
+		mcpItems[i].authStatus = status
+		mcpItems[i].selected = mcpItems[i].available && (status == "ready" || status == "unknown")
+	}
+
+	return installSelectModel{
+		step:     stepSelectCLIs,
+		cliItems: cliItems,
+		mcpItems: mcpItems,
+	}
 }
 
-func (m cliSelectModel) Init() tea.Cmd {
+func (m installSelectModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m cliSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m installSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
@@ -92,89 +128,239 @@ func (m cliSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
+		case key.Matches(msg, key.NewBinding(key.WithKeys("esc"))):
+			if m.step == stepSelectMCPs {
+				m.step = stepSelectCLIs
+				m.cursor = 0
+			} else if m.step == stepConfirmInstall {
+				m.step = stepSelectMCPs
+				m.cursor = 0
+			} else {
+				m.quitting = true
+				return m, tea.Quit
+			}
+
 		case key.Matches(msg, key.NewBinding(key.WithKeys("up", "k"))):
 			if m.cursor > 0 {
 				m.cursor--
 			}
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("down", "j"))):
-			if m.cursor < len(m.items)-1 {
+			items := m.currentItems()
+			if m.cursor < len(items)-1 {
 				m.cursor++
 			}
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys(" ", "x"))):
-			m.items[m.cursor].selected = !m.items[m.cursor].selected
+			m.toggleCurrent()
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("a"))):
-			allSelected := true
-			for _, item := range m.items {
-				if !item.selected {
-					allSelected = false
-					break
-				}
-			}
-			for i := range m.items {
-				m.items[i].selected = !allSelected
-			}
+			m.toggleAll()
 
 		case key.Matches(msg, key.NewBinding(key.WithKeys("enter"))):
-			m.done = true
-			return m, tea.Quit
+			return m.advance()
 		}
 	}
 	return m, nil
 }
 
-func (m cliSelectModel) View() string {
+func (m *installSelectModel) toggleCurrent() {
+	switch m.step {
+	case stepSelectCLIs:
+		m.cliItems[m.cursor].selected = !m.cliItems[m.cursor].selected
+	case stepSelectMCPs:
+		m.mcpItems[m.cursor].selected = !m.mcpItems[m.cursor].selected
+	}
+}
+
+func (m *installSelectModel) toggleAll() {
+	items := m.currentItems()
+	allSelected := true
+	for _, item := range items {
+		if !item.selected {
+			allSelected = false
+			break
+		}
+	}
+
+	switch m.step {
+	case stepSelectCLIs:
+		for i := range m.cliItems {
+			m.cliItems[i].selected = !allSelected
+		}
+	case stepSelectMCPs:
+		for i := range m.mcpItems {
+			m.mcpItems[i].selected = !allSelected
+		}
+	}
+}
+
+func (m installSelectModel) currentItems() []selectableItem {
+	switch m.step {
+	case stepSelectCLIs:
+		return m.cliItems
+	case stepSelectMCPs:
+		return m.mcpItems
+	default:
+		return nil
+	}
+}
+
+func (m installSelectModel) advance() (tea.Model, tea.Cmd) {
+	switch m.step {
+	case stepSelectCLIs:
+		m.step = stepSelectMCPs
+		m.cursor = 0
+	case stepSelectMCPs:
+		m.step = stepConfirmInstall
+		m.cursor = 0
+	case stepConfirmInstall:
+		m.done = true
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m installSelectModel) View() string {
 	if m.quitting {
 		return ""
 	}
 
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("🎛  Select CLIs to install"))
+	b.WriteString(titleStyle.Render("🎛  Conductor Install"))
+	b.WriteString("\n")
+	b.WriteString(m.renderStepIndicator())
 	b.WriteString("\n\n")
 
-	for i, item := range m.items {
-		cursor := "  "
-		if m.cursor == i {
-			cursor = "▸ "
-		}
+	switch m.step {
+	case stepSelectCLIs:
+		b.WriteString(m.renderCLIStep())
+	case stepSelectMCPs:
+		b.WriteString(m.renderMCPStep())
+	case stepConfirmInstall:
+		b.WriteString(m.renderConfirmStep())
+	}
 
-		checkbox := "[ ]"
-		if item.selected {
-			checkbox = checkboxStyle.Render("[✓]")
-		}
+	return b.String()
+}
 
-		statusBadge := renderCLIStatusBadge(item.available, item.authStatus)
-		line := fmt.Sprintf("%s %s %s %s", cursor, checkbox, item.name, statusBadge)
-
-		if m.cursor == i {
-			b.WriteString(selectedItemStyle.Render(line))
+func (m installSelectModel) renderStepIndicator() string {
+	steps := []string{"CLI Targets", "MCP Bridges", "Confirm"}
+	var parts []string
+	for i, s := range steps {
+		if i == int(m.step) {
+			parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render(s))
+		} else if i < int(m.step) {
+			parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Render("✓ "+s))
 		} else {
-			b.WriteString(itemStyle.Render(line))
+			parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(s))
 		}
+	}
+	return strings.Join(parts, " → ")
+}
+
+func (m installSelectModel) renderCLIStep() string {
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Select CLI targets for skills/commands:"))
+	b.WriteString("\n\n")
+
+	for i, item := range m.cliItems {
+		b.WriteString(m.renderItem(i, item))
 		b.WriteString("\n")
 	}
 
-	selected := []string{}
-	for _, item := range m.items {
-		if item.selected {
-			selected = append(selected, item.name)
-		}
-	}
-
 	b.WriteString("\n")
-	if len(selected) > 0 {
-		b.WriteString(confirmStyle.Render(fmt.Sprintf("Selected: %s", strings.Join(selected, ", "))))
-	} else {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("No CLIs selected"))
-	}
-
+	b.WriteString(m.renderSelected(m.cliItems))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("↑/↓: navigate • space/x: toggle • a: toggle all • enter: confirm • q: quit"))
+	b.WriteString(helpStyle.Render("↑/↓: navigate • space/x: toggle • a: all • enter: next • esc/q: quit"))
 
 	return b.String()
+}
+
+func (m installSelectModel) renderMCPStep() string {
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Select MCP bridges to register:"))
+	b.WriteString("\n\n")
+
+	for i, item := range m.mcpItems {
+		b.WriteString(m.renderItem(i, item))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(m.renderSelected(m.mcpItems))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("↑/↓: navigate • space/x: toggle • a: all • enter: next • esc: back"))
+
+	return b.String()
+}
+
+func (m installSelectModel) renderConfirmStep() string {
+	var b strings.Builder
+	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Review installation:"))
+	b.WriteString("\n\n")
+
+	selectedCLIs := m.getSelectedNames(m.cliItems)
+	selectedMCPs := m.getSelectedNames(m.mcpItems)
+
+	b.WriteString(labelStyle.Render("  CLI Targets: "))
+	if len(selectedCLIs) > 0 {
+		b.WriteString(valueStyle.Render(strings.Join(selectedCLIs, ", ")))
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("none"))
+	}
+	b.WriteString("\n")
+
+	b.WriteString(labelStyle.Render("  MCP Bridges: "))
+	if len(selectedMCPs) > 0 {
+		b.WriteString(valueStyle.Render(strings.Join(selectedMCPs, ", ")))
+	} else {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("none"))
+	}
+	b.WriteString("\n\n")
+
+	b.WriteString(confirmStyle.Render("Press enter to install, esc to go back, q to quit"))
+
+	return b.String()
+}
+
+func (m installSelectModel) renderItem(idx int, item selectableItem) string {
+	cursor := "  "
+	if m.cursor == idx {
+		cursor = "▸ "
+	}
+
+	checkbox := "[ ]"
+	if item.selected {
+		checkbox = checkboxStyle.Render("[✓]")
+	}
+
+	badge := renderCLIStatusBadge(item.available, item.authStatus)
+	line := fmt.Sprintf("%s %s %-12s %s", cursor, checkbox, item.name, badge)
+
+	if m.cursor == idx {
+		return selectedItemStyle.Render(line)
+	}
+	return itemStyle.Render(line)
+}
+
+func (m installSelectModel) renderSelected(items []selectableItem) string {
+	names := m.getSelectedNames(items)
+	if len(names) > 0 {
+		return confirmStyle.Render(fmt.Sprintf("Selected: %s", strings.Join(names, ", ")))
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("None selected")
+}
+
+func (m installSelectModel) getSelectedNames(items []selectableItem) []string {
+	var names []string
+	for _, item := range items {
+		if item.selected {
+			names = append(names, item.name)
+		}
+	}
+	return names
 }
 
 func renderCLIStatusBadge(available bool, authStatus string) string {
@@ -187,26 +373,51 @@ func renderCLIStatusBadge(available bool, authStatus string) string {
 	return badgeNotReady
 }
 
-func promptCLISelectionTUI() map[string]bool {
-	m := initialCLISelectModel()
+type installSelections struct {
+	clis map[string]bool
+	mcps map[string]bool
+}
+
+func promptInstallSelectionsTUI() installSelections {
+	m := initialInstallSelectModel()
 	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()
 	if err != nil {
 		fmt.Printf("TUI error: %v\n", err)
-		return map[string]bool{"codex": true, "claude": true, "opencode": true}
-	}
-
-	result := finalModel.(cliSelectModel)
-	if result.quitting {
-		return map[string]bool{}
-	}
-
-	selected := map[string]bool{}
-	for _, item := range result.items {
-		if item.selected {
-			selected[item.name] = true
+		return installSelections{
+			clis: map[string]bool{"codex": true, "claude": true, "opencode": true},
+			mcps: map[string]bool{"mcp-codex": true, "mcp-claude": true, "mcp-gemini": true},
 		}
 	}
-	return selected
+
+	result := finalModel.(installSelectModel)
+	if result.quitting {
+		return installSelections{clis: map[string]bool{}, mcps: map[string]bool{}}
+	}
+
+	clis := map[string]bool{}
+	for _, item := range result.cliItems {
+		if item.selected {
+			clis[item.name] = true
+		}
+	}
+
+	mcps := map[string]bool{}
+	for _, item := range result.mcpItems {
+		if item.selected {
+			mcps[item.name] = true
+		}
+	}
+
+	return installSelections{clis: clis, mcps: mcps}
+}
+
+func promptCLISelection() map[string]bool {
+	selections := promptInstallSelectionsTUI()
+	return selections.clis
+}
+
+func promptCLISelectionTUI() map[string]bool {
+	return promptCLISelection()
 }

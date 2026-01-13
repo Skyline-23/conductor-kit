@@ -25,8 +25,9 @@ func runInstall(args []string) int {
 	repoRoot := fs.String("repo", "", "repo root (default: cwd)")
 	force := fs.Bool("force", false, "overwrite existing")
 	dryRun := fs.Bool("dry-run", false, "print actions only")
-	_ = fs.Bool("interactive", false, "prompt for CLI selection (default when TTY)")
+	interactive := fs.Bool("interactive", false, "prompt for CLI/MCP selection (default when TTY)")
 	cliFlag := fs.String("cli", "", "comma-separated CLIs to install (codex,claude,opencode)")
+	mcpFlag := fs.String("mcp", "", "comma-separated MCPs to register (mcp-codex,mcp-claude,mcp-gemini)")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Println(installHelp())
@@ -94,10 +95,21 @@ func runInstall(args []string) int {
 	}
 
 	selectedCLIs := map[string]bool{"codex": true, "claude": true, "opencode": true}
+	selectedMCPs := map[string]bool{"mcp-codex": true, "mcp-claude": true, "mcp-gemini": true}
 	if *cliFlag != "" {
 		selectedCLIs = parseCLIFlag(*cliFlag)
-	} else if !*dryRun && isTerminal(os.Stdout) {
-		selectedCLIs = promptCLISelection()
+	}
+	if *mcpFlag != "" {
+		selectedMCPs = parseMCPFlag(*mcpFlag)
+	}
+	if *cliFlag == "" && *mcpFlag == "" && (*interactive || (!*dryRun && isTerminal(os.Stdout))) {
+		selections := promptInstallSelectionsTUI()
+		selectedCLIs = selections.clis
+		selectedMCPs = selections.mcps
+		if len(selectedCLIs) == 0 && len(selectedMCPs) == 0 {
+			fmt.Println("Installation cancelled.")
+			return 0
+		}
 	}
 
 	var targets []struct {
@@ -168,17 +180,23 @@ func runInstall(args []string) int {
 			projectRoot = cwd
 		}
 		configPath := openCodeConfigPath(*opencodeHome, projectRoot)
-		if err := ensureOpenCodeMCP(configPath, *dryRun); err != nil {
-			fmt.Printf("OpenCode MCP registration failed: %v\n", err)
-			return 1
+		if selectedMCPs["mcp-codex"] || selectedMCPs["mcp-claude"] || selectedMCPs["mcp-gemini"] {
+			if err := ensureOpenCodeMCP(configPath, *dryRun); err != nil {
+				fmt.Printf("OpenCode MCP registration failed: %v\n", err)
+				return 1
+			}
 		}
-		if err := ensureClaudeMCP(bundlesDest, *claudeHome, *dryRun); err != nil {
-			fmt.Printf("Claude MCP registration failed: %v\n", err)
-			return 1
+		if selectedMCPs["mcp-claude"] {
+			if err := ensureClaudeMCP(bundlesDest, *claudeHome, *dryRun); err != nil {
+				fmt.Printf("Claude MCP registration failed: %v\n", err)
+				return 1
+			}
 		}
-		if err := ensureCodexMCP(bundlesDest, *dryRun); err != nil {
-			fmt.Printf("Codex MCP registration failed: %v\n", err)
-			return 1
+		if selectedMCPs["mcp-codex"] {
+			if err := ensureCodexMCP(bundlesDest, *dryRun); err != nil {
+				fmt.Printf("Codex MCP registration failed: %v\n", err)
+				return 1
+			}
 		}
 	}
 
@@ -347,6 +365,13 @@ func parseCLIFlag(flag string) map[string]bool {
 	return result
 }
 
-func promptCLISelection() map[string]bool {
-	return promptCLISelectionTUI()
+func parseMCPFlag(flag string) map[string]bool {
+	result := map[string]bool{}
+	for _, mcp := range strings.Split(flag, ",") {
+		mcp = strings.TrimSpace(strings.ToLower(mcp))
+		if mcp == "mcp-codex" || mcp == "mcp-claude" || mcp == "mcp-gemini" {
+			result[mcp] = true
+		}
+	}
+	return result
 }
