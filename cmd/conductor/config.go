@@ -9,6 +9,7 @@ import (
 type Config struct {
 	Defaults Defaults              `json:"defaults"`
 	Roles    map[string]RoleConfig `json:"roles"`
+	Runtime  RuntimeConfig         `json:"runtime"`
 }
 
 type Defaults struct {
@@ -18,6 +19,23 @@ type Defaults struct {
 	Retry          int  `json:"retry"`
 	RetryBackoffMs int  `json:"retry_backoff_ms"`
 	LogPrompt      bool `json:"log_prompt"`
+	SummaryOnly    bool `json:"summary_only"`
+}
+
+type RuntimeConfig struct {
+	MaxParallel int                   `json:"max_parallel"`
+	Queue       RuntimeQueueConfig    `json:"queue"`
+	Approval    RuntimeApprovalConfig `json:"approval"`
+}
+
+type RuntimeQueueConfig struct {
+	OnModeChange string `json:"on_mode_change"`
+}
+
+type RuntimeApprovalConfig struct {
+	Required bool     `json:"required"`
+	Roles    []string `json:"roles"`
+	Agents   []string `json:"agents"`
 }
 
 type RoleConfig struct {
@@ -175,13 +193,6 @@ func normalizeDefaults(d Defaults) Defaults {
 		d.RetryBackoffMs = defaultRetryBackoffMs
 	}
 	return d
-}
-
-func effectiveMcpTimeoutMs(timeoutMs int) int {
-	if timeoutMs > 0 {
-		return timeoutMs
-	}
-	return defaultTimeoutMs
 }
 
 func effectiveInt(roleVal, defaultVal int) int {

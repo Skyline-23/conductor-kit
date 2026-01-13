@@ -24,6 +24,16 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install --mode link --repo ~/.conductor-kit
 ```
 
+대화형 설치 (CLI 선택 프롬프트):
+```bash
+conductor install --interactive --mode link --repo ~/.conductor-kit
+```
+
+선택적 설치 (CLI 지정):
+```bash
+conductor install --cli codex,claude --mode link --repo ~/.conductor-kit
+```
+
 프로젝트 로컬 설치(.claude/.codex/.opencode):
 ```bash
 conductor install --mode link --repo ~/.conductor-kit --project
@@ -131,7 +141,7 @@ Claude Code (`~/.claude/.mcp.json`):
 - `roles.<name>.models`: 배치 fan-out 목록 (문자열 또는 `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: reasoning 설정 (codex는 `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd 오버라이드
-- `conductor status`: CLI별 로컬 인증 저장소를 확인 (codex: `~/.codex/auth.json`, gemini: `~/.gemini/oauth_creds.json` 또는 키체인, claude: 키체인 `Claude Code-credentials`)하며 CLI는 실행하지 않음
+- `conductor status`: CLI 인증 확인을 우선적으로 직접 호출(`auth status`/`whoami`/`status`)하고, 지원되지 않으면 로컬 저장소 검사로 폴백 (codex: `~/.codex/auth.json`, gemini: `~/.gemini/oauth_creds.json` 또는 키체인, claude: 키체인 `Claude Code-credentials`)
 - `roles.<name>.timeout_ms` / `roles.<name>.idle_timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role 오버라이드
 
 기본값(생략 시):

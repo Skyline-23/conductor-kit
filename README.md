@@ -24,6 +24,16 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install --mode link --repo ~/.conductor-kit
 ```
 
+Interactive install (prompts for CLI selection):
+```bash
+conductor install --interactive --mode link --repo ~/.conductor-kit
+```
+
+Selective install (specify CLIs):
+```bash
+conductor install --cli codex,claude --mode link --repo ~/.conductor-kit
+```
+
 Project-local install (links into .claude/.codex/.opencode):
 ```bash
 conductor install --mode link --repo ~/.conductor-kit --project
@@ -131,7 +141,7 @@ Key fields:
 - `roles.<name>.models`: fan-out list for batch usage (string or `{ "name": "...", "reasoning_effort": "..." }`)
 - `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: optional reasoning config (codex supports `-c model_reasoning_effort`)
 - `roles.<name>.env` / `roles.<name>.cwd`: env/cwd overrides
-- `conductor status` checks CLI auth state using each CLI's local storage (codex: `~/.codex/auth.json`; gemini: `~/.gemini/oauth_creds.json` or keychain; claude: keychain `Claude Code-credentials`) and never invokes the CLI
+- `conductor status` prefers active CLI auth probes (e.g. `auth status`/`whoami`/`status`), falling back to local storage checks if unsupported (codex: `~/.codex/auth.json`; gemini: `~/.gemini/oauth_creds.json` or keychain; claude: keychain `Claude Code-credentials`)
 - `roles.<name>.timeout_ms` / `roles.<name>.idle_timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role overrides
 
 Defaults (if omitted):
