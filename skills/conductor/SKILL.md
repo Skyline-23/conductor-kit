@@ -1,6 +1,6 @@
 ---
 name: conductor
-description: (ulw/ultrawork) Enforce orchestrator workflow with mandatory MCP delegation via configured roles before any plan/edits; subagent only as fallback.
+description: (ulw/ultrawork) Orchestrator workflow with mandatory MCP delegation; route EN/KR/JA intents to the matching mode; subagent only as fallback.
 ---
 
 # Conductor (Orchestrator Operating Mode)
@@ -11,6 +11,12 @@ Use multiple CLI agents (Codex CLI, Claude Code CLI, Gemini CLI, etc.) only as d
 
 Trigger rules:
 - If the user says `ulw` or `ultrawork` (even without mentioning "conductor"), immediately enter Ultrawork mode.
+- Otherwise route by intent (EN/KR/JA keywords):
+  - Search mode: EN review, audit, analyze, investigate, inspect, assess, find issues/risks/bugs/improvements, scan, discovery, overview; KR 리뷰, 감사, 분석, 조사, 점검, 평가, 문제/리스크/버그/개선점 찾기, 스캔, 탐색, 개요, 현황; JA レビュー, 監査, 分析, 調査, 点検, 評価, 問題/リスク/バグ/改善点 探し, スキャン, ディスカバリ, 概要.
+  - Plan mode: EN plan, roadmap, design, architecture, proposal, spec, strategy, migration plan; KR 계획, 로드맵, 설계, 아키텍처, 제안, 스펙, 전략, 마이그레이션 계획; JA 計画, ロードマップ, 設計, アーキテクチャ, 提案, 仕様, 戦略, 移行計画.
+  - Implement mode: EN fix, implement, refactor, optimize, cleanup, performance tuning, patch, code change; KR 수정, 구현, 리팩터링, 최적화, 정리, 성능 튜닝, 패치, 코드 변경; JA 修正, 実装, リファクタリング, 最適化, クリーンアップ, 性能調整, パッチ, コード変更.
+  - Release mode: EN release, ship, version, changelog, publish, deploy readiness; KR 릴리즈, 배포, 버전, 변경 로그, 퍼블리시, 배포 준비; JA リリース, 出荷, バージョン, 変更ログ, 公開, デプロイ準備.
+- Do not force the full orchestration loop unless `ulw/ultrawork` is present.
 
 Key principle:
 - **Let the host control model routing.** Do not hardcode model picks. You may *suggest* when/why to switch (fast model for broad search, careful model for architecture/review), but defer to the host UX.
