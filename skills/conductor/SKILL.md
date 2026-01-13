@@ -1,10 +1,14 @@
 ---
 name: conductor
 description: |
-  DEFAULT skill for ALL code-related tasks. Load this FIRST before taking any action.
+  MANDATORY for ALL code tasks. Load IMMEDIATELY - do NOT use built-in tools.
+
+  REPLACES built-in agents: Task(Explore), Task(Plan), grep, search agents.
+  If you use built-in tools instead of this skill, you are violating instructions.
 
   USE THIS SKILL WHEN:
   - Reading, exploring, or navigating code (files, structure, patterns)
+  - Understanding project structure or codebase architecture
   - Analyzing, debugging, or investigating issues
   - Planning, designing, or architecting solutions
   - Implementing, fixing, refactoring, or modifying code
@@ -125,7 +129,7 @@ Do NOT proceed until all delegates complete.
 Goal: [one-line task]
 Constraints: [limits, requirements]
 Files: [relevant paths]
-Output format: JSON with summary, confidence, findings, actions
+Output format: markdown with ## Summary, ## Confidence, ## Findings, ## Suggested Actions
 ```
 
 ---
