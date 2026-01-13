@@ -78,14 +78,14 @@ Do NOT proceed until all delegates complete.
 
 ## Roles
 
-| Role | When to use | CLI |
-|------|-------------|-----|
-| `oracle` | Complex reasoning, architecture, security | codex (reasoning) |
-| `explore` | File discovery, codebase navigation | gemini |
-| `librarian` | Doc lookup, best practices | gemini |
-| `frontend-ui-ux-engineer` | UI/UX review, components | gemini-pro |
-| `document-writer` | README, docs, changelogs | gemini |
-| `multimodal-looker` | Screenshot/image analysis | gemini |
+| Role | When to use |
+|------|-------------|
+| `oracle` | Complex reasoning, architecture, security |
+| `explore` | File discovery, codebase navigation |
+| `librarian` | Doc lookup, best practices |
+| `frontend-ui-ux-engineer` | UI/UX review, components |
+| `document-writer` | README, docs, changelogs |
+| `multimodal-looker` | Screenshot/image analysis |
 
 ### Delegation Prompt Template
 ```
