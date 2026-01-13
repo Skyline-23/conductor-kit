@@ -1,144 +1,180 @@
 # Output Format Standards
 
-All delegate outputs should follow these formats for consistent parsing.
+All delegate outputs should follow these markdown formats for consistent parsing and readability.
 
 ## Standard Response Format
 
-```json
-{
-  "summary": "one-line conclusion",
-  "confidence": "high|medium|low",
-  "findings": [
-    {
-      "type": "issue|suggestion|info",
-      "file": "path/to/file.ts",
-      "line": 42,
-      "message": "description",
-      "severity": "critical|high|medium|low"
-    }
-  ],
-  "suggested_actions": [
-    {
-      "action": "edit|create|delete|run",
-      "target": "path or command",
-      "description": "what to do"
-    }
-  ]
-}
+```
+## Summary
+one-line conclusion
+
+## Confidence
+high|medium|low
+
+## Findings
+- path/to/file.ts:42 - description (severity: critical|high|medium|low)
+- path/to/other.ts:10 - another issue (severity: medium)
+
+## Suggested Actions
+1. [edit] path/to/file.ts - what to change
+2. [create] path/to/new.ts - what to create
+3. [run] npm test - verification command
 ```
 
 ## Analysis Response
 
 For `oracle` and analytical tasks:
 
-```json
-{
-  "summary": "one-line conclusion",
-  "confidence": "high|medium|low",
-  "analysis": {
-    "problem": "problem description",
-    "root_cause": "identified cause",
-    "impact": "affected areas",
-    "trade_offs": [
-      {"option": "A", "pros": ["..."], "cons": ["..."]}
-    ]
-  },
-  "recommendation": "recommended approach",
-  "reasoning": "step-by-step reasoning"
-}
+```
+## Summary
+one-line conclusion
+
+## Confidence
+high|medium|low
+
+## Problem
+problem description
+
+## Root Cause
+identified cause
+
+## Impact
+affected areas and scope
+
+## Trade-offs
+
+### Option A
+- Pros: benefit 1, benefit 2
+- Cons: drawback 1, drawback 2
+
+### Option B
+- Pros: benefit 1, benefit 2
+- Cons: drawback 1, drawback 2
+
+## Recommendation
+recommended approach
+
+## Reasoning
+step-by-step reasoning for the recommendation
 ```
 
 ## Search Response
 
 For `explore` and `librarian` tasks:
 
-```json
-{
-  "summary": "what was found",
-  "confidence": "high|medium|low",
-  "results": [
-    {
-      "file": "path/to/file.ts",
-      "lines": [10, 25],
-      "relevance": "high|medium|low",
-      "snippet": "code or text excerpt",
-      "note": "why this is relevant"
-    }
-  ],
-  "patterns": ["identified patterns"],
-  "next_steps": ["suggested follow-up searches"]
-}
+```
+## Summary
+what was found
+
+## Confidence
+high|medium|low
+
+## Results
+- path/to/file.ts:10-25 (relevance: high)
+  code or text excerpt
+  why this is relevant
+
+- path/to/other.ts:50 (relevance: medium)
+  another excerpt
+  relevance note
+
+## Patterns
+- identified pattern 1
+- identified pattern 2
+
+## Next Steps
+- suggested follow-up search 1
+- suggested follow-up search 2
 ```
 
 ## Patch Response
 
 For edit suggestions:
 
-```json
-{
-  "summary": "what changes are proposed",
-  "confidence": "high|medium|low",
-  "patches": [
-    {
-      "file": "path/to/file.ts",
-      "hunks": [
-        {
-          "start_line": 10,
-          "old_lines": ["original line 1", "original line 2"],
-          "new_lines": ["new line 1", "new line 2"],
-          "description": "what this hunk does"
-        }
-      ]
-    }
-  ],
-  "verification": {
-    "commands": ["npm test", "npm run typecheck"],
-    "expected": "all pass"
-  }
-}
+```
+## Summary
+what changes are proposed
+
+## Confidence
+high|medium|low
+
+## Patches
+
+### path/to/file.ts
+
+#### Lines 10-12
+Before:
+original line 1
+original line 2
+
+After:
+new line 1
+new line 2
+
+Reason: what this change does
+
+### path/to/other.ts
+
+#### Lines 5-7
+Before:
+old code
+
+After:
+new code
+
+Reason: explanation
+
+## Verification
+- npm test
+- npm run typecheck
+Expected: all pass
 ```
 
 ## Checklist Response
 
 For review and validation tasks:
 
-```json
-{
-  "summary": "overall assessment",
-  "confidence": "high|medium|low",
-  "checklist": [
-    {
-      "item": "check description",
-      "status": "pass|fail|warn|skip",
-      "details": "explanation",
-      "file": "path/to/file.ts",
-      "line": 42
-    }
-  ],
-  "passed": 5,
-  "failed": 1,
-  "warnings": 2
-}
+```
+## Summary
+overall assessment
+
+## Confidence
+high|medium|low
+
+## Checklist
+- [PASS] check description - explanation
+- [FAIL] check description - path/to/file.ts:42 - what failed
+- [WARN] check description - potential issue
+- [SKIP] check description - why skipped
+
+## Score
+Passed: 5
+Failed: 1
+Warnings: 2
 ```
 
 ## Confidence Levels
 
 | Level | Meaning | When to use |
 |-------|---------|-------------|
-| `high` | Strong evidence, clear conclusion | Verified against code/tests |
-| `medium` | Reasonable inference, some uncertainty | Based on patterns, not verified |
-| `low` | Speculation, needs verification | Incomplete context, edge cases |
+| high | Strong evidence, clear conclusion | Verified against code/tests |
+| medium | Reasonable inference, some uncertainty | Based on patterns, not verified |
+| low | Speculation, needs verification | Incomplete context, edge cases |
 
 ## Error Response
 
 When delegate cannot complete:
 
-```json
-{
-  "error": true,
-  "type": "timeout|parse_error|insufficient_context|unsupported",
-  "message": "description of failure",
-  "partial_result": { },
-  "suggestion": "how to recover"
-}
+```
+## Error
+type: timeout|parse_error|insufficient_context|unsupported
+
+## Message
+description of failure
+
+## Partial Result
+any partial findings if available
+
+## Suggestion
+how to recover or retry
 ```
