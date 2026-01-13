@@ -38,10 +38,6 @@ var (
 			Foreground(lipgloss.Color("82")).
 			Render("● available")
 
-	badgeNotReady = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
-			Render("○ auth unchecked")
-
 	badgeMissing = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
 			Render("○ not installed")
@@ -416,10 +412,7 @@ func renderCLIStatusBadge(available bool, authStatus string) string {
 	if !available {
 		return badgeMissing
 	}
-	if authStatus == "ready" {
-		return badgeReady
-	}
-	return badgeNotReady
+	return badgeReady
 }
 
 type installSelections struct {
