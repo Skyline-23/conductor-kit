@@ -14,9 +14,9 @@ var (
 
 func ensureClaudeMCP(bundlesPath, claudeHome string, dryRun bool) error {
 	if dryRun {
-		fmt.Println("Register Claude MCP -> claude mcp add gemini-cli -- conductor mcp-gemini")
-		fmt.Println("Register Claude MCP -> claude mcp add claude-cli -- conductor mcp-claude")
-		fmt.Println("Register Claude MCP -> claude mcp add codex-cli -- conductor mcp-codex")
+		fmt.Println("Register Claude MCP -> claude mcp add -s user gemini-cli -- conductor mcp-gemini")
+		fmt.Println("Register Claude MCP -> claude mcp add -s user claude-cli -- conductor mcp-claude")
+		fmt.Println("Register Claude MCP -> claude mcp add -s user codex-cli -- conductor mcp-codex")
 		return nil
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
@@ -36,7 +36,7 @@ func ensureClaudeMCP(bundlesPath, claudeHome string, dryRun bool) error {
 			if !bundleEnabled(server) {
 				continue
 			}
-			args := append([]string{"mcp", "add", server.Name, "--"}, server.Command)
+			args := append([]string{"mcp", "add", "-s", "user", server.Name, "--"}, server.Command)
 			args = append(args, server.Args...)
 			cmd := exec.Command("claude", args...)
 			cmd.Stdout = os.Stdout
