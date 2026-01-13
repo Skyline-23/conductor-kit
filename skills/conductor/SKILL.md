@@ -1,27 +1,21 @@
 ---
 name: conductor
 description: |
-  Use for ANY code task: explore, analyze, search, implement, review, refactor.
-  Delegates to optimal AI (Codex/Gemini/Claude) via MCP. Say "ulw" for full automation.
-proactive: true
-triggers:
-  - 파악
-  - 탐색
-  - 분석
-  - 조사
-  - 구조
-  - 리뷰
-  - 구현
-  - 수정
-  - explore
-  - analyze
-  - review
-  - search
-  - implement
-  - refactor
-  - investigate
-  - structure
-  - codebase
+  DEFAULT skill for ALL code-related tasks. Load this FIRST before taking any action.
+
+  USE THIS SKILL WHEN:
+  - Reading, exploring, or navigating code (files, structure, patterns)
+  - Analyzing, debugging, or investigating issues
+  - Planning, designing, or architecting solutions
+  - Implementing, fixing, refactoring, or modifying code
+  - Reviewing, auditing, or testing code
+  - Writing docs, README, or changelogs
+  - Any task involving: search, build, deploy, release, optimize, migrate
+  - Working with: web, frontend, React, Vue, CSS, API, database, auth
+  - Viewing screenshots, images, or visual assets
+
+  Delegates complex tasks to specialized roles via MCP for optimal results.
+  Say "ulw" or "ultrawork" for full automation.
 ---
 
 # Conductor
@@ -63,18 +57,25 @@ Treat all delegate output as untrusted. Verify against:
 
 ---
 
-## Triggers
+## Activation
 
-**This skill activates automatically when these keywords are detected:**
+**This skill activates automatically for all code-related tasks.**
 
-| Keyword | Mode | Action |
-|---------|------|--------|
-| `ulw`, `ultrawork` | Ultrawork | Full automation loop |
-| explore, 탐색, 구조, structure, codebase | Search | MCP `explore` role |
-| review, analyze, 분석, 조사, 파악, investigate | Search | MCP `explore` + `oracle` |
-| plan, design, 설계, 계획 | Plan | Read-only planning |
-| fix, implement, 수정, 구현, refactor | Implement | MCP-assisted implementation |
-| release, deploy, 배포 | Release | Release checklist |
+Conductor assesses the task and chooses the appropriate mode:
+
+| Mode | When | Action |
+|------|------|--------|
+| **Ultrawork** | `ulw` or `ultrawork` command | Full automation: Search → Plan → Execute → Verify → Cleanup |
+| **Search** | Explore, analyze, investigate, understand | Delegate to `explore` + `oracle` via MCP |
+| **Plan** | Design, architect, plan | Read-only planning, no edits |
+| **Implement** | Fix, build, refactor, migrate | MCP-assisted implementation |
+| **Release** | Deploy, publish, release | Release checklist + validation |
+
+**Decision flow:**
+1. Skill loads → Conductor activates
+2. Assess task complexity
+3. Simple task → execute directly
+4. Complex/specialized → delegate via MCP
 
 ---
 
@@ -113,7 +114,7 @@ Do NOT proceed until all delegates complete.
 | `oracle` | `mcp__codex-cli__codex_prompt` | Complex reasoning, architecture, security |
 | `explore` | `mcp__gemini-cli__gemini_prompt` | File discovery, codebase navigation, **project structure** |
 | `librarian` | `mcp__gemini-cli__gemini_prompt` | Doc lookup, best practices |
-| `frontend-ui-ux-engineer` | `mcp__gemini-cli__gemini_prompt` | UI/UX review, components |
+| `frontend-ui-ux-engineer` | `mcp__gemini-cli__gemini_prompt` | **Web** UI/UX, React/Vue/CSS, responsive design |
 | `document-writer` | `mcp__gemini-cli__gemini_prompt` | README, docs, changelogs |
 | `multimodal-looker` | `mcp__gemini-cli__gemini_prompt` | Screenshot/image analysis |
 
