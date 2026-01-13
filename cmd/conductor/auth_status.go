@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const (
@@ -23,14 +26,100 @@ const (
 func checkAuthForCLI(cli string) (string, string) {
 	switch cli {
 	case "codex":
-		return checkCodexAuth()
+		return checkCodexAuthActive()
 	case "gemini":
-		return checkGeminiAuth()
+		return checkGeminiAuthActive()
 	case "claude":
-		return checkClaudeAuth()
+		return checkClaudeAuthActive()
 	default:
 		return "unknown", "no auth check for cli: " + cli
 	}
+}
+
+func checkCodexAuthActive() (string, string) {
+	status, detail, ok := runAuthProbe("codex", authProbeArgs("codex"))
+	if ok {
+		return status, detail
+	}
+	status, detail = checkCodexAuth()
+	return status, wrapAuthFallback(detail)
+}
+
+func checkGeminiAuthActive() (string, string) {
+	status, detail, ok := runAuthProbe("gemini", authProbeArgs("gemini"))
+	if ok {
+		return status, detail
+	}
+	status, detail = checkGeminiAuth()
+	return status, wrapAuthFallback(detail)
+}
+
+func checkClaudeAuthActive() (string, string) {
+	status, detail, ok := runAuthProbe("claude", authProbeArgs("claude"))
+	if ok {
+		return status, detail
+	}
+	status, detail = checkClaudeAuth()
+	return status, wrapAuthFallback(detail)
+}
+
+func wrapAuthFallback(detail string) string {
+	if detail == "" {
+		return "auth probe unsupported; used local auth storage"
+	}
+	return "auth probe unsupported; " + detail
+}
+
+func authProbeArgs(cli string) [][]string {
+	switch cli {
+	case "codex":
+		return [][]string{{"auth", "status"}, {"auth", "whoami"}, {"whoami"}, {"status", "--json"}, {"status"}}
+	case "claude":
+		return [][]string{{"auth", "status"}, {"auth", "whoami"}, {"whoami"}, {"status", "--json"}, {"status"}}
+	case "gemini":
+		return [][]string{{"auth", "status"}, {"auth", "whoami"}, {"whoami"}, {"status", "--json"}, {"status"}}
+	default:
+		return nil
+	}
+}
+
+func runAuthProbe(cli string, candidates [][]string) (string, string, bool) {
+	if !isCommandAvailable(cli) {
+		return "missing", "CLI not found: " + cli, true
+	}
+	for _, args := range candidates {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(ctx, cli, args...)
+		cmd.Env = append(os.Environ(), "CI=1", "NO_COLOR=1")
+		cmd.Stdin = strings.NewReader("")
+		output, err := cmd.CombinedOutput()
+		cancel()
+		if ctx.Err() == context.DeadlineExceeded {
+			return "unknown", fmt.Sprintf("%s auth check timed out", cli), true
+		}
+		text := strings.TrimSpace(string(output))
+		if err == nil {
+			return "ready", "", true
+		}
+		if isUnsupportedAuthCommand(text) {
+			continue
+		}
+		if text == "" {
+			text = err.Error()
+		}
+		return "not_ready", text, true
+	}
+	return "unknown", "auth probe unsupported", false
+}
+
+func isUnsupportedAuthCommand(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "unknown command") ||
+		strings.Contains(lower, "unknown subcommand") ||
+		strings.Contains(lower, "unknown flag") ||
+		strings.Contains(lower, "flag provided but not defined") ||
+		strings.Contains(lower, "unrecognized command") ||
+		strings.Contains(lower, "invalid command")
 }
 
 func checkCodexAuth() (string, string) {
