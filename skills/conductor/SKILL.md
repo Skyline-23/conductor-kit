@@ -21,6 +21,18 @@ Trigger rules:
 Key principle:
 - **Let the host control model routing.** Do not hardcode model picks. You may *suggest* when/why to switch (fast model for broad search, careful model for architecture/review), but defer to the host UX.
 
+## Oracle delegation (deep thinking tasks)
+Tasks requiring deep reasoning MUST be delegated to the `oracle` role (Codex CLI with reasoning enabled):
+- Architecture decisions and trade-off analysis
+- Complex debugging requiring root cause analysis
+- Security review and vulnerability assessment
+- Performance optimization strategy
+- Algorithm design and complexity analysis
+- Refactoring plans for legacy/complex code
+- Migration strategies with risk assessment
+
+Oracle delegation is mandatory for these tasks. Do not attempt deep analysis without oracle input first.
+
 ## Non-negotiable: MCP Delegation Gate (Hard Requirement)
 - This skill MUST perform delegation via MCP tools before search, planning, or editing.
 - Required MCP delegate tools are defined by the orchestration role config (e.g., `config/conductor.json` or host overrides).
