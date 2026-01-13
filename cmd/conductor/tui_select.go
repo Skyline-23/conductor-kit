@@ -32,12 +32,27 @@ var (
 	confirmStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("82"))
+
+	badgeReady = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("82")).
+			Render("● ready")
+
+	badgeNotReady = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")).
+			Render("○ not authenticated")
+
+	badgeMissing = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241")).
+			Render("○ not installed")
 )
 
 type cliItem struct {
 	name        string
 	description string
 	selected    bool
+	authStatus  string
+	authDetail  string
+	available   bool
 }
 
 type cliSelectModel struct {
@@ -48,13 +63,21 @@ type cliSelectModel struct {
 }
 
 func initialCLISelectModel() cliSelectModel {
-	return cliSelectModel{
-		items: []cliItem{
-			{name: "codex", description: "OpenAI Codex CLI", selected: true},
-			{name: "claude", description: "Anthropic Claude Code", selected: true},
-			{name: "opencode", description: "OpenCode CLI", selected: true},
-		},
+	items := []cliItem{
+		{name: "codex", description: "OpenAI Codex CLI"},
+		{name: "claude", description: "Anthropic Claude Code"},
+		{name: "opencode", description: "OpenCode CLI"},
 	}
+
+	for i := range items {
+		items[i].available = isCommandAvailable(items[i].name)
+		status, detail := checkAuthForCLI(items[i].name)
+		items[i].authStatus = status
+		items[i].authDetail = detail
+		items[i].selected = items[i].available && (status == "ready" || status == "unknown")
+	}
+
+	return cliSelectModel{items: items}
 }
 
 func (m cliSelectModel) Init() tea.Cmd {
@@ -123,10 +146,8 @@ func (m cliSelectModel) View() string {
 			checkbox = checkboxStyle.Render("[✓]")
 		}
 
-		line := fmt.Sprintf("%s %s %s", cursor, checkbox, item.name)
-		if item.description != "" {
-			line += lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" - " + item.description)
-		}
+		statusBadge := renderCLIStatusBadge(item.available, item.authStatus)
+		line := fmt.Sprintf("%s %s %s %s", cursor, checkbox, item.name, statusBadge)
 
 		if m.cursor == i {
 			b.WriteString(selectedItemStyle.Render(line))
@@ -154,6 +175,16 @@ func (m cliSelectModel) View() string {
 	b.WriteString(helpStyle.Render("↑/↓: navigate • space/x: toggle • a: toggle all • enter: confirm • q: quit"))
 
 	return b.String()
+}
+
+func renderCLIStatusBadge(available bool, authStatus string) string {
+	if !available {
+		return badgeMissing
+	}
+	if authStatus == "ready" {
+		return badgeReady
+	}
+	return badgeNotReady
 }
 
 func promptCLISelectionTUI() map[string]bool {
