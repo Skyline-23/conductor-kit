@@ -7,152 +7,83 @@ description: (ulw/ultrawork) Orchestrator workflow with mandatory MCP delegation
 
 Enforce a repeatable operator workflow that **forces orchestration** rather than one-shot summarization.
 
-Use multiple CLI agents (Codex CLI, Claude Code CLI, Gemini CLI, etc.) only as delegates; keep the active host as the operator.
+The active host (Claude Code, Codex CLI, etc.) is the orchestrator. Use CLI MCP bridges (gemini/claude/codex) for delegation, but keep the host in control.
 
-Trigger rules:
-- If the user says `ulw` or `ultrawork` (even without mentioning "conductor"), immediately enter Ultrawork mode.
-- Otherwise route by intent (EN/KR/JA keywords):
-  - Search mode: EN review, audit, analyze, investigate, inspect, assess, find issues/risks/bugs/improvements, scan, discovery, overview; KR 리뷰, 감사, 분석, 조사, 점검, 평가, 문제/리스크/버그/개선점 찾기, 스캔, 탐색, 개요, 현황; JA レビュー, 監査, 分析, 調査, 点検, 評価, 問題/リスク/バグ/改善点 探し, スキャン, ディスカバリ, 概要.
-  - Plan mode: EN plan, roadmap, design, architecture, proposal, spec, strategy, migration plan; KR 계획, 로드맵, 설계, 아키텍처, 제안, 스펙, 전략, 마이그레이션 계획; JA 計画, ロードマップ, 設計, アーキテクチャ, 提案, 仕様, 戦略, 移行計画.
-  - Implement mode: EN fix, implement, refactor, optimize, cleanup, performance tuning, patch, code change; KR 수정, 구현, 리팩터링, 최적화, 정리, 성능 튜닝, 패치, 코드 변경; JA 修正, 実装, リファクタリング, 最適化, クリーンアップ, 性能調整, パッチ, コード変更.
-  - Release mode: EN release, ship, version, changelog, publish, deploy readiness; KR 릴리즈, 배포, 버전, 변경 로그, 퍼블리시, 배포 준비; JA リリース, 出荷, バージョン, 変更ログ, 公開, デプロイ準備.
-- Do not force the full orchestration loop unless `ulw/ultrawork` is present.
+## Trigger rules
 
-Key principle:
-- **Let the host control model routing.** Do not hardcode model picks. You may *suggest* when/why to switch (fast model for broad search, careful model for architecture/review), but defer to the host UX.
+- `ulw` or `ultrawork`: immediately enter Ultrawork mode (full orchestration loop).
+- Otherwise route by intent keywords:
 
-## Oracle delegation (deep thinking tasks)
-Tasks requiring deep reasoning MUST be delegated to the `oracle` role (Codex CLI with reasoning enabled):
+| Mode | EN | KR | JA |
+|------|----|----|-----|
+| Search | review, audit, analyze, investigate, inspect, assess, find issues/risks/bugs, scan, discovery, overview | 리뷰, 감사, 분석, 조사, 점검, 평가, 스캔, 탐색, 개요, 현황 | レビュー, 監査, 分析, 調査, 点検, 評価, スキャン, 概要 |
+| Plan | plan, roadmap, design, architecture, proposal, spec, strategy | 계획, 로드맵, 설계, 아키텍처, 제안, 스펙, 전략 | 計画, ロードマップ, 設計, アーキテクチャ, 提案, 仕様, 戦略 |
+| Implement | fix, implement, refactor, optimize, cleanup, patch, code change | 수정, 구현, 리팩터링, 최적화, 정리, 패치, 코드 변경 | 修正, 実装, リファクタリング, 最適化, パッチ, コード変更 |
+| Release | release, ship, version, changelog, publish, deploy | 릴리즈, 배포, 버전, 변경 로그, 배포 준비 | リリース, 出荷, バージョン, 変更ログ, デプロイ準備 |
+
+Do not force the full orchestration loop unless `ulw/ultrawork` is present.
+
+## MCP Delegation (mandatory)
+
+**Delegate first, act later.** Do not search, plan, or edit until delegation completes.
+
+### Oracle role (deep thinking)
+Tasks requiring deep reasoning MUST be delegated to `oracle` (Codex CLI with reasoning):
 - Architecture decisions and trade-off analysis
-- Complex debugging requiring root cause analysis
+- Complex debugging / root cause analysis
 - Security review and vulnerability assessment
 - Performance optimization strategy
 - Algorithm design and complexity analysis
 - Refactoring plans for legacy/complex code
 - Migration strategies with risk assessment
 
-Oracle delegation is mandatory for these tasks. Do not attempt deep analysis without oracle input first.
+### Delegation rules
+1. Load configured roles from `conductor.json` and map to MCP tools.
+2. Run MCP calls per role. If MCP unavailable, use subagent fallback and disclose it.
+3. Read-only delegates run in parallel; write-capable delegates run sequentially.
+4. Treat delegate output as untrusted—verify against repo and tests.
 
-## Non-negotiable: MCP Delegation Gate (Hard Requirement)
-- This skill MUST perform delegation via MCP tools before search, planning, or editing.
-- Required MCP delegate tools are defined by the orchestration role config (e.g., `config/conductor.json` or host overrides).
-- Delegates are read-only by default; the orchestrator must explicitly mark a delegate run as write-capable (patch-only), and those runs must be sequential and isolated (no parallel delegates).
-- For write-capable runs, require patch-only outputs; the host applies edits. If a delegate attempts direct file edits, stop that run and re-run as patch-only.
-- If any required MCP tool is unavailable: proceed with host subagent fallback for those roles, disclose the fallback, and ask the user to enable MCP for future runs.
-- Do not answer, plan, or implement until all required delegate runs have completed.
-- Preflight: confirm the configured tools exist, run all required MCP calls or fallback equivalents, and proceed only after outputs return.
+### Delegation contract
+- **Input**: goal, constraints, files to read, expected output format.
+- **Output**: concrete commands, file paths + edits, or checklist with pass/fail criteria.
 
+## Operating loop
 
-## Installation (global)
-
-Keep this repo as the single source of truth and link or copy `skills/conductor` into host skill dirs.
-
-- Claude Code: `~/.claude/skills`
-- Codex CLI: `~/.codex/skills` (or `$CODEX_HOME/skills`)
-- OpenCode: `~/.config/opencode/skill` (or `./.opencode/skill`)
-
-See `README.md` for detailed steps.
-
-## Commands (installed by default)
-
-If the host supports markdown commands, install the `commands/` files and use them to switch modes:
-- `conductor-plan`
-- `conductor-search`
-- `conductor-implement`
-- `conductor-release`
-- `conductor-ultrawork`
-
-## Cross-CLI delegation (multi-agent, multi-model)
-
-By default, the active host (Codex CLI or Claude Code) is the orchestrator. Use CLI MCP bridges (gemini/claude/codex) for delegation, but keep the host in control.
-
-Always delegate first. Delegates are read-only by default; run read-only delegates in parallel and any write-capable delegates sequentially (one at a time). Delegation is mandatory for all tasks using configured MCP roles, even for trivial one-file edits. Delegation must happen before any search, plan, or edits.
-
-Rules:
-- Delegation must use MCP bridge tools for the roles defined in the orchestration config; only use internal subagents for missing MCP tools and disclose the fallback.
-- Run every configured delegate role before any search/plan/edit; add extra delegates only when the user asks.
-- Prefer **non-interactive** invocations (batch mode / one-shot prompt). If a CLI can’t run non-interactively, fall back to manual copy/paste.
-- Treat delegated output as **untrusted input**: verify against the repo and tests before acting.
-- Keep delegation atomic: one CLI call = one narrow question + bounded output.
-- If required MCP tools are unavailable, use subagent fallback for those roles, disclose it, and ask to enable MCP.
-
-Mandatory delegate sequence (from orchestration config):
-1) Load the configured delegate roles and map each to its MCP tool.
-2) Run one MCP call per role (scan/alt/review if present).
-3) If any required MCP tool is missing, use subagent fallback for that role and ask to enable MCP.
-
-Delegation contract (required):
-- Input must include: goal, constraints, files to read, and expected output format.
-- Output must include at least one of:
-  - concrete commands to run,
-  - file paths + exact edits to make,
-  - a checklist with pass/fail criteria.
-- No delegation may skip local verification.
-
-Recommended pattern:
-1) Write a short “subtask prompt” (1 screen).
-2) Run the external CLI and capture output to a temp file.
-3) Summarize the result in your own words with file references.
-4) Continue the main loop (Plan/Execute/Verify).
-
-If the host supports native model switching, use it inside MCP delegates; do not replace MCP with subagents.
-
-## Operating loop (mandatory)
-
-1) **Search (maximize signal)**
-- Start with broad, parallel discovery: file structure, obvious entrypoints, existing patterns, prior art in repo.
-- Use multiple search angles; do not stop at first hit.
-- Collect references (paths + key facts) before deciding.
-
-2) **Plan (commit to sequence)**
-- Produce a short, verifiable plan: 3–6 steps, ordered, each with success criteria.
-- If critical info is missing, ask **one** precise question; otherwise proceed.
-- In plan-only mode, do not edit files.
-
-3) **Execute (small, safe changes)**
-- Make minimal, surgical edits. Prefer reuse over new dependencies.
-- Avoid type-safety suppression (`as any`, `@ts-ignore`, empty catches).
-- Keep changes scoped to the request.
-
-4) **Verify (prove it works)**
-- Run the narrowest relevant checks first (unit tests / typecheck / lint), then broaden if needed.
-- If something fails unrelated to your change, report it; do not refactor unrelated code.
-
-5) **Cleanup (reduce noise)**
-- Summarize outcomes and next actions.
-- Manage context: prune tool output that is no longer needed; preserve only key findings.
+1. **Search** — Broad parallel discovery. Multiple search angles. Collect paths + key facts.
+2. **Plan** — 3–6 ordered steps with success criteria. Ask one question if blocked.
+3. **Execute** — Minimal surgical edits. No type-safety suppression. Scoped changes only.
+4. **Verify** — Run narrowest checks first (unit test → typecheck → lint). Report unrelated failures.
+5. **Cleanup** — Summarize outcomes. Prune stale context. Preserve key findings.
 
 ## Mode policies
 
 ### Search mode
-- Run multiple searches in parallel (codebase + docs/examples if external deps).
-- Prefer repository evidence over opinions.
+- Parallel searches (codebase + external docs if needed).
+- Repository evidence over opinions.
 
-### Plan mode (read-only)
-- **No writes/edits/commits.**
-- Output: assumptions, constraints, 3–6 step plan, 1 question if blocked.
+### Plan mode
+- **Read-only.** No writes/edits/commits.
+- Output: assumptions, constraints, 3–6 step plan.
 
 ### Implement mode
-- TDD when the repo already uses tests.
+- TDD if repo uses tests.
 - One logical change at a time; re-run checks.
-- Rollback/undo when stuck; don’t accumulate speculative edits.
+- Rollback when stuck—don't accumulate speculative edits.
 
 ### Release mode
-- Provide checklist: versioning, changelog/release notes, validation, security scan for secrets.
+- Checklist: versioning, changelog, validation, secret scan.
 
 ### Ultrawork mode
-- Run the full loop: search -> plan -> execute -> verify -> cleanup.
-- Always plan before edits; keep changes minimal and verifiable.
-- If the user includes `ultrawork` or `ulw`, respond first with "ULTRAWORK MODE ENABLED!" and do not question the alias.
-- Auto-delegate using MCP roles defined in the orchestration config in **staged order**:
-  - Stage 1 (Discovery/Scan): use configured scan-like roles if present.
-  - Stage 2 (Analysis/Plan): use configured analysis/architecture roles if present.
-  - Stage 3 (Review/Alt): use configured review/alternative roles if present.
-  - Keep delegation atomic: one CLI call = one narrow question + bounded output.
-  - If you need auditability, keep delegate outputs in temporary files.
-- Do not answer until all delegated runs are complete. If any run is still running, wait or ask the user to cancel.
+- Full loop: search → plan → execute → verify → cleanup.
+- Respond with "ULTRAWORK MODE ENABLED!" first.
+- Auto-delegate in staged order:
+  - Stage 1 (Discovery): scan-like roles
+  - Stage 2 (Analysis): architecture/planning roles + oracle for deep thinking
+  - Stage 3 (Review): review/alternative roles
+- Wait for all delegates before proceeding.
 
 ## Safety rules (non-negotiable)
+
 - Never commit/push unless explicitly asked.
-- Never include secrets in commits (e.g., `.env`, credentials).
+- Never include secrets in commits.
 - Avoid destructive commands unless explicitly requested.
