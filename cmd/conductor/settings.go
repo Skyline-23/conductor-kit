@@ -81,7 +81,7 @@ func runSettings(args []string) int {
 		if *noTui {
 			return runSettingsInteractive(cfg, path)
 		}
-		return runSettingsTUI(cfg, path)
+		return runSettingsBubbleTea(cfg, path)
 	}
 
 	if *pickModel {

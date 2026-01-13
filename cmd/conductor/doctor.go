@@ -4,7 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"sort"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func runConfigValidate(args []string) int {
@@ -36,6 +40,7 @@ func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", resolveConfigPath(""), "config path")
+	jsonOut := fs.Bool("json", false, "output JSON")
 	if err := fs.Parse(args); err != nil {
 		fmt.Println("Invalid flags.")
 		return 1
@@ -47,6 +52,15 @@ func runDoctor(args []string) int {
 		return 1
 	}
 	errors := validateConfig(cfg)
+
+	if *jsonOut || !isTerminal(os.Stdout) {
+		return runDoctorPlain(cfg, errors)
+	}
+
+	return runDoctorPretty(cfg, *configPath, errors)
+}
+
+func runDoctorPlain(cfg Config, errors []string) int {
 	if len(errors) > 0 {
 		for _, msg := range errors {
 			fmt.Println("Error:", msg)
@@ -91,6 +105,92 @@ func runDoctor(args []string) int {
 	if missing {
 		return 1
 	}
+	return 0
+}
+
+func runDoctorPretty(cfg Config, configPath string, errors []string) int {
+	var sb strings.Builder
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render("🩺 Conductor Doctor")
+	sb.WriteString(title + "\n\n")
+
+	sb.WriteString(labelStyle.Render("Config: ") + pathStyle.Render(configPath) + "\n")
+	sb.WriteString(renderDivider(50) + "\n\n")
+
+	if len(errors) > 0 {
+		sb.WriteString(sectionStyle.Render("Configuration Errors") + "\n")
+		for _, msg := range errors {
+			sb.WriteString("  " + iconError + " " + statusErrorStyle.Render(msg) + "\n")
+		}
+		sb.WriteString("\n")
+		fmt.Print(sb.String())
+		return 1
+	}
+
+	sb.WriteString(iconOK + " " + statusOKStyle.Render("Config validated") + "\n\n")
+
+	sb.WriteString(sectionStyle.Render("Role Diagnostics") + "\n\n")
+
+	roleNames := make([]string, 0, len(cfg.Roles))
+	for name := range cfg.Roles {
+		roleNames = append(roleNames, name)
+	}
+	sort.Strings(roleNames)
+
+	hasIssues := false
+	for _, name := range roleNames {
+		role := cfg.Roles[name]
+
+		roleHeader := roleNameStyle.Render(name)
+		sb.WriteString("  " + roleHeader + "\n")
+
+		if role.CLI == "" {
+			sb.WriteString("    " + iconError + " " + labelStyle.Render("cli: ") + statusErrorStyle.Render("missing") + "\n")
+			hasIssues = true
+			continue
+		}
+
+		cliAvailable := isCommandAvailable(role.CLI)
+		if cliAvailable {
+			sb.WriteString("    " + iconOK + " " + labelStyle.Render("cli: ") + valueStyle.Render(role.CLI) + "\n")
+		} else {
+			sb.WriteString("    " + iconError + " " + labelStyle.Render("cli: ") + valueStyle.Render(role.CLI) + " " + statusErrorStyle.Render("(not found)") + "\n")
+			hasIssues = true
+		}
+
+		modelEntries := append([]ModelEntry{}, role.Models...)
+		if role.Model != "" {
+			modelEntries = append(modelEntries, ModelEntry{Name: role.Model, ReasoningEffort: role.Reasoning})
+		}
+
+		for _, entry := range modelEntries {
+			if entry.Name == "" {
+				continue
+			}
+			check := checkModelForCLI(role.CLI, entry.Name)
+			switch check.level {
+			case "ok":
+				sb.WriteString("    " + iconOK + " " + labelStyle.Render("model: ") + valueStyle.Render(entry.Name) + "\n")
+			case "warn":
+				sb.WriteString("    " + iconWarn + " " + labelStyle.Render("model: ") + valueStyle.Render(entry.Name) + " " + statusWarnStyle.Render("("+check.message+")") + "\n")
+			case "error":
+				sb.WriteString("    " + iconError + " " + labelStyle.Render("model: ") + valueStyle.Render(entry.Name) + " " + statusErrorStyle.Render("("+check.message+")") + "\n")
+				hasIssues = true
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	if hasIssues {
+		summary := statusWarnStyle.Render("⚠ Some issues need attention")
+		sb.WriteString(summary + "\n")
+		fmt.Print(sb.String())
+		return 1
+	}
+
+	summary := statusOKStyle.Render("✓ All checks passed")
+	sb.WriteString(summary + "\n")
+	fmt.Print(sb.String())
 	return 0
 }
 
