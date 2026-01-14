@@ -115,8 +115,11 @@ Do NOT proceed until all delegates complete.
 
 ### How to Delegate
 
-**Step 1: Read `~/.conductor-kit/conductor.json`** to get the role's `cli` and `model`:
+**Step 1: Read conductor.json** (check project-local first, then global):
+1. `./.conductor-kit/conductor.json` (project-local, takes precedence)
+2. `~/.conductor-kit/conductor.json` (global fallback)
 
+Extract the role's `cli` and `model`:
 ```json
 {
   "roles": {
@@ -126,10 +129,10 @@ Do NOT proceed until all delegates complete.
 }
 ```
 
-**Step 2: Find the MCP tool** matching the `cli` value:
-- `cli: "codex"` → look for `codex-cli` MCP tool (e.g., `*codex-cli*prompt`)
-- `cli: "gemini"` → look for `gemini-cli` MCP tool (e.g., `*gemini-cli*prompt`)
-- `cli: "claude"` → look for `claude-cli` MCP tool (e.g., `*claude-cli*prompt`)
+**Step 2: Find the MCP tool** from your available tools list:
+- `cli: "codex"` → find tool containing `codex-cli` and `prompt` (e.g., `mcp__codex-cli__codex_prompt`)
+- `cli: "gemini"` → find tool containing `gemini-cli` and `prompt` (e.g., `mcp__gemini-cli__gemini_prompt`)
+- `cli: "claude"` → find tool containing `claude-cli` and `prompt` (e.g., `mcp__claude-cli__claude_prompt`)
 
 **Step 3: Call with the configured `model`:**
 ```json

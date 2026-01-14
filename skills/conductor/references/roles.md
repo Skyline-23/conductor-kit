@@ -2,16 +2,22 @@
 
 Roles are defined in `conductor.json`. Route tasks to the appropriate role based on task characteristics.
 
+**Config location** (project-local takes precedence):
+1. `./.conductor-kit/conductor.json`
+2. `~/.conductor-kit/conductor.json`
+
 ## Role Matrix
 
-| Role | CLI | Use For | Strengths |
-|------|-----|---------|-----------|
-| `oracle` | codex (reasoning) | Deep analysis, architecture, security, algorithms | Extended thinking, trade-off analysis |
-| `librarian` | gemini | Doc lookup, API reference, best practices research | Fast retrieval, broad knowledge |
-| `explore` | gemini | Codebase navigation, file discovery, pattern finding | Quick scanning, parallel search |
-| `frontend-ui-ux-engineer` | gemini-pro | UI/UX review, component design, accessibility | Visual reasoning, design patterns |
-| `document-writer` | gemini | README, docs, comments, changelogs | Clear writing, formatting |
-| `multimodal-looker` | gemini | Screenshot analysis, image review, visual debugging | Image understanding |
+| Role | Use For | Strengths |
+|------|---------|-----------|
+| `oracle` | Deep analysis, architecture, security, algorithms | Extended thinking, trade-off analysis |
+| `librarian` | Doc lookup, API reference, best practices research | Fast retrieval, broad knowledge |
+| `explore` | Codebase navigation, file discovery, pattern finding | Quick scanning, parallel search |
+| `frontend-ui-ux-engineer` | UI/UX review, component design, accessibility | Visual reasoning, design patterns |
+| `document-writer` | README, docs, comments, changelogs | Clear writing, formatting |
+| `multimodal-looker` | Screenshot analysis, image review, visual debugging | Image understanding |
+
+**Note:** The `cli` and `model` for each role are configured in `conductor.json`, not hardcoded here.
 
 ## Task → Role Mapping
 
