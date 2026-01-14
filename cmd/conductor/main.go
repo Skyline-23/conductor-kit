@@ -30,6 +30,8 @@ func main() {
 		os.Exit(runSettings(rest))
 	case "status":
 		os.Exit(runStatus(rest))
+	case "roles":
+		os.Exit(runRoles(rest))
 	case "config-validate":
 		os.Exit(runConfigValidate(rest))
 	case "doctor":
@@ -56,6 +58,7 @@ func resolveCommand(args []string) (string, []string) {
 		"uninstall":       true,
 		"settings":        true,
 		"status":          true,
+		"roles":           true,
 		"config-validate": true,
 		"doctor":          true,
 		"mcp-bundle":      true,
@@ -117,6 +120,7 @@ Commands:
   uninstall            Remove skills, commands, bins, and config
   settings             Update role CLI/model settings
   status               Check CLI availability and readiness
+  roles                List role -> CLI/model mappings
   config-validate      Validate conductor config JSON
   doctor               Check config and CLI availability
   mcp-bundle           Render MCP bundle templates for hosts

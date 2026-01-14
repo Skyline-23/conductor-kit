@@ -129,17 +129,18 @@ Do NOT proceed until all delegates complete.
 
 ### How to Delegate
 
-**Step 1: Read conductor.json** (check project-local first, then global):
-1. `./.conductor-kit/conductor.json` (project-local, takes precedence)
-2. `~/.conductor-kit/conductor.json` (global fallback)
+**Step 1: Get role mappings** via CLI (avoids config file permission issues):
+```bash
+conductor roles --json
+```
 
-Extract the role's `cli` and `model`:
+This returns:
 ```json
 {
-  "roles": {
-    "oracle": { "cli": "codex", "model": "gpt-4.1" },
-    "explore": { "cli": "gemini", "model": "gemini-2.5-flash" }
-  }
+  "roles": [
+    { "role": "oracle", "cli": "codex", "model": "gpt-4.1" },
+    { "role": "explore", "cli": "gemini", "model": "gemini-2.5-flash" }
+  ]
 }
 ```
 
@@ -150,10 +151,10 @@ Extract the role's `cli` and `model`:
 
 **Step 3: Call with the configured `model`:**
 ```json
-{ "prompt": "...", "model": "<model from conductor.json>" }
+{ "prompt": "...", "model": "<model from conductor roles output>" }
 ```
 
-**Do NOT omit the model. Do NOT invent model names. Use exactly what's in conductor.json.**
+**Do NOT omit the model. Do NOT invent model names. Use exactly what's in conductor roles output.**
 
 **Fallback:** If MCP tool not found → built-in subagent → disclose to user
 
