@@ -41,7 +41,7 @@ conductor install --mode link --repo ~/.conductor-kit --project
 ## Requirements
 - A host CLI: Codex CLI, Claude Code, or OpenCode (commands/skills load inside these hosts).
 - For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
-- Go 1.23+ (only if building from source).
+- Go 1.24+ (only if building from source).
 - Homebrew cask install is macOS-only (Linux users should use manual install).
 - MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (gemini-cli + claude-cli + codex-cli bundles).
 
