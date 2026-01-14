@@ -169,8 +169,8 @@ func loadConfigOrEmpty(path string) (Config, error) {
 }
 
 const (
-	defaultTimeoutMs      = 120000
-	defaultIdleTimeoutMs  = 0
+	defaultTimeoutMs      = 0
+	defaultIdleTimeoutMs  = 120000
 	defaultMaxParallel    = 4
 	defaultRetry          = 0
 	defaultRetryBackoffMs = 500
@@ -180,7 +180,7 @@ func normalizeDefaults(d Defaults) Defaults {
 	if d.TimeoutMs <= 0 {
 		d.TimeoutMs = defaultTimeoutMs
 	}
-	if d.IdleTimeoutMs < 0 {
+	if d.IdleTimeoutMs <= 0 {
 		d.IdleTimeoutMs = defaultIdleTimeoutMs
 	}
 	if d.MaxParallel <= 0 {

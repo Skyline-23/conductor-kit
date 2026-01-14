@@ -298,7 +298,10 @@ func progressReporterForRequest(ctx context.Context, req *mcp.CallToolRequest) p
 	}
 }
 
-const defaultMcpTimeoutMs = 55000
+const (
+	defaultMcpTimeoutMs  = 0
+	defaultWaitTimeoutMs = 120000
+)
 
 func effectiveMcpTimeoutMs(timeoutMs int) int {
 	if timeoutMs > 0 {
@@ -427,10 +430,13 @@ func runTool(input RunInput, report progressReporter) (map[string]interface{}, e
 	}
 	applyTimeout(&spec, timeoutMs)
 	applyIdleTimeout(&spec, input.IdleTimeoutMs)
+	reportRunLabel(report, spec, "starting")
 	payload, err := runCommand(spec)
 	if err != nil {
+		reportRunLabel(report, spec, "failed")
 		return payload, err
 	}
+	reportRunLabel(report, spec, "completed")
 	if resolveSummaryOnly(input.SummaryOnly, cfg) {
 		return summarizePayload(payload), nil
 	}
@@ -467,10 +473,18 @@ func runAsyncTool(input RunInput, report progressReporter) (map[string]interface
 		spec.IdleTimeoutMs = input.IdleTimeoutMs
 	}
 	if !input.NoRuntime {
+		reportRunLabel(report, spec, "queued")
 		return mcpRuntimeRun(input, spec)
 	}
 
-	return startAsync(spec)
+	reportRunLabel(report, spec, "starting")
+	payload, err := startAsync(spec)
+	if err != nil {
+		reportRunLabel(report, spec, "failed")
+		return nil, err
+	}
+	reportRunLabel(report, spec, "started")
+	return payload, nil
 }
 
 func runStatusTool(input StatusInput) (map[string]interface{}, error) {
@@ -491,7 +505,7 @@ func runWaitTool(input WaitInput) (map[string]interface{}, error) {
 	}
 	timeout := time.Duration(input.TimeoutMs) * time.Millisecond
 	if timeout <= 0 {
-		timeout = time.Duration(defaultTimeoutMs) * time.Millisecond
+		timeout = time.Duration(defaultWaitTimeoutMs) * time.Millisecond
 	}
 	if runtime := mcpRuntimeSnapshot(); runtime != nil {
 		return mcpRuntimeWait(runtime, input.RunID, timeout, tail)

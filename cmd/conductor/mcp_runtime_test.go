@@ -11,14 +11,15 @@ func writeTempConfig(t *testing.T, approvalRequired bool) string {
 	t.Helper()
 	content := `{
   "defaults": {
-    "timeout_ms": 120000,
-    "idle_timeout_ms": 0,
+    "timeout_ms": 0,
+    "idle_timeout_ms": 120000,
     "summary_only": false,
     "max_parallel": 4,
     "retry": 0,
     "retry_backoff_ms": 500,
     "log_prompt": false
   },
+
   "runtime": {
     "max_parallel": 4,
     "queue": {
@@ -160,5 +161,39 @@ func TestRuntimeStatus(t *testing.T) {
 	}
 	if max, _ := payload["max_parallel"].(int); max != 2 {
 		t.Fatalf("expected max_parallel=2, got %v", max)
+	}
+}
+
+func TestNormalizeDefaultsIdleTimeout(t *testing.T) {
+	defaults := normalizeDefaults(Defaults{TimeoutMs: 0, IdleTimeoutMs: 0})
+	if defaults.TimeoutMs != 0 {
+		t.Fatalf("expected timeout_ms=0, got %v", defaults.TimeoutMs)
+	}
+	if defaults.IdleTimeoutMs != defaultIdleTimeoutMs {
+		t.Fatalf("expected idle_timeout_ms=%v, got %v", defaultIdleTimeoutMs, defaults.IdleTimeoutMs)
+	}
+
+	custom := normalizeDefaults(Defaults{TimeoutMs: 0, IdleTimeoutMs: 5000})
+	if custom.IdleTimeoutMs != 5000 {
+		t.Fatalf("expected idle_timeout_ms=5000, got %v", custom.IdleTimeoutMs)
+	}
+}
+
+func TestReportRunLabel(t *testing.T) {
+	var got string
+	report := func(message string, progress float64, total float64) {
+		got = message
+	}
+	spec := CmdSpec{Role: "oracle", Agent: "codex", Model: "gpt-4.1"}
+	reportRunLabel(report, spec, "starting")
+	want := "starting (role=oracle cli=codex model=gpt-4.1)"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+
+	reportRunLabel(report, spec, "")
+	want = "role=oracle cli=codex model=gpt-4.1"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }

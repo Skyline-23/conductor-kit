@@ -988,6 +988,35 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+func formatRunLabel(spec CmdSpec) string {
+	parts := []string{}
+	if spec.Role != "" {
+		parts = append(parts, "role="+spec.Role)
+	}
+	if spec.Agent != "" {
+		parts = append(parts, "cli="+spec.Agent)
+	}
+	if spec.Model != "" {
+		parts = append(parts, "model="+spec.Model)
+	}
+	if len(parts) == 0 {
+		return "run"
+	}
+	return strings.Join(parts, " ")
+}
+
+func reportRunLabel(report progressReporter, spec CmdSpec, prefix string) {
+	if report == nil {
+		return
+	}
+	label := formatRunLabel(spec)
+	if prefix == "" {
+		report(label, 0, 1)
+		return
+	}
+	report(fmt.Sprintf("%s (%s)", prefix, label), 0, 1)
+}
+
 func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string, timeoutMs, idleTimeoutMs int, report progressReporter) (map[string]interface{}, error) {
 	if prompt == "" {
 		return nil, errors.New("Missing prompt")
@@ -1089,21 +1118,23 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			reportRunLabel(report, e.spec, "starting")
 			res, err := runCommand(e.spec)
 			mu.Lock()
 			defer mu.Unlock()
+			label := formatRunLabel(e.spec)
 			if err != nil {
 				results = append(results, map[string]interface{}{"agent": e.agent, "status": "error", "error": err.Error()})
 				if report != nil {
 					done := atomic.AddInt64(&completed, 1)
-					report(fmt.Sprintf("finished %s (error)", e.agent), float64(done), float64(total))
+					report(fmt.Sprintf("finished %s (error)", label), float64(done), float64(total))
 				}
 				return
 			}
 			results = append(results, res)
 			if report != nil {
 				done := atomic.AddInt64(&completed, 1)
-				report(fmt.Sprintf("finished %s", e.agent), float64(done), float64(total))
+				report(fmt.Sprintf("finished %s", label), float64(done), float64(total))
 			}
 		}(entry)
 	}
@@ -1221,11 +1252,12 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 	started := 0
 	for _, entry := range entries {
 		res, err := startAsync(entry.spec)
+		label := formatRunLabel(entry.spec)
 		if err != nil {
 			results = append(results, map[string]interface{}{"agent": entry.agent, "status": "error", "error": err.Error()})
 			if report != nil {
 				started++
-				report(fmt.Sprintf("failed %s", entry.agent), float64(started), float64(total))
+				report(fmt.Sprintf("failed %s", label), float64(started), float64(total))
 			}
 			continue
 		}
@@ -1233,7 +1265,7 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 		results = append(results, res)
 		if report != nil {
 			started++
-			report(fmt.Sprintf("started %s", entry.agent), float64(started), float64(total))
+			report(fmt.Sprintf("started %s", label), float64(started), float64(total))
 		}
 	}
 	if report != nil {

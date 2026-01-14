@@ -118,6 +118,7 @@ Do NOT proceed until all delegates complete.
 ### Delegation Prompt Template
 ```
 Goal: [one-line task]
+Role: [role name] (cli/model if relevant)
 Constraints: [limits, requirements]
 Files: [relevant paths]
 Output format: markdown with ## Summary, ## Confidence, ## Findings, ## Suggested Actions

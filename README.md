@@ -131,7 +131,7 @@ The repo file is the default template; `conductor install` links/copies it into 
 If `model` is empty, no model flag is passed and the CLI default is used.
 
 Key fields:
-- `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults
+- `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults (`timeout_ms=0` disables hard timeout; `idle_timeout_ms` is inactivity cutoff)
 - `defaults.log_prompt`: store prompt text in run history (default: false)
 - `roles.<name>.cli`: executable to run (must be on PATH)
 - `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go (optional for codex/claude/gemini)

@@ -131,7 +131,7 @@ Claude Code (`~/.claude/.mcp.json`):
 `model`이 비어 있으면 모델 플래그를 전달하지 않아 각 CLI의 기본 모델을 사용합니다.
 
 핵심 필드:
-- `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값
+- `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: 런타임 기본값 (`timeout_ms=0`이면 하드 타임아웃 비활성화, `idle_timeout_ms`는 무응답 기준)
 - `defaults.log_prompt`: run history에 프롬프트 저장 (기본값: false)
 - `roles.<name>.cli`: 실행할 CLI (PATH에 있어야 함)
 - `roles.<name>.args`: argv 템플릿; `{prompt}` 위치에 프롬프트 삽입 (codex/claude/gemini는 생략 가능)
