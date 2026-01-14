@@ -16,6 +16,7 @@ import (
 type CodexPromptInput struct {
 	Prompt    string `json:"prompt"`
 	Model     string `json:"model,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
 	Config    string `json:"config,omitempty"`
 	Profile   string `json:"profile,omitempty"`
 	TimeoutMs int    `json:"timeout_ms,omitempty"`
@@ -24,6 +25,7 @@ type CodexPromptInput struct {
 type CodexBatchInput struct {
 	Prompt    string `json:"prompt"`
 	Models    string `json:"models,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
 	Config    string `json:"config,omitempty"`
 	Profile   string `json:"profile,omitempty"`
 	TimeoutMs int    `json:"timeout_ms,omitempty"`
@@ -90,12 +92,12 @@ func runCodexMCP(args []string) int {
 }
 
 func runCodexPrompt(ctx context.Context, input CodexPromptInput) (map[string]interface{}, error) {
-	output, err := runCodexCLI(ctx, input.Prompt, input.Model, input.Config, input.Profile, input.TimeoutMs)
+	output, err := runCodexCLI(ctx, input.Prompt, input.Model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs)
 	if err != nil {
 		return nil, err
 	}
 	parsed := parseCodexOutput(output)
-	return map[string]interface{}{"model": input.Model, "events": parsed, "raw": output}, nil
+	return map[string]interface{}{"model": input.Model, "reasoning": input.Reasoning, "events": parsed, "raw": output}, nil
 }
 
 func runCodexBatch(ctx context.Context, input CodexBatchInput) (map[string]interface{}, error) {
@@ -105,14 +107,15 @@ func runCodexBatch(ctx context.Context, input CodexBatchInput) (map[string]inter
 	}
 	responses := make([]map[string]interface{}, 0, len(models))
 	for _, model := range models {
-		output, err := runCodexCLI(ctx, input.Prompt, model, input.Config, input.Profile, input.TimeoutMs)
+		output, err := runCodexCLI(ctx, input.Prompt, model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs)
 		if err != nil {
 			return nil, err
 		}
 		responses = append(responses, map[string]interface{}{
-			"model":  model,
-			"events": parseCodexOutput(output),
-			"raw":    output,
+			"model":     model,
+			"reasoning": input.Reasoning,
+			"events":    parseCodexOutput(output),
+			"raw":       output,
 		})
 	}
 	return map[string]interface{}{"count": len(responses), "responses": responses}, nil
@@ -131,7 +134,7 @@ func splitCodexModels(models string) []string {
 	return out
 }
 
-func runCodexCLI(ctx context.Context, prompt, model, config, profile string, timeoutMs int) (string, error) {
+func runCodexCLI(ctx context.Context, prompt, model, reasoning, config, profile string, timeoutMs int) (string, error) {
 	if !isCommandAvailable("codex") {
 		return "", errors.New("codex CLI not found")
 	}
@@ -139,6 +142,9 @@ func runCodexCLI(ctx context.Context, prompt, model, config, profile string, tim
 		return "", errors.New("prompt is required")
 	}
 	args := []string{"exec", "--json"}
+	if reasoning != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=\"%s\"", reasoning))
+	}
 	if config != "" {
 		args = append(args, "-c", config)
 	}
