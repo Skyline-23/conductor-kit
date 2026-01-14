@@ -3,11 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 func getenv(key, fallback string) string {
@@ -103,10 +101,8 @@ func conductorBinAliases() []string {
 	}
 }
 
+// randomSeed is deprecated - Go 1.20+ automatically seeds the global random source.
+// Keeping empty function for backward compatibility if called elsewhere.
 func randomSeed() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-func init() {
-	randomSeed()
+	// No-op: Go 1.20+ auto-seeds math/rand
 }
