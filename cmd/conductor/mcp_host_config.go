@@ -42,7 +42,8 @@ func ensureClaudeMCP(bundlesPath, claudeHome string, dryRun bool) error {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				return err
+				// Skip if already exists, warn for other errors
+				fmt.Printf("Warning: Claude MCP registration for %s: %v (skipped)\n", server.Name, err)
 			}
 		}
 	}
@@ -100,7 +101,8 @@ func ensureCodexMCP(bundlesPath string, dryRun bool) error {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
-				return err
+				// Skip if already exists, warn for other errors
+				fmt.Printf("Warning: Codex MCP registration for %s: %v (skipped)\n", server.Name, err)
 			}
 		}
 	}
