@@ -1,23 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const defaultClaudeIdleTimeoutMs = 120000
+var claudeAdapter = &CLIAdapter{Name: "Claude", Cmd: "claude"}
 
 type ClaudePromptInput struct {
 	Prompt             string `json:"prompt"`
@@ -29,7 +22,6 @@ type ClaudePromptInput struct {
 	Tools              string `json:"tools,omitempty"`
 	SystemPrompt       string `json:"system_prompt,omitempty"`
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
-	TimeoutMs          int    `json:"timeout_ms,omitempty"`
 	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
 }
 
@@ -43,7 +35,6 @@ type ClaudeBatchInput struct {
 	Tools              string `json:"tools,omitempty"`
 	SystemPrompt       string `json:"system_prompt,omitempty"`
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
-	TimeoutMs          int    `json:"timeout_ms,omitempty"`
 	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
 }
 
@@ -60,8 +51,8 @@ func runClaudeMCP(args []string) int {
 		Name:        "claude.prompt",
 		Description: "Run a single Claude CLI prompt and return the parsed output.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ClaudePromptInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		if strings.TrimSpace(input.Prompt) == "" {
-			return nil, nil, errors.New("missing prompt")
+		if err := ValidatePrompt(input.Prompt); err != nil {
+			return nil, nil, err
 		}
 		payload, err := runClaudePrompt(ctx, input)
 		if err != nil {
@@ -74,8 +65,8 @@ func runClaudeMCP(args []string) int {
 		Name:        "claude.batch",
 		Description: "Run a Claude CLI prompt for multiple models.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ClaudeBatchInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		if strings.TrimSpace(input.Prompt) == "" {
-			return nil, nil, errors.New("missing prompt")
+		if err := ValidatePrompt(input.Prompt); err != nil {
+			return nil, nil, err
 		}
 		payload, err := runClaudeBatch(ctx, input)
 		if err != nil {
@@ -88,8 +79,10 @@ func runClaudeMCP(args []string) int {
 		Name:        "claude.auth_status",
 		Description: "Check Claude CLI auth readiness.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ClaudeAuthInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		status, detail := checkClaudeAuth()
-		return nil, map[string]interface{}{"status": status, "detail": detail}, nil
+		if isCommandAvailable("claude") {
+			return nil, map[string]interface{}{"status": "available"}, nil
+		}
+		return nil, map[string]interface{}{"status": "missing"}, nil
 	})
 
 	transport := mcp.NewStdioTransport()
@@ -107,7 +100,11 @@ func runClaudeMCP(args []string) int {
 
 func runClaudePrompt(ctx context.Context, input ClaudePromptInput) (map[string]interface{}, error) {
 	outputFormat := normalizeClaudeFormat(input.OutputFormat)
-	output, err := runClaudeCLI(ctx, input.Prompt, input.Model, outputFormat, input)
+	args := buildClaudeArgs(input.Prompt, input.Model, outputFormat, input)
+	output, err := claudeAdapter.Run(ctx, CLIRunOptions{
+		Args:          args,
+		IdleTimeoutMs: input.IdleTimeoutMs,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -117,23 +114,27 @@ func runClaudePrompt(ctx context.Context, input ClaudePromptInput) (map[string]i
 
 func runClaudeBatch(ctx context.Context, input ClaudeBatchInput) (map[string]interface{}, error) {
 	outputFormat := normalizeClaudeFormat(input.OutputFormat)
-	models := splitClaudeModels(input.Models)
+	models := SplitModels(input.Models)
 	if len(models) == 0 {
 		models = []string{""}
 	}
 	responses := make([]map[string]interface{}, 0, len(models))
+	promptInput := ClaudePromptInput{
+		Prompt:             input.Prompt,
+		OutputFormat:       input.OutputFormat,
+		PermissionMode:     input.PermissionMode,
+		AllowedTools:       input.AllowedTools,
+		DisallowedTools:    input.DisallowedTools,
+		Tools:              input.Tools,
+		SystemPrompt:       input.SystemPrompt,
+		AppendSystemPrompt: input.AppendSystemPrompt,
+		IdleTimeoutMs:      input.IdleTimeoutMs,
+	}
 	for _, model := range models {
-		output, err := runClaudeCLI(ctx, input.Prompt, model, outputFormat, ClaudePromptInput{
-			Prompt:             input.Prompt,
-			Model:              model,
-			OutputFormat:       outputFormat,
-			PermissionMode:     input.PermissionMode,
-			AllowedTools:       input.AllowedTools,
-			DisallowedTools:    input.DisallowedTools,
-			Tools:              input.Tools,
-			SystemPrompt:       input.SystemPrompt,
-			AppendSystemPrompt: input.AppendSystemPrompt,
-			TimeoutMs:          input.TimeoutMs,
+		args := buildClaudeArgs(input.Prompt, model, outputFormat, promptInput)
+		output, err := claudeAdapter.Run(ctx, CLIRunOptions{
+			Args:          args,
+			IdleTimeoutMs: input.IdleTimeoutMs,
 		})
 		if err != nil {
 			return nil, err
@@ -147,34 +148,7 @@ func runClaudeBatch(ctx context.Context, input ClaudeBatchInput) (map[string]int
 	return map[string]interface{}{"count": len(responses), "responses": responses}, nil
 }
 
-func normalizeClaudeFormat(format string) string {
-	format = strings.TrimSpace(format)
-	if format == "" {
-		return "json"
-	}
-	return format
-}
-
-func splitClaudeModels(models string) []string {
-	parts := strings.Split(models, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		out = append(out, trimmed)
-	}
-	return out
-}
-
-func runClaudeCLI(ctx context.Context, prompt, model, outputFormat string, input ClaudePromptInput) (string, error) {
-	if !isCommandAvailable("claude") {
-		return "", errors.New("claude CLI not found")
-	}
-	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("prompt is required")
-	}
+func buildClaudeArgs(prompt, model, outputFormat string, input ClaudePromptInput) []string {
 	permissionMode := strings.TrimSpace(input.PermissionMode)
 	if permissionMode == "" {
 		permissionMode = "dontAsk"
@@ -198,70 +172,15 @@ func runClaudeCLI(ctx context.Context, prompt, model, outputFormat string, input
 	if appendPrompt := strings.TrimSpace(input.AppendSystemPrompt); appendPrompt != "" {
 		args = append(args, "--append-system-prompt", appendPrompt)
 	}
+	return args
+}
 
-	// Setup context with hard timeout if specified
-	var cancel context.CancelFunc
-	if input.TimeoutMs > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(input.TimeoutMs)*time.Millisecond)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
+func normalizeClaudeFormat(format string) string {
+	format = strings.TrimSpace(format)
+	if format == "" {
+		return "json"
 	}
-	defer cancel()
-
-	// Setup idle timeout
-	idleTimeout := time.Duration(input.IdleTimeoutMs) * time.Millisecond
-	if idleTimeout <= 0 {
-		idleTimeout = time.Duration(defaultClaudeIdleTimeoutMs) * time.Millisecond
-	}
-	activityCh := make(chan struct{}, 1)
-	var idleTimedOut atomic.Bool
-	stopIdle := startIdleTimer(ctx, idleTimeout, activityCh, func() {
-		idleTimedOut.Store(true)
-		cancel()
-	})
-	defer stopIdle()
-
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", err
-	}
-
-	var output bytes.Buffer
-	outputWriter := &activityWriter{w: &output, activityCh: activityCh}
-
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		_, _ = io.Copy(outputWriter, stdoutPipe)
-		wg.Done()
-	}()
-	go func() {
-		_, _ = io.Copy(outputWriter, stderrPipe)
-		wg.Done()
-	}()
-
-	err = cmd.Wait()
-	wg.Wait()
-
-	if idleTimedOut.Load() {
-		return "", errors.New("claude CLI idle timed out (no output)")
-	}
-	if ctx.Err() == context.DeadlineExceeded {
-		return "", errors.New("claude CLI timed out")
-	}
-	if err != nil {
-		return "", fmt.Errorf("claude CLI failed: %w", err)
-	}
-	return strings.TrimSpace(output.String()), nil
+	return format
 }
 
 func parseClaudeOutput(output string) interface{} {

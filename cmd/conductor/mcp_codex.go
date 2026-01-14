@@ -1,23 +1,16 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const defaultCodexIdleTimeoutMs = 120000
+var codexAdapter = &CLIAdapter{Name: "Codex", Cmd: "codex"}
 
 type CodexPromptInput struct {
 	Prompt        string `json:"prompt"`
@@ -25,7 +18,6 @@ type CodexPromptInput struct {
 	Reasoning     string `json:"reasoning,omitempty"`
 	Config        string `json:"config,omitempty"`
 	Profile       string `json:"profile,omitempty"`
-	TimeoutMs     int    `json:"timeout_ms,omitempty"`
 	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
 }
 
@@ -35,7 +27,6 @@ type CodexBatchInput struct {
 	Reasoning     string `json:"reasoning,omitempty"`
 	Config        string `json:"config,omitempty"`
 	Profile       string `json:"profile,omitempty"`
-	TimeoutMs     int    `json:"timeout_ms,omitempty"`
 	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
 }
 
@@ -52,8 +43,8 @@ func runCodexMCP(args []string) int {
 		Name:        "codex.prompt",
 		Description: "Run a single Codex CLI prompt and return the parsed output.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input CodexPromptInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		if strings.TrimSpace(input.Prompt) == "" {
-			return nil, nil, errors.New("missing prompt")
+		if err := ValidatePrompt(input.Prompt); err != nil {
+			return nil, nil, err
 		}
 		payload, err := runCodexPrompt(ctx, input)
 		if err != nil {
@@ -66,8 +57,8 @@ func runCodexMCP(args []string) int {
 		Name:        "codex.batch",
 		Description: "Run a Codex CLI prompt for multiple models.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input CodexBatchInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		if strings.TrimSpace(input.Prompt) == "" {
-			return nil, nil, errors.New("missing prompt")
+		if err := ValidatePrompt(input.Prompt); err != nil {
+			return nil, nil, err
 		}
 		payload, err := runCodexBatch(ctx, input)
 		if err != nil {
@@ -100,7 +91,11 @@ func runCodexMCP(args []string) int {
 }
 
 func runCodexPrompt(ctx context.Context, input CodexPromptInput) (map[string]interface{}, error) {
-	output, err := runCodexCLI(ctx, input.Prompt, input.Model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs, input.IdleTimeoutMs)
+	args := buildCodexArgs(input.Prompt, input.Model, input.Reasoning, input.Config, input.Profile)
+	output, err := codexAdapter.Run(ctx, CLIRunOptions{
+		Args:          args,
+		IdleTimeoutMs: input.IdleTimeoutMs,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -109,13 +104,17 @@ func runCodexPrompt(ctx context.Context, input CodexPromptInput) (map[string]int
 }
 
 func runCodexBatch(ctx context.Context, input CodexBatchInput) (map[string]interface{}, error) {
-	models := splitCodexModels(input.Models)
+	models := SplitModels(input.Models)
 	if len(models) == 0 {
 		models = []string{""}
 	}
 	responses := make([]map[string]interface{}, 0, len(models))
 	for _, model := range models {
-		output, err := runCodexCLI(ctx, input.Prompt, model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs, input.IdleTimeoutMs)
+		args := buildCodexArgs(input.Prompt, model, input.Reasoning, input.Config, input.Profile)
+		output, err := codexAdapter.Run(ctx, CLIRunOptions{
+			Args:          args,
+			IdleTimeoutMs: input.IdleTimeoutMs,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -129,26 +128,7 @@ func runCodexBatch(ctx context.Context, input CodexBatchInput) (map[string]inter
 	return map[string]interface{}{"count": len(responses), "responses": responses}, nil
 }
 
-func splitCodexModels(models string) []string {
-	parts := strings.Split(models, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		out = append(out, trimmed)
-	}
-	return out
-}
-
-func runCodexCLI(ctx context.Context, prompt, model, reasoning, config, profile string, timeoutMs, idleTimeoutMs int) (string, error) {
-	if !isCommandAvailable("codex") {
-		return "", errors.New("codex CLI not found")
-	}
-	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("prompt is required")
-	}
+func buildCodexArgs(prompt, model, reasoning, config, profile string) []string {
 	args := []string{"exec", "--json"}
 	if reasoning != "" {
 		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=\"%s\"", reasoning))
@@ -163,70 +143,7 @@ func runCodexCLI(ctx context.Context, prompt, model, reasoning, config, profile 
 		args = append(args, "-m", model)
 	}
 	args = append(args, prompt)
-
-	// Setup context with hard timeout if specified
-	var cancel context.CancelFunc
-	if timeoutMs > 0 {
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
-	defer cancel()
-
-	// Setup idle timeout
-	idleTimeout := time.Duration(idleTimeoutMs) * time.Millisecond
-	if idleTimeout <= 0 {
-		idleTimeout = time.Duration(defaultCodexIdleTimeoutMs) * time.Millisecond
-	}
-	activityCh := make(chan struct{}, 1)
-	var idleTimedOut atomic.Bool
-	stopIdle := startIdleTimer(ctx, idleTimeout, activityCh, func() {
-		idleTimedOut.Store(true)
-		cancel()
-	})
-	defer stopIdle()
-
-	cmd := exec.CommandContext(ctx, "codex", args...)
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", err
-	}
-
-	var output bytes.Buffer
-	outputWriter := &activityWriter{w: &output, activityCh: activityCh}
-
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		_, _ = io.Copy(outputWriter, stdoutPipe)
-		wg.Done()
-	}()
-	go func() {
-		_, _ = io.Copy(outputWriter, stderrPipe)
-		wg.Done()
-	}()
-
-	err = cmd.Wait()
-	wg.Wait()
-
-	if idleTimedOut.Load() {
-		return "", errors.New("codex CLI idle timed out (no output)")
-	}
-	if ctx.Err() == context.DeadlineExceeded {
-		return "", errors.New("codex CLI timed out")
-	}
-	if err != nil {
-		return "", fmt.Errorf("codex CLI failed: %w", err)
-	}
-	return strings.TrimSpace(output.String()), nil
+	return args
 }
 
 func parseCodexOutput(output string) []interface{} {
