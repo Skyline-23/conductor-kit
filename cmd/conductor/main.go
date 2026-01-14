@@ -7,7 +7,19 @@ import (
 	"strings"
 )
 
+// Version is set by goreleaser at build time via -ldflags.
+var Version = "dev"
+
 func main() {
+	// Handle --version / -v flag before command resolution
+	if len(os.Args) > 1 {
+		arg := os.Args[1]
+		if arg == "--version" || arg == "-v" || arg == "version" {
+			fmt.Printf("conductor %s\n", Version)
+			os.Exit(0)
+		}
+	}
+
 	cmd, rest := resolveCommand(os.Args[1:])
 	switch cmd {
 	case "install":
@@ -95,7 +107,7 @@ func resolveCommand(args []string) (string, []string) {
 }
 
 func printHelp() {
-	fmt.Print(`conductor
+	fmt.Printf(`conductor %s
 
 Usage:
   conductor <command> [options]
@@ -111,6 +123,7 @@ Commands:
   mcp-gemini           Run Gemini CLI MCP server (stdio)
   mcp-claude           Run Claude CLI MCP server (stdio)
   mcp-codex            Run Codex CLI MCP server (stdio)
+  version              Show version information
 
 Aliases:
   conductor-kit, conductor-kit-install
@@ -120,5 +133,5 @@ Aliases:
   conductor-mcp-gemini
   conductor-mcp-claude
   conductor-mcp-codex
-`)
+`, Version)
 }
