@@ -215,47 +215,65 @@ Usage:
 `
 }
 
-func ensureDir(dir string, dryRun bool) {
+func ensureDir(dir string, dryRun bool) error {
 	if dryRun {
-		return
+		return nil
 	}
-	_ = os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Printf("Warning: failed to create directory %s: %v\n", dir, err)
+		return err
+	}
+	return nil
 }
 
-func doLinkOrCopy(src, dest, mode string, force, dryRun bool) {
+func doLinkOrCopy(src, dest, mode string, force, dryRun bool) error {
 	if pathExists(dest) {
 		if mode == "link" && !force {
 			if linkMatches(dest, src) {
 				fmt.Printf("Skip (linked): %s\n", dest)
-				return
+				return nil
 			}
 		} else if !force {
 			fmt.Printf("Skip (exists): %s\n", dest)
-			return
+			return nil
 		}
 		if dryRun {
 			fmt.Printf("Remove: %s\n", dest)
-			return
+			return nil
 		}
-		_ = os.RemoveAll(dest)
+		if err := os.RemoveAll(dest); err != nil {
+			fmt.Printf("Warning: failed to remove %s: %v\n", dest, err)
+			return err
+		}
 	}
 	if dryRun {
 		fmt.Printf("%s: %s -> %s\n", strings.Title(mode), src, dest)
-		return
+		return nil
 	}
 	if mode == "link" {
-		_ = os.Symlink(src, dest)
-		return
+		if err := os.Symlink(src, dest); err != nil {
+			fmt.Printf("Warning: failed to symlink %s -> %s: %v\n", src, dest, err)
+			return err
+		}
+		return nil
 	}
 	info, err := os.Stat(src)
 	if err != nil {
-		return
+		fmt.Printf("Warning: failed to stat %s: %v\n", src, err)
+		return err
 	}
 	if info.IsDir() {
-		_ = copyDir(src, dest)
-		return
+		if err := copyDir(src, dest); err != nil {
+			fmt.Printf("Warning: failed to copy directory %s -> %s: %v\n", src, dest, err)
+			return err
+		}
+		return nil
 	}
-	_ = copyFile(src, dest)
+	if err := copyFile(src, dest); err != nil {
+		fmt.Printf("Warning: failed to copy file %s -> %s: %v\n", src, dest, err)
+		return err
+	}
+	return nil
 }
 
 func detectRepoRoot() string {
