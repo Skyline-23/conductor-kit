@@ -136,7 +136,7 @@ func buildGeminiArgs(prompt, model, outputFormat string) []string {
 func normalizeGeminiFormat(format string) string {
 	format = strings.TrimSpace(format)
 	if format == "" {
-		return "json"
+		return "stream-json"
 	}
 	return format
 }
@@ -145,6 +145,32 @@ func parseGeminiOutput(output string) interface{} {
 	if output == "" {
 		return ""
 	}
+	// For stream-json format, parse JSONL and extract relevant events
+	lines := strings.Split(output, "\n")
+	events := make([]interface{}, 0, len(lines))
+	var lastResult interface{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &event); err == nil {
+			events = append(events, event)
+			// Capture the final result event
+			if eventType, ok := event["type"].(string); ok && eventType == "result" {
+				lastResult = event
+			}
+		}
+	}
+	// Return structured output with events and final result
+	if lastResult != nil {
+		return map[string]interface{}{
+			"events": events,
+			"result": lastResult,
+		}
+	}
+	// Fallback: try parsing as single JSON object (for json format)
 	var parsed interface{}
 	if err := json.Unmarshal([]byte(output), &parsed); err == nil {
 		return parsed
