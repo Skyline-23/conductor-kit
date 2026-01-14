@@ -71,7 +71,10 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 			status = authStatus
 			if authErr != "" {
 				entry["error"] = authErr
-				ok = false
+				// Only mark as issue if status is not ready
+				if authStatus != "ready" {
+					ok = false
+				}
 			}
 		}
 		entry["status"] = status
