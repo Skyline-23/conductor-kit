@@ -134,16 +134,6 @@ Do NOT proceed until all delegates complete.
 conductor roles --json
 ```
 
-This returns:
-```json
-{
-  "roles": [
-    { "role": "oracle", "cli": "codex", "model": "gpt-4.1" },
-    { "role": "explore", "cli": "gemini", "model": "gemini-2.5-flash" }
-  ]
-}
-```
-
 **Step 2: Find the MCP tool** from your available tools list:
 - `cli: "codex"` → find tool containing `codex-cli` and `prompt` (e.g., `mcp__codex-cli__codex_prompt`)
 - `cli: "gemini"` → find tool containing `gemini-cli` and `prompt` (e.g., `mcp__gemini-cli__gemini_prompt`)
@@ -151,10 +141,10 @@ This returns:
 
 **Step 3: Call with the configured `model`:**
 ```json
-{ "prompt": "...", "model": "<model from conductor roles output>" }
+{ "prompt": "...", "model": "<EXACT model value from conductor roles>" }
 ```
 
-**Do NOT omit the model. Do NOT invent model names. Use exactly what's in conductor roles output.**
+**CRITICAL: Do NOT omit the model. Do NOT guess or invent model names. Use EXACTLY what conductor roles returns.**
 
 **Fallback:** If MCP tool not found → built-in subagent → disclose to user
 
