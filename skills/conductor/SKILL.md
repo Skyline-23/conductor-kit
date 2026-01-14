@@ -115,10 +115,38 @@ Do NOT proceed until all delegates complete.
 
 **Fallback order:** MCP tool → `mcp__claude-cli__claude_prompt` → built-in subagent → disclose
 
+### Model Configuration
+
+**CRITICAL: Read `~/.conductor-kit/conductor.json` BEFORE calling MCP tools.**
+
+Each role has a configured `model`. You MUST pass this model to the MCP tool:
+
+```json
+// Example: conductor.json
+{
+  "roles": {
+    "oracle": { "cli": "codex", "model": "gpt-4.1" },
+    "explore": { "cli": "gemini", "model": "gemini-2.5-flash" }
+  }
+}
+```
+
+When delegating to `oracle`, call:
+```json
+mcp__codex-cli__codex_prompt({ "prompt": "...", "model": "gpt-4.1" })
+```
+
+When delegating to `explore`, call:
+```json
+mcp__gemini-cli__gemini_prompt({ "prompt": "...", "model": "gemini-2.5-flash" })
+```
+
+**Do NOT omit the model parameter. Do NOT invent model names.**
+
 ### Delegation Prompt Template
 ```
 Goal: [one-line task]
-Role: [role name] (cli/model if relevant)
+Role: [role name]
 Constraints: [limits, requirements]
 Files: [relevant paths]
 Output format: markdown with ## Summary, ## Confidence, ## Findings, ## Suggested Actions
