@@ -1,17 +1,23 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+const defaultClaudeIdleTimeoutMs = 120000
 
 type ClaudePromptInput struct {
 	Prompt             string `json:"prompt"`
@@ -24,6 +30,7 @@ type ClaudePromptInput struct {
 	SystemPrompt       string `json:"system_prompt,omitempty"`
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
 	TimeoutMs          int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
 }
 
 type ClaudeBatchInput struct {
@@ -37,6 +44,7 @@ type ClaudeBatchInput struct {
 	SystemPrompt       string `json:"system_prompt,omitempty"`
 	AppendSystemPrompt string `json:"append_system_prompt,omitempty"`
 	TimeoutMs          int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
 }
 
 type ClaudeAuthInput struct{}
@@ -190,26 +198,70 @@ func runClaudeCLI(ctx context.Context, prompt, model, outputFormat string, input
 	if appendPrompt := strings.TrimSpace(input.AppendSystemPrompt); appendPrompt != "" {
 		args = append(args, "--append-system-prompt", appendPrompt)
 	}
-	ctx, cancel := withClaudeTimeout(ctx, input.TimeoutMs)
+
+	// Setup context with hard timeout if specified
+	var cancel context.CancelFunc
+	if input.TimeoutMs > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(input.TimeoutMs)*time.Millisecond)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 
+	// Setup idle timeout
+	idleTimeout := time.Duration(input.IdleTimeoutMs) * time.Millisecond
+	if idleTimeout <= 0 {
+		idleTimeout = time.Duration(defaultClaudeIdleTimeoutMs) * time.Millisecond
+	}
+	activityCh := make(chan struct{}, 1)
+	var idleTimedOut atomic.Bool
+	stopIdle := startIdleTimer(ctx, idleTimeout, activityCh, func() {
+		idleTimedOut.Store(true)
+		cancel()
+	})
+	defer stopIdle()
+
 	cmd := exec.CommandContext(ctx, "claude", args...)
-	output, err := cmd.CombinedOutput()
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+
+	var output bytes.Buffer
+	outputWriter := &activityWriter{w: &output, activityCh: activityCh}
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		_, _ = io.Copy(outputWriter, stdoutPipe)
+		wg.Done()
+	}()
+	go func() {
+		_, _ = io.Copy(outputWriter, stderrPipe)
+		wg.Done()
+	}()
+
+	err = cmd.Wait()
+	wg.Wait()
+
+	if idleTimedOut.Load() {
+		return "", errors.New("claude CLI idle timed out (no output)")
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", errors.New("claude CLI timed out")
 	}
 	if err != nil {
 		return "", fmt.Errorf("claude CLI failed: %w", err)
 	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func withClaudeTimeout(ctx context.Context, timeoutMs int) (context.Context, context.CancelFunc) {
-	timeout := time.Duration(effectiveMcpTimeoutMs(timeoutMs)) * time.Millisecond
-	if timeout <= 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, timeout)
+	return strings.TrimSpace(output.String()), nil
 }
 
 func parseClaudeOutput(output string) interface{} {

@@ -1,30 +1,38 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const defaultGeminiIdleTimeoutMs = 120000
+
 type GeminiPromptInput struct {
-	Prompt       string `json:"prompt"`
-	Model        string `json:"model,omitempty"`
-	OutputFormat string `json:"output_format,omitempty"`
-	TimeoutMs    int    `json:"timeout_ms,omitempty"`
+	Prompt        string `json:"prompt"`
+	Model         string `json:"model,omitempty"`
+	OutputFormat  string `json:"output_format,omitempty"`
+	TimeoutMs     int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
 }
 
 type GeminiBatchInput struct {
-	Prompt       string `json:"prompt"`
-	Models       string `json:"models,omitempty"`
-	OutputFormat string `json:"output_format,omitempty"`
-	TimeoutMs    int    `json:"timeout_ms,omitempty"`
+	Prompt        string `json:"prompt"`
+	Models        string `json:"models,omitempty"`
+	OutputFormat  string `json:"output_format,omitempty"`
+	TimeoutMs     int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
 }
 
 type GeminiAuthInput struct{}
@@ -87,7 +95,7 @@ func runGeminiMCP(args []string) int {
 
 func runGeminiPrompt(ctx context.Context, input GeminiPromptInput) (map[string]interface{}, error) {
 	outputFormat := normalizeGeminiFormat(input.OutputFormat)
-	output, err := runGeminiCLI(ctx, input.Prompt, input.Model, outputFormat, input.TimeoutMs)
+	output, err := runGeminiCLI(ctx, input.Prompt, input.Model, outputFormat, input.TimeoutMs, input.IdleTimeoutMs)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +111,7 @@ func runGeminiBatch(ctx context.Context, input GeminiBatchInput) (map[string]int
 	}
 	responses := make([]map[string]interface{}, 0, len(models))
 	for _, model := range models {
-		output, err := runGeminiCLI(ctx, input.Prompt, model, outputFormat, input.TimeoutMs)
+		output, err := runGeminiCLI(ctx, input.Prompt, model, outputFormat, input.TimeoutMs, input.IdleTimeoutMs)
 		if err != nil {
 			return nil, err
 		}
@@ -137,7 +145,7 @@ func splitGeminiModels(models string) []string {
 	return out
 }
 
-func runGeminiCLI(ctx context.Context, prompt, model, outputFormat string, timeoutMs int) (string, error) {
+func runGeminiCLI(ctx context.Context, prompt, model, outputFormat string, timeoutMs, idleTimeoutMs int) (string, error) {
 	if !isCommandAvailable("gemini") {
 		return "", errors.New("gemini CLI not found")
 	}
@@ -148,26 +156,70 @@ func runGeminiCLI(ctx context.Context, prompt, model, outputFormat string, timeo
 	if model != "" {
 		args = append(args, "-m", model)
 	}
-	ctx, cancel := withGeminiTimeout(ctx, timeoutMs)
+
+	// Setup context with hard timeout if specified
+	var cancel context.CancelFunc
+	if timeoutMs > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 
+	// Setup idle timeout
+	idleTimeout := time.Duration(idleTimeoutMs) * time.Millisecond
+	if idleTimeout <= 0 {
+		idleTimeout = time.Duration(defaultGeminiIdleTimeoutMs) * time.Millisecond
+	}
+	activityCh := make(chan struct{}, 1)
+	var idleTimedOut atomic.Bool
+	stopIdle := startIdleTimer(ctx, idleTimeout, activityCh, func() {
+		idleTimedOut.Store(true)
+		cancel()
+	})
+	defer stopIdle()
+
 	cmd := exec.CommandContext(ctx, "gemini", args...)
-	output, err := cmd.CombinedOutput()
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+
+	var output bytes.Buffer
+	outputWriter := &activityWriter{w: &output, activityCh: activityCh}
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		_, _ = io.Copy(outputWriter, stdoutPipe)
+		wg.Done()
+	}()
+	go func() {
+		_, _ = io.Copy(outputWriter, stderrPipe)
+		wg.Done()
+	}()
+
+	err = cmd.Wait()
+	wg.Wait()
+
+	if idleTimedOut.Load() {
+		return "", errors.New("gemini CLI idle timed out (no output)")
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", errors.New("gemini CLI timed out")
 	}
 	if err != nil {
 		return "", fmt.Errorf("gemini CLI failed: %w", err)
 	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func withGeminiTimeout(ctx context.Context, timeoutMs int) (context.Context, context.CancelFunc) {
-	timeout := time.Duration(effectiveMcpTimeoutMs(timeoutMs)) * time.Millisecond
-	if timeout <= 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, timeout)
+	return strings.TrimSpace(output.String()), nil
 }
 
 func parseGeminiOutput(output string) interface{} {

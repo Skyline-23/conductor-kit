@@ -1,34 +1,42 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const defaultCodexIdleTimeoutMs = 120000
+
 type CodexPromptInput struct {
-	Prompt    string `json:"prompt"`
-	Model     string `json:"model,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
-	Config    string `json:"config,omitempty"`
-	Profile   string `json:"profile,omitempty"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"`
+	Prompt        string `json:"prompt"`
+	Model         string `json:"model,omitempty"`
+	Reasoning     string `json:"reasoning,omitempty"`
+	Config        string `json:"config,omitempty"`
+	Profile       string `json:"profile,omitempty"`
+	TimeoutMs     int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
 }
 
 type CodexBatchInput struct {
-	Prompt    string `json:"prompt"`
-	Models    string `json:"models,omitempty"`
-	Reasoning string `json:"reasoning,omitempty"`
-	Config    string `json:"config,omitempty"`
-	Profile   string `json:"profile,omitempty"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"`
+	Prompt        string `json:"prompt"`
+	Models        string `json:"models,omitempty"`
+	Reasoning     string `json:"reasoning,omitempty"`
+	Config        string `json:"config,omitempty"`
+	Profile       string `json:"profile,omitempty"`
+	TimeoutMs     int    `json:"timeout_ms,omitempty"`
+	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
 }
 
 type CodexAuthInput struct{}
@@ -92,7 +100,7 @@ func runCodexMCP(args []string) int {
 }
 
 func runCodexPrompt(ctx context.Context, input CodexPromptInput) (map[string]interface{}, error) {
-	output, err := runCodexCLI(ctx, input.Prompt, input.Model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs)
+	output, err := runCodexCLI(ctx, input.Prompt, input.Model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs, input.IdleTimeoutMs)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +115,7 @@ func runCodexBatch(ctx context.Context, input CodexBatchInput) (map[string]inter
 	}
 	responses := make([]map[string]interface{}, 0, len(models))
 	for _, model := range models {
-		output, err := runCodexCLI(ctx, input.Prompt, model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs)
+		output, err := runCodexCLI(ctx, input.Prompt, model, input.Reasoning, input.Config, input.Profile, input.TimeoutMs, input.IdleTimeoutMs)
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +142,7 @@ func splitCodexModels(models string) []string {
 	return out
 }
 
-func runCodexCLI(ctx context.Context, prompt, model, reasoning, config, profile string, timeoutMs int) (string, error) {
+func runCodexCLI(ctx context.Context, prompt, model, reasoning, config, profile string, timeoutMs, idleTimeoutMs int) (string, error) {
 	if !isCommandAvailable("codex") {
 		return "", errors.New("codex CLI not found")
 	}
@@ -155,26 +163,70 @@ func runCodexCLI(ctx context.Context, prompt, model, reasoning, config, profile 
 		args = append(args, "-m", model)
 	}
 	args = append(args, prompt)
-	ctx, cancel := withCodexTimeout(ctx, timeoutMs)
+
+	// Setup context with hard timeout if specified
+	var cancel context.CancelFunc
+	if timeoutMs > 0 {
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 
+	// Setup idle timeout
+	idleTimeout := time.Duration(idleTimeoutMs) * time.Millisecond
+	if idleTimeout <= 0 {
+		idleTimeout = time.Duration(defaultCodexIdleTimeoutMs) * time.Millisecond
+	}
+	activityCh := make(chan struct{}, 1)
+	var idleTimedOut atomic.Bool
+	stopIdle := startIdleTimer(ctx, idleTimeout, activityCh, func() {
+		idleTimedOut.Store(true)
+		cancel()
+	})
+	defer stopIdle()
+
 	cmd := exec.CommandContext(ctx, "codex", args...)
-	output, err := cmd.CombinedOutput()
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", err
+	}
+
+	var output bytes.Buffer
+	outputWriter := &activityWriter{w: &output, activityCh: activityCh}
+
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		_, _ = io.Copy(outputWriter, stdoutPipe)
+		wg.Done()
+	}()
+	go func() {
+		_, _ = io.Copy(outputWriter, stderrPipe)
+		wg.Done()
+	}()
+
+	err = cmd.Wait()
+	wg.Wait()
+
+	if idleTimedOut.Load() {
+		return "", errors.New("codex CLI idle timed out (no output)")
+	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", errors.New("codex CLI timed out")
 	}
 	if err != nil {
 		return "", fmt.Errorf("codex CLI failed: %w", err)
 	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func withCodexTimeout(ctx context.Context, timeoutMs int) (context.Context, context.CancelFunc) {
-	timeout := time.Duration(effectiveMcpTimeoutMs(timeoutMs)) * time.Millisecond
-	if timeout <= 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, timeout)
+	return strings.TrimSpace(output.String()), nil
 }
 
 func parseCodexOutput(output string) []interface{} {
