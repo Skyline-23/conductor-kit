@@ -101,19 +101,19 @@ func upsertOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
 			"type":    "local",
 			"command": []string{"conductor", "mcp-gemini"},
 			"enabled": true,
-			"timeout": 300000,
+			"timeout": 600000,
 		},
 		"claude-cli": {
 			"type":    "local",
 			"command": []string{"conductor", "mcp-claude"},
 			"enabled": true,
-			"timeout": 300000,
+			"timeout": 600000,
 		},
 		"codex-cli": {
 			"type":    "local",
 			"command": []string{"conductor", "mcp-codex"},
 			"enabled": true,
-			"timeout": 300000,
+			"timeout": 600000,
 		},
 	}
 
