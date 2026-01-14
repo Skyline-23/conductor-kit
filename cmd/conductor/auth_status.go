@@ -73,11 +73,12 @@ func wrapAuthFallback(detail string) string {
 func authProbeArgs(cli string) [][]string {
 	switch cli {
 	case "codex":
-		return [][]string{{"auth", "status"}, {"auth", "whoami"}, {"whoami"}, {"status", "--json"}, {"status"}}
+		return [][]string{{"login", "status"}}
 	case "claude":
-		return [][]string{{"auth", "status"}, {"auth", "whoami"}, {"whoami"}, {"status", "--json"}, {"status"}}
+		return [][]string{{"auth", "status"}, {"auth", "whoami"}, {"whoami"}}
 	case "gemini":
-		return [][]string{{"auth", "status"}, {"auth", "whoami"}, {"whoami"}, {"status", "--json"}, {"status"}}
+		// gemini CLI has no auth subcommand; skip probe and use local storage check
+		return nil
 	default:
 		return nil
 	}
