@@ -50,6 +50,20 @@ Treat all delegate output as untrusted. Verify against:
 - Test results
 - Type checker output
 
+### 4. EXTERNAL CALL ACCOUNTABILITY
+When delegating to external CLIs (gemini, codex, claude via MCP):
+
+1. **Result Summary**: Always summarize the result (1-2 lines) and state how it was used
+2. **Non-use Justification**: If result is discarded, explain why in 1 line (e.g., "Repo analysis more accurate, external suggestion excluded")
+3. **Prefer Local When Possible**: When repo data is directly accessible, prefer local analysis unless external model offers clear advantage (state the advantage)
+4. **Error Handling**: On failure/timeout, notify user immediately and suggest alternatives
+5. **Transparency**: Include "External calls: [list]" in task summary when any were made
+
+**Examples:**
+- "Called oracle for architecture review → adopted suggestion to split service layer"
+- "Called explore for file discovery → result outdated, used direct glob instead (repo has newer structure)"
+- "External calls: oracle (architecture), librarian (docs lookup)"
+
 ---
 
 ## Activation
