@@ -100,29 +100,24 @@ Do NOT proceed until all delegates complete.
 
 ---
 
-## Roles → MCP Tools
+## Roles → Delegation
 
-**Always use MCP tools for delegation. Map roles to tools:**
+**Available roles** (defined in `~/.conductor-kit/conductor.json`):
 
-| Role | MCP Tool | When to use |
-|------|----------|-------------|
-| `oracle` | `mcp__codex-cli__codex_prompt` | Complex reasoning, architecture, security |
-| `explore` | `mcp__gemini-cli__gemini_prompt` | File discovery, codebase navigation, **project structure** |
-| `librarian` | `mcp__gemini-cli__gemini_prompt` | Doc lookup, best practices |
-| `frontend-ui-ux-engineer` | `mcp__gemini-cli__gemini_prompt` | **Web** UI/UX, React/Vue/CSS, responsive design |
-| `document-writer` | `mcp__gemini-cli__gemini_prompt` | README, docs, changelogs |
-| `multimodal-looker` | `mcp__gemini-cli__gemini_prompt` | Screenshot/image analysis |
+| Role | When to use |
+|------|-------------|
+| `oracle` | Complex reasoning, architecture, security |
+| `explore` | File discovery, codebase navigation, project structure |
+| `librarian` | Doc lookup, best practices |
+| `frontend-ui-ux-engineer` | Web UI/UX, React/Vue/CSS, responsive design |
+| `document-writer` | README, docs, changelogs |
+| `multimodal-looker` | Screenshot/image analysis |
 
-**Fallback order:** MCP tool → `mcp__claude-cli__claude_prompt` → built-in subagent → disclose
+### How to Delegate
 
-### Model Configuration
-
-**CRITICAL: Read `~/.conductor-kit/conductor.json` BEFORE calling MCP tools.**
-
-Each role has a configured `model`. You MUST pass this model to the MCP tool:
+**Step 1: Read `~/.conductor-kit/conductor.json`** to get the role's `cli` and `model`:
 
 ```json
-// Example: conductor.json
 {
   "roles": {
     "oracle": { "cli": "codex", "model": "gpt-4.1" },
@@ -131,17 +126,19 @@ Each role has a configured `model`. You MUST pass this model to the MCP tool:
 }
 ```
 
-When delegating to `oracle`, call:
+**Step 2: Find the MCP tool** matching the `cli` value:
+- `cli: "codex"` → look for `codex-cli` MCP tool (e.g., `*codex-cli*prompt`)
+- `cli: "gemini"` → look for `gemini-cli` MCP tool (e.g., `*gemini-cli*prompt`)
+- `cli: "claude"` → look for `claude-cli` MCP tool (e.g., `*claude-cli*prompt`)
+
+**Step 3: Call with the configured `model`:**
 ```json
-mcp__codex-cli__codex_prompt({ "prompt": "...", "model": "gpt-4.1" })
+{ "prompt": "...", "model": "<model from conductor.json>" }
 ```
 
-When delegating to `explore`, call:
-```json
-mcp__gemini-cli__gemini_prompt({ "prompt": "...", "model": "gemini-2.5-flash" })
-```
+**Do NOT omit the model. Do NOT invent model names. Use exactly what's in conductor.json.**
 
-**Do NOT omit the model parameter. Do NOT invent model names.**
+**Fallback:** If MCP tool not found → built-in subagent → disclose to user
 
 ### Delegation Prompt Template
 ```
