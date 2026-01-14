@@ -1,3 +1,4 @@
+// Package main provides the conductor CLI for managing skills, commands, and MCP bridges.
 package main
 
 import (
@@ -6,12 +7,14 @@ import (
 	"os"
 )
 
+// Config represents the root configuration structure loaded from conductor.json.
 type Config struct {
 	Defaults Defaults              `json:"defaults"`
 	Roles    map[string]RoleConfig `json:"roles"`
 	Runtime  RuntimeConfig         `json:"runtime"`
 }
 
+// Defaults contains global default settings for all roles.
 type Defaults struct {
 	TimeoutMs      int  `json:"timeout_ms"`
 	IdleTimeoutMs  int  `json:"idle_timeout_ms"`
@@ -22,22 +25,26 @@ type Defaults struct {
 	SummaryOnly    bool `json:"summary_only"`
 }
 
+// RuntimeConfig controls queue and approval behavior for async runs.
 type RuntimeConfig struct {
 	MaxParallel int                   `json:"max_parallel"`
 	Queue       RuntimeQueueConfig    `json:"queue"`
 	Approval    RuntimeApprovalConfig `json:"approval"`
 }
 
+// RuntimeQueueConfig defines queue behavior settings.
 type RuntimeQueueConfig struct {
 	OnModeChange string `json:"on_mode_change"`
 }
 
+// RuntimeApprovalConfig defines which roles/agents require approval before execution.
 type RuntimeApprovalConfig struct {
 	Required bool     `json:"required"`
 	Roles    []string `json:"roles"`
 	Agents   []string `json:"agents"`
 }
 
+// RoleConfig defines a single role's CLI, model, and execution settings.
 type RoleConfig struct {
 	CLI            string            `json:"cli"`
 	Args           []string          `json:"args"`
@@ -59,11 +66,13 @@ type RoleConfig struct {
 	RetryBackoffMs int               `json:"retry_backoff_ms"`
 }
 
+// ModelEntry represents a model configuration with optional reasoning effort.
 type ModelEntry struct {
 	Name            string
 	ReasoningEffort string
 }
 
+// roleDefaults holds CLI-specific default arguments and flags.
 type roleDefaults struct {
 	args          []string
 	modelFlag     string
@@ -71,6 +80,7 @@ type roleDefaults struct {
 	reasoningKey  string
 }
 
+// resolveRoleDefaults returns CLI-specific defaults for codex, claude, or gemini.
 func resolveRoleDefaults(cli string) (roleDefaults, bool) {
 	switch cli {
 	case "codex":
@@ -95,6 +105,7 @@ func resolveRoleDefaults(cli string) (roleDefaults, bool) {
 	}
 }
 
+// normalizeRoleConfig applies CLI-specific defaults to a role configuration.
 func normalizeRoleConfig(role RoleConfig) (RoleConfig, error) {
 	if role.CLI == "" {
 		return role, fmt.Errorf("Missing cli for role")
@@ -145,6 +156,7 @@ func (m *ModelEntry) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// loadConfig reads and parses a conductor.json configuration file.
 func loadConfig(path string) (Config, error) {
 	var cfg Config
 	data, err := os.ReadFile(path)
@@ -157,6 +169,7 @@ func loadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
+// loadConfigOrEmpty loads config or returns empty Config if file doesn't exist.
 func loadConfigOrEmpty(path string) (Config, error) {
 	cfg, err := loadConfig(path)
 	if err != nil {
@@ -176,6 +189,7 @@ const (
 	defaultRetryBackoffMs = 500
 )
 
+// normalizeDefaults fills in missing default values with sensible defaults.
 func normalizeDefaults(d Defaults) Defaults {
 	if d.TimeoutMs <= 0 {
 		d.TimeoutMs = defaultTimeoutMs
@@ -195,6 +209,7 @@ func normalizeDefaults(d Defaults) Defaults {
 	return d
 }
 
+// effectiveInt returns roleVal if positive, otherwise defaultVal.
 func effectiveInt(roleVal, defaultVal int) int {
 	if roleVal > 0 {
 		return roleVal
@@ -202,6 +217,7 @@ func effectiveInt(roleVal, defaultVal int) int {
 	return defaultVal
 }
 
+// expandModelEntries builds a list of models from config or override values.
 func expandModelEntries(cfg RoleConfig, modelOverride, reasoningOverride string) []ModelEntry {
 	if modelOverride != "" {
 		models := splitList(modelOverride)
