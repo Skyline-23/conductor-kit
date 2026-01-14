@@ -89,6 +89,10 @@ func (a *CLIAdapter) Run(ctx context.Context, opts CLIRunOptions) (string, error
 		return "", fmt.Errorf("%s CLI timed out", a.Name)
 	}
 	if err != nil {
+		outputStr := strings.TrimSpace(output.String())
+		if outputStr != "" {
+			return "", fmt.Errorf("%s CLI failed: %w\n%s", a.Name, err, outputStr)
+		}
 		return "", fmt.Errorf("%s CLI failed: %w", a.Name, err)
 	}
 	return strings.TrimSpace(output.String()), nil
