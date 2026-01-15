@@ -263,3 +263,78 @@ func TestMcpGetStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestMcpExtractNativeThreadID(t *testing.T) {
+	tests := []struct {
+		name   string
+		cli    string
+		output string
+		want   string
+	}{
+		{
+			name:   "codex with session_id",
+			cli:    "codex",
+			output: `{"type":"session_start","session_id":"abc-123-def"}`,
+			want:   "abc-123-def",
+		},
+		{
+			name:   "codex with thread_id",
+			cli:    "codex",
+			output: `{"type":"event","thread_id":"xyz-456"}`,
+			want:   "xyz-456",
+		},
+		{
+			name:   "claude with session_id",
+			cli:    "claude",
+			output: `{"type":"system","session_id":"claude-session-789"}`,
+			want:   "claude-session-789",
+		},
+		{
+			name:   "gemini with session_id",
+			cli:    "gemini",
+			output: `{"session_id":"gemini-sess-001"}`,
+			want:   "gemini-sess-001",
+		},
+		{
+			name:   "empty output",
+			cli:    "codex",
+			output: "",
+			want:   "",
+		},
+		{
+			name:   "no session in output",
+			cli:    "codex",
+			output: `{"type":"message","content":"hello"}`,
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mcpExtractNativeThreadID(tt.cli, tt.output)
+			if got != tt.want {
+				t.Errorf("mcpExtractNativeThreadID(%s) = %q, want %q", tt.cli, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMcpBuildResumeArgsNoThreadID(t *testing.T) {
+	// Test fallback behavior when no thread ID is available
+	tests := []struct {
+		cli          string
+		wantContains string
+	}{
+		{"codex", "--last"},      // Codex uses --last flag
+		{"claude", "--continue"}, // Claude uses --continue flag
+		{"gemini", "--resume"},   // Gemini uses --resume without value for latest
+	}
+
+	for _, tt := range tests {
+		args := mcpBuildResumeArgs(tt.cli, "", "prompt", MCPSessionConfig{})
+		argsStr := strings.Join(args, " ")
+		if !strings.Contains(argsStr, tt.wantContains) {
+			t.Errorf("mcpBuildResumeArgs(%s, empty): expected %q, got %v", tt.cli, tt.wantContains, args)
+		}
+	}
+}

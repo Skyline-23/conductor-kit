@@ -1031,12 +1031,14 @@ func mcpBuildResumeArgs(cli, nativeThreadID, prompt string, config MCPSessionCon
 		return args
 
 	case "gemini":
-		// Gemini: gemini --resume <session-id> <prompt>
+		// Gemini: supports --resume with session UUID or index
+		// See: https://geminicli.com/docs/cli/session-management/
 		args := []string{"--output-format", "stream-json"}
 		if nativeThreadID != "" {
 			args = append(args, "--resume", nativeThreadID)
 		} else {
-			args = append(args, "--resume", "latest")
+			// Fall back to latest session if no ID available
+			args = append(args, "--resume")
 		}
 		if config.Yolo {
 			args = append(args, "--yolo")
