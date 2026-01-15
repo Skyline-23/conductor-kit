@@ -1,224 +1,141 @@
 # conductor-kit
 
-A global skills pack and lightweight Go helper for **Codex CLI** and **Claude Code**, with optional **OpenCode** command/skill install.
-It enforces a consistent orchestration loop (search -> plan -> execute -> verify -> cleanup) and supports CLI MCP bridges for delegation.
+A global skills pack for **Codex CLI**, **Claude Code**, and **Gemini CLI** with a unified MCP server for cross-CLI orchestration.
 
 **Language**: English | [한국어](README.ko.md)
 
-## Quick start (Homebrew)
+## What is this?
+
+conductor-kit helps you:
+- Use a consistent orchestration workflow (search → plan → execute → verify)
+- Delegate tasks between different AI CLIs (Codex, Claude, Gemini)
+- Load specialized skills and commands into your preferred CLI
+
+## Quick Start
+
+### Install (macOS)
 ```bash
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
-
-# Run install (auto-detects Homebrew Caskroom, prompts for CLI selection)
 conductor install
 ```
 
-## Manual install
+### Install (Manual)
 ```bash
 git clone https://github.com/Skyline-23/conductor-kit ~/.conductor-kit
 cd ~/.conductor-kit
-
 go build -o ~/.local/bin/conductor ./cmd/conductor
-conductor install --mode link --repo ~/.conductor-kit
+conductor install
 ```
 
-Interactive install (prompts for CLI selection):
+### Verify Installation
 ```bash
-conductor install --interactive --mode link --repo ~/.conductor-kit
+conductor status   # Check CLI availability and auth status
+conductor doctor   # Full diagnostics
 ```
-
-Selective install (specify CLIs):
-```bash
-conductor install --cli codex,claude --mode link --repo ~/.conductor-kit
-```
-
-Project-local install (links into .claude/.codex/.opencode):
-```bash
-conductor install --mode link --repo ~/.conductor-kit --project
-```
-
-## Requirements
-- A host CLI: Codex CLI, Claude Code, or OpenCode (commands/skills load inside these hosts).
-- For delegation, install at least one agent CLI on PATH: `codex`, `claude`, or `gemini` (match your config roles).
-- Go 1.24+ (only if building from source).
-- Homebrew cask install is macOS-only (Linux users should use manual install).
-- MCP registration: `conductor install` auto-registers Codex + Claude + OpenCode (gemini-cli + claude-cli + codex-cli bundles).
-
-## What you get
-- **Skill**: `conductor` (`skills/conductor/SKILL.md`)
-- **Commands**: `conductor-plan`, `conductor-search`, `conductor-implement`, `conductor-release`, `conductor-ultrawork`
-- **Go helper**: `conductor` binary for install + MCP bridge servers
-- **CLI MCP bridges**: gemini/claude/codex CLI wrappers
-- **Config**: `~/.conductor-kit/conductor.json` (role -> CLI/model mapping)
 
 ## Usage
-### 1) Use the skill
-Trigger by saying: `conductor`, `ultrawork` / `ulw`, or “orchestration”.
 
-### 2) Use commands
-Claude Code (slash commands):
-- `/conductor-plan`
-- `/conductor-search`
-- `/conductor-implement`
-- `/conductor-release`
-- `/conductor-ultrawork`
+### 1. Use the Skill
+In Claude Code or Codex CLI, trigger by saying:
+- `conductor` or `ultrawork` or `ulw`
 
-Codex CLI (custom prompts):
-- `/prompts:conductor-plan`
-- `/prompts:conductor-search`
-- `/prompts:conductor-implement`
-- `/prompts:conductor-release`
-- `/prompts:conductor-ultrawork`
-Prompts are installed in `~/.codex/prompts` (or `$CODEX_HOME/prompts`).
+### 2. Use Slash Commands
+| Claude Code | Codex CLI |
+|-------------|-----------|
+| `/conductor-plan` | `/prompts:conductor-plan` |
+| `/conductor-search` | `/prompts:conductor-search` |
+| `/conductor-implement` | `/prompts:conductor-implement` |
+| `/conductor-release` | `/prompts:conductor-release` |
+| `/conductor-ultrawork` | `/prompts:conductor-ultrawork` |
 
-OpenCode (slash commands):
-- `/conductor-plan`
-- `/conductor-search`
-- `/conductor-implement`
-- `/conductor-release`
-- `/conductor-ultrawork`
-Commands are installed in `~/.config/opencode/command` (or `./.opencode/command`).
-Skills are installed in `~/.config/opencode/skill` (or `./.opencode/skill`).
+### 3. Use MCP Tools (Cross-CLI Delegation)
 
-### 3) CLI MCP bridges
-Codex CLI:
-```bash
-codex mcp add gemini-cli -- conductor mcp-gemini
-codex mcp add claude-cli -- conductor mcp-claude
-codex mcp add codex-cli -- conductor mcp-codex
-```
+Register the unified MCP server:
 
-Claude Code (`~/.claude/.mcp.json`):
+**Claude Code** (`~/.claude/mcp.json`):
 ```json
 {
   "mcpServers": {
-    "gemini-cli": {
+    "conductor": {
       "command": "conductor",
-      "args": ["mcp-gemini"]
-    },
-    "claude-cli": {
-      "command": "conductor",
-      "args": ["mcp-claude"]
-    },
-    "codex-cli": {
-      "command": "conductor",
-      "args": ["mcp-codex"]
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-Then use tools:
-- `gemini.prompt` with `{ "prompt": "<task>", "model": "gemini-2.5-flash" }`
-- `gemini.batch` with `{ "prompt": "<task>", "models": "gemini-2.5-flash,gemini-2.5-pro" }`
-- `gemini.auth_status`
-- `claude.prompt` with `{ "prompt": "<task>", "model": "claude-3-5-sonnet" }`
-- `claude.batch` with `{ "prompt": "<task>", "models": "claude-3-5-sonnet,claude-3-5-haiku" }`
-- `claude.auth_status`
-- `codex.prompt` with `{ "prompt": "<task>", "model": "gpt-5.2-codex" }`
-- `codex.batch` with `{ "prompt": "<task>", "models": "gpt-5.2-codex,gpt-4.1" }`
-- `codex.auth_status`
+**Codex CLI**:
+```bash
+codex mcp add conductor -- conductor mcp
+```
 
-Note: Gemini MCP uses the Gemini CLI login (no gcloud ADC).
-Note: Claude MCP uses the Claude CLI login (permission-mode defaults to dontAsk).
-Note: Codex MCP uses the Codex CLI login (codex exec --json).
-Note: CLI bridges are MCP-only; CLI subcommands cover install/config/diagnostics.
+Available MCP tools:
+| Tool | Description |
+|------|-------------|
+| `codex` | Run Codex CLI session |
+| `codex-reply` | Continue Codex session |
+| `claude` | Run Claude Code session |
+| `claude-reply` | Continue Claude session |
+| `gemini` | Run Gemini CLI session |
+| `gemini-reply` | Continue Gemini session |
+| `conductor` | Role-based routing (uses config) |
+| `conductor-reply` | Continue conductor session |
+| `status` | Check CLI availability and auth |
 
-## Model setup (roles)
-`~/.conductor-kit/conductor.json` controls role -> CLI/model routing (installed from `config/conductor.json`).
-The repo file is the default template; `conductor install` links/copies it into `~/.conductor-kit/`.
-If `model` is empty, no model flag is passed and the CLI default is used.
+Example usage in your prompt:
+```
+Use the gemini tool to search the codebase for authentication logic
+```
 
-Key fields:
-- `defaults.timeout_ms` / `defaults.idle_timeout_ms` / `defaults.max_parallel` / `defaults.retry` / `defaults.retry_backoff_ms`: runtime defaults (`timeout_ms=0` disables hard timeout; `idle_timeout_ms` is inactivity cutoff)
-- `defaults.log_prompt`: store prompt text in run history (default: false)
-- `roles.<name>.cli`: executable to run (must be on PATH)
-- `roles.<name>.args`: argv template; include `{prompt}` where the prompt should go (optional for codex/claude/gemini)
-- `roles.<name>.model_flag`: model flag (optional for codex/claude/gemini)
-- `roles.<name>.model`: default model string (optional)
-- `roles.<name>.models`: fan-out list for batch usage (string or `{ "name": "...", "reasoning_effort": "..." }`)
-- `roles.<name>.reasoning_flag` / `reasoning_key` / `reasoning`: optional reasoning config (codex supports `-c model_reasoning_effort`)
-- `roles.<name>.env` / `roles.<name>.cwd`: env/cwd overrides
-- `conductor status` prefers active CLI auth probes (e.g. `auth status`/`whoami`/`status`), falling back to local storage checks if unsupported (codex: `~/.codex/auth.json`; gemini: `~/.gemini/oauth_creds.json` or keychain; claude: keychain `Claude Code-credentials`)
-- `roles.<name>.timeout_ms` / `roles.<name>.idle_timeout_ms` / `roles.<name>.max_parallel` / `roles.<name>.retry` / `roles.<name>.retry_backoff_ms`: role overrides
+## Configuration
 
-Defaults (if omitted):
-- `codex`: args `["exec","{prompt}"]`, model flag `-m`, reasoning flag `-c model_reasoning_effort`
-- `claude`: args `["-p","{prompt}"]`, model flag `--model`
-- `gemini`: args `["{prompt}"]`, model flag `--model`
+Config file: `~/.conductor-kit/conductor.json`
 
-Template defaults (CLI-native model names):
-- `oracle`: codex `gpt-5.2-codex` + `reasoning: "medium"`
-- `librarian`: gemini `gemini-3-flash-preview`
-- `explore`: gemini `gemini-3-flash-preview`
-- `frontend-ui-ux-engineer`: gemini `gemini-3-pro-preview`
-- `document-writer`: gemini `gemini-3-flash-preview`
-- `multimodal-looker`: gemini `gemini-3-flash-preview`
-
-Minimal example:
+### Role-based Routing
 ```json
 {
   "roles": {
-    "oracle": {
-      "cli": "codex"
-    }
+    "oracle": { "cli": "codex", "model": "o3" },
+    "librarian": { "cli": "gemini", "model": "gemini-2.5-flash" },
+    "frontend": { "cli": "claude", "model": "sonnet" }
   }
 }
 ```
 
-Overrides:
-- Use `CONDUCTOR_CONFIG=/path/to/conductor.json` to point to a custom config
-Tip: customize `~/.conductor-kit/conductor.json` directly; re-run `conductor install` only if you want to reset to defaults.
-Schema: `config/conductor.schema.json` (optional for tooling).
-
-## Setup helpers
-- `conductor settings` (TUI wizard; use `--no-tui` for plain prompts)
-- `conductor settings --list-models --cli codex` (show available models)
-- `conductor settings --role <role> --cli <cli> --model <model> --reasoning <effort>`
-- `conductor status` (check CLI availability and readiness)
-- `conductor uninstall` (removes installed skills/commands/config from home, including OpenCode)
-
-## Project-local overrides
-- Place a local config at `./.conductor-kit/conductor.json` to override the global config.
-- Use `conductor install --project` to link skills/commands into `./.claude`, prompts into `./.codex`, and OpenCode assets into `./.opencode`.
-
-## Diagnostics
-- `conductor config-validate` (validates `~/.conductor-kit/conductor.json`)
-- `conductor doctor` (checks config + CLI availability + model name sanity)
-
-## Uninstall (Homebrew)
+### Setup Wizard
 ```bash
+conductor settings              # Interactive TUI wizard
+conductor settings --list-models --cli codex  # List available models
+```
+
+## Requirements
+
+- **Host CLI**: At least one of Codex CLI, Claude Code, or Gemini CLI
+- **Go 1.24+**: Only if building from source
+- **macOS**: For Homebrew cask install (Linux: use manual install)
+
+## Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `conductor install` | Install skills/commands to CLIs |
+| `conductor uninstall` | Remove installed files |
+| `conductor status` | Check CLI auth and availability |
+| `conductor doctor` | Full diagnostics |
+| `conductor settings` | Configure roles and models |
+| `conductor mcp` | Start unified MCP server |
+
+## Uninstall
+
+```bash
+# Homebrew
 brew uninstall --cask conductor-kit
-```
-This runs `conductor uninstall --force` via a cask uninstall hook to clean user-level installs.
 
-## Observability
-- `conductor status` (CLI auth and availability)
-- CLI MCP bridges return raw CLI output (`gemini.prompt`, `claude.prompt`, `codex.prompt`)
-
-## Optional MCP bundles
-```bash
-# Claude Code (.claude/.mcp.json)
-conductor mcp-bundle --host claude --bundle gemini-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
-conductor mcp-bundle --host claude --bundle claude-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
-conductor mcp-bundle --host claude --bundle codex-cli --repo /path/to/conductor-kit --out .claude/.mcp.json
-
-# Codex CLI (prints codex mcp add commands)
-conductor mcp-bundle --host codex --bundle gemini-cli --repo /path/to/conductor-kit
-conductor mcp-bundle --host codex --bundle claude-cli --repo /path/to/conductor-kit
-conductor mcp-bundle --host codex --bundle codex-cli --repo /path/to/conductor-kit
-```
-Bundle config lives at `~/.conductor-kit/mcp-bundles.json` (installed by `conductor install`).
-
-## Repo layout
-```
-conductor-kit/
-  cmd/conductor/         # Go helper CLI
-  commands/              # Codex + Claude commands
-  config/                # default role/model config
-  skills/conductor/      # main skill
+# Manual
+conductor uninstall
 ```
 
 ## License
+
 MIT
