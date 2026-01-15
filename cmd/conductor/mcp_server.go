@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -424,13 +425,40 @@ func mcpCheckClaudeAuth() (bool, string) {
 	if !isCommandAvailable("claude") {
 		return false, "not installed"
 	}
-	// Claude CLI doesn't have a direct auth status command
-	// Use 'claude --version' as a basic availability check
-	output, err := mcpRunQuickCommand("claude", []string{"--version"})
-	if err != nil {
-		return false, "error checking version"
+
+	// Get version first
+	version := ""
+	if out, err := mcpRunQuickCommand("claude", []string{"--version"}); err == nil {
+		version = strings.TrimSpace(out)
 	}
-	return true, strings.TrimSpace(output)
+
+	// Check authentication methods:
+	// 1. ANTHROPIC_API_KEY environment variable
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		return true, fmt.Sprintf("version %s, auth: ANTHROPIC_API_KEY", version)
+	}
+
+	// 2. Check for Claude CLI session data (~/.claude/)
+	homeDir, _ := os.UserHomeDir()
+	claudeDir := filepath.Join(homeDir, ".claude")
+	if pathExists(claudeDir) {
+		// Check for session indicators (statsig = logged in user)
+		statsigDir := filepath.Join(claudeDir, "statsig")
+		if pathExists(statsigDir) {
+			return true, fmt.Sprintf("version %s, auth: OAuth session", version)
+		}
+		// Check for settings.json (indicates CLI has been configured)
+		settingsFile := filepath.Join(claudeDir, "settings.json")
+		if pathExists(settingsFile) {
+			return true, fmt.Sprintf("version %s, auth: configured", version)
+		}
+	}
+
+	// No authentication found
+	if version != "" {
+		return false, fmt.Sprintf("version %s, not authenticated (run 'claude' to login)", version)
+	}
+	return false, "not authenticated"
 }
 
 // mcpCheckGeminiAuth checks Gemini CLI authentication status
@@ -438,13 +466,58 @@ func mcpCheckGeminiAuth() (bool, string) {
 	if !isCommandAvailable("gemini") {
 		return false, "not installed"
 	}
-	// Gemini CLI uses OAuth or API key auth
-	// Use 'gemini -v' as a basic availability check
-	output, err := mcpRunQuickCommand("gemini", []string{"-v"})
-	if err != nil {
-		return false, "error checking version"
+
+	// Get version first
+	version := ""
+	if out, err := mcpRunQuickCommand("gemini", []string{"-v"}); err == nil {
+		version = strings.TrimSpace(out)
 	}
-	return true, strings.TrimSpace(output)
+
+	// Check authentication methods in order of priority:
+	// 1. GEMINI_API_KEY environment variable
+	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
+		return true, fmt.Sprintf("version %s, auth: GEMINI_API_KEY", version)
+	}
+
+	// 2. GOOGLE_API_KEY environment variable (Vertex AI)
+	if apiKey := os.Getenv("GOOGLE_API_KEY"); apiKey != "" {
+		return true, fmt.Sprintf("version %s, auth: GOOGLE_API_KEY (Vertex AI)", version)
+	}
+
+	// 3. Check for cached OAuth credentials (~/.gemini/)
+	homeDir, _ := os.UserHomeDir()
+	geminiDir := filepath.Join(homeDir, ".gemini")
+	if pathExists(geminiDir) {
+		// Check for .env file with credentials
+		envFile := filepath.Join(geminiDir, ".env")
+		if pathExists(envFile) {
+			return true, fmt.Sprintf("version %s, auth: ~/.gemini/.env", version)
+		}
+		// Check for cached OAuth tokens (credentials directory or files)
+		credFiles := []string{"credentials", "oauth_credentials.json", "oauth_creds.json", "auth.json"}
+		for _, f := range credFiles {
+			if pathExists(filepath.Join(geminiDir, f)) {
+				return true, fmt.Sprintf("version %s, auth: OAuth cached", version)
+			}
+		}
+	}
+
+	// 4. Check for Google Cloud ADC (gcloud auth application-default)
+	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+		return true, fmt.Sprintf("version %s, auth: GOOGLE_APPLICATION_CREDENTIALS", version)
+	}
+
+	// 5. Check default ADC path
+	adcPath := filepath.Join(homeDir, ".config", "gcloud", "application_default_credentials.json")
+	if pathExists(adcPath) {
+		return true, fmt.Sprintf("version %s, auth: gcloud ADC", version)
+	}
+
+	// No authentication found
+	if version != "" {
+		return false, fmt.Sprintf("version %s, not authenticated (set GEMINI_API_KEY or run 'gemini' to login)", version)
+	}
+	return false, "not authenticated"
 }
 
 // mcpGetStatus returns CLI availability and session status
