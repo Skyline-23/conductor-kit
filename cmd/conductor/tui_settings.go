@@ -305,7 +305,12 @@ func (m settingsModel) getOptions() []tuiOption {
 		sort.Strings(roles)
 		options := make([]tuiOption, 0, len(roles)+2)
 		for _, name := range roles {
-			options = append(options, tuiOption{Label: name, Value: name})
+			roleCfg := m.cfg.Roles[name]
+			label := name
+			if roleCfg.Description != "" {
+				label = fmt.Sprintf("%-12s %s", name, lipgloss.NewStyle().Foreground(grayColor).Render(roleCfg.Description))
+			}
+			options = append(options, tuiOption{Label: label, Value: name})
 		}
 		options = append(options, tuiOption{Label: "+ New role", Value: tuiNewRole})
 		if len(roles) > 0 {

@@ -10,18 +10,18 @@ Roles are defined in `conductor.json`. Route tasks to the appropriate role based
 
 | Role | Use For | Strengths |
 |------|---------|-----------|
-| `oracle` | Deep analysis, architecture, security, algorithms | Extended thinking, trade-off analysis |
-| `librarian` | Doc lookup, API reference, best practices research | Fast retrieval, broad knowledge |
-| `explore` | Codebase navigation, file discovery, pattern finding | Quick scanning, parallel search |
-| `frontend-ui-ux-engineer` | UI/UX review, component design, accessibility | Visual reasoning, design patterns |
-| `document-writer` | README, docs, comments, changelogs | Clear writing, formatting |
-| `multimodal-looker` | Screenshot analysis, image review, visual debugging | Image understanding |
+| `sage` | Deep analysis, architecture, security, algorithms | Extended thinking, trade-off analysis |
+| `scout` | Web search, API reference, best practices research | Fast retrieval, broad knowledge |
+| `pathfinder` | Codebase navigation, file discovery, pattern finding | Quick scanning, parallel search |
+| `pixel` | UI/UX review, component design, accessibility | Visual reasoning, design patterns |
+| `author` | README, docs, comments, changelogs | Clear writing, formatting |
+| `vision` | Screenshot analysis, image review, visual debugging | Image understanding |
 
 **Note:** The `cli` and `model` for each role are configured in `conductor.json`, not hardcoded here.
 
-## Task → Role Mapping
+## Task -> Role Mapping
 
-### Use `oracle` when:
+### Use `sage` when:
 - Architecture decisions with trade-offs
 - Root cause analysis for complex bugs
 - Security vulnerability assessment
@@ -30,31 +30,31 @@ Roles are defined in `conductor.json`. Route tasks to the appropriate role based
 - Migration planning with risk assessment
 - Any task requiring step-by-step reasoning
 
-### Use `librarian` when:
+### Use `scout` when:
 - Looking up framework/library docs
 - Finding best practices or patterns
 - Researching external dependencies
 - Checking API specifications
 
-### Use `explore` when:
+### Use `pathfinder` when:
 - Initial codebase discovery
 - Finding relevant files for a task
 - Understanding project structure
 - Locating similar implementations
 
-### Use `frontend-ui-ux-engineer` when:
+### Use `pixel` when:
 - Reviewing UI component design
 - Accessibility audit
 - Layout/styling decisions
 - Component architecture
 
-### Use `document-writer` when:
+### Use `author` when:
 - Writing/updating documentation
 - Generating changelogs
 - Creating code comments
 - README improvements
 
-### Use `multimodal-looker` when:
+### Use `vision` when:
 - Analyzing screenshots or mockups
 - Visual regression review
 - Image-based debugging
@@ -64,13 +64,13 @@ Roles are defined in `conductor.json`. Route tasks to the appropriate role based
 
 For complex tasks, combine roles in sequence:
 
-1. **Discovery phase**: `explore` → find relevant files
-2. **Analysis phase**: `oracle` → deep reasoning on findings
-3. **Review phase**: `librarian` → verify against docs/best practices
+1. **Discovery phase**: `pathfinder` -> find relevant files
+2. **Analysis phase**: `sage` -> deep reasoning on findings
+3. **Review phase**: `scout` -> verify against docs/best practices
 
 Example (security audit):
 ```
-explore → find auth-related files
-oracle → analyze vulnerabilities + propose fixes
-librarian → verify against OWASP guidelines
+pathfinder -> find auth-related files
+sage -> analyze vulnerabilities + propose fixes
+scout -> verify against OWASP guidelines
 ```

@@ -108,7 +108,7 @@ When `args` and `model_flag` are omitted, these defaults are used:
 ```json
 {
   "roles": {
-    "oracle": {
+    "sage": {
       "cli": "codex"
     }
   }
@@ -127,30 +127,36 @@ When `args` and `model_flag` are omitted, these defaults are used:
     "log_prompt": false
   },
   "roles": {
-    "oracle": {
+    "sage": {
       "cli": "codex",
       "model": "gpt-5.2-codex",
-      "reasoning": "medium"
+      "reasoning": "medium",
+      "description": "Deep reasoning for complex problems"
     },
-    "librarian": {
+    "scout": {
       "cli": "gemini",
-      "model": "gemini-3-flash"
+      "model": "gemini-3-flash",
+      "description": "Web search and research"
     },
-    "explore": {
+    "pathfinder": {
       "cli": "gemini",
-      "model": "gemini-3-flash"
+      "model": "gemini-3-flash",
+      "description": "Codebase exploration and navigation"
     },
-    "frontend-ui-ux-engineer": {
+    "pixel": {
       "cli": "gemini",
-      "model": "gemini-3-pro"
+      "model": "gemini-3-pro",
+      "description": "Web UI/UX design and frontend"
     },
-    "document-writer": {
+    "author": {
       "cli": "gemini",
-      "model": "gemini-3-flash"
+      "model": "gemini-3-flash",
+      "description": "Documentation and technical writing"
     },
-    "multimodal-looker": {
+    "vision": {
       "cli": "gemini",
-      "model": "gemini-3-flash"
+      "model": "gemini-3-flash",
+      "description": "Image and screenshot analysis"
     }
   }
 }
@@ -161,7 +167,7 @@ When `args` and `model_flag` are omitted, these defaults are used:
 ```json
 {
   "roles": {
-    "oracle": {
+    "sage": {
       "cli": "codex",
       "models": [
         { "name": "gpt-5.2-codex", "reasoning_effort": "high" },

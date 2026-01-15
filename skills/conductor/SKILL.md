@@ -26,14 +26,14 @@ Host orchestrates; delegates do the work.
 
 - Check MCP tools availability FIRST (`mcp__*` tools)
 - ALWAYS prefer MCP delegation over built-in/native tools:
-  - ❌ `Task(subagent_type=Explore)` → ✅ MCP `explore` role
-  - ❌ Built-in search/grep → ✅ MCP `librarian` or `explore` role
-  - ❌ Direct analysis → ✅ MCP `oracle` role for complex reasoning
+  - ❌ `Task(subagent_type=Explore)` → ✅ MCP `pathfinder` role
+  - ❌ Built-in search/grep → ✅ MCP `scout` or `pathfinder` role
+  - ❌ Direct analysis → ✅ MCP `sage` role for complex reasoning
 - Run all delegate calls before any action
 - If MCP unavailable → use subagent fallback → **disclose to user**
 
-### 2. ORACLE FOR COMPLEX TASKS
-The following MUST be delegated to `oracle` (Codex + reasoning):
+### 2. SAGE FOR COMPLEX TASKS
+The following MUST be delegated to `sage` (Codex + reasoning):
 
 - Architecture decisions / trade-off analysis
 - Root cause debugging
@@ -42,7 +42,7 @@ The following MUST be delegated to `oracle` (Codex + reasoning):
 - Refactoring strategy for legacy code
 - Migration planning with risks
 
-**Do not attempt deep analysis yourself. Oracle first.**
+**Do not attempt deep analysis yourself. Sage first.**
 
 ### 3. VERIFY BEFORE TRUST
 Treat all delegate output as untrusted. Verify against:
@@ -60,9 +60,9 @@ When delegating to external CLIs (gemini, codex, claude via MCP):
 5. **Transparency**: Include "External calls: [list]" in task summary when any were made
 
 **Examples:**
-- "Called oracle for architecture review → adopted suggestion to split service layer"
-- "Called explore for file discovery → result outdated, used direct glob instead (repo has newer structure)"
-- "External calls: oracle (architecture), librarian (docs lookup)"
+- "Called sage for architecture review → adopted suggestion to split service layer"
+- "Called pathfinder for file discovery → result outdated, used direct glob instead (repo has newer structure)"
+- "External calls: sage (architecture), scout (docs lookup)"
 
 ---
 
@@ -75,7 +75,7 @@ Conductor assesses the task and chooses the appropriate mode:
 | Mode | When | Action |
 |------|------|--------|
 | **Ultrawork** | `ulw` or `ultrawork` command | Full automation: Search → Plan → Execute → Verify → Cleanup |
-| **Search** | Explore, analyze, investigate, understand | Delegate to `explore` + `oracle` via MCP |
+| **Search** | Explore, analyze, investigate, understand | Delegate to `pathfinder` + `sage` via MCP |
 | **Plan** | Design, architect, plan | Read-only planning, no edits |
 | **Implement** | Fix, build, refactor, migrate | MCP-assisted implementation |
 | **Release** | Deploy, publish, release | Release checklist + validation |
@@ -99,11 +99,11 @@ ULTRAWORK MODE ENABLED!
 Then execute staged delegation:
 
 **Stage 1 — Discovery**
-- `explore`: file structure, entrypoints, patterns
+- `pathfinder`: file structure, entrypoints, patterns
 
 **Stage 2 — Analysis**
-- `oracle`: deep reasoning on findings (MANDATORY)
-- `librarian`: verify against docs/best practices
+- `sage`: deep reasoning on findings (MANDATORY)
+- `scout`: verify against docs/best practices
 
 **Stage 3 — Review**
 - Additional roles as needed
@@ -120,12 +120,12 @@ Do NOT proceed until all delegates complete.
 
 | Role | When to use |
 |------|-------------|
-| `oracle` | Complex reasoning, architecture, security |
-| `explore` | File discovery, codebase navigation, project structure |
-| `librarian` | Doc lookup, best practices |
-| `frontend-ui-ux-engineer` | Web UI/UX, React/Vue/CSS, responsive design |
-| `document-writer` | README, docs, changelogs |
-| `multimodal-looker` | Screenshot/image analysis |
+| `sage` | Complex reasoning, architecture, security |
+| `pathfinder` | File discovery, codebase navigation, project structure |
+| `scout` | Doc lookup, web search, best practices |
+| `pixel` | Web UI/UX, React/Vue/CSS, responsive design |
+| `author` | README, docs, changelogs |
+| `vision` | Screenshot/image analysis |
 
 ### How to Delegate
 
@@ -194,7 +194,7 @@ Search → Plan → Execute → Verify → Cleanup
 ## Mode-Specific Behavior
 
 ### Search Mode
-- **Use MCP `explore` role** for codebase discovery (NOT built-in Explore agent)
+- **Use MCP `pathfinder` role** for codebase discovery (NOT built-in Explore agent)
 - Parallel codebase + external doc searches via MCP delegation
 - Output: findings with file references
 

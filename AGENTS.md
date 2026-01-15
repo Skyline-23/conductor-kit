@@ -28,7 +28,7 @@ Build a global skills pack for Codex CLI and Claude Code, inspired by oh-my-open
 - `commands/` contains mode-switch commands (plan/search/implement/release/ultrawork).
 - `cmd/conductor` provides install/uninstall, settings/login helpers, diagnostics, and CLI MCP bridge servers.
 - Release uses Homebrew cask (with uninstall hook) instead of formula.
-- `config/conductor.json` defines role -> CLI/model mapping with CLI-native defaults (no provider prefix) and oracle reasoning.
+- `config/conductor.json` defines role -> CLI/model mapping with CLI-native defaults (no provider prefix) and sage reasoning.
 
 ## Work Plan
 1) Provide optional MCP bundle templates and host-specific setup helpers.

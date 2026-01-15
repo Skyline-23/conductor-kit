@@ -96,10 +96,10 @@ gemini 도구를 사용해서 인증 로직을 코드베이스에서 검색해�
 ```json
 {
   "roles": {
-    "oracle": { "cli": "codex", "model": "gpt-5.2-codex", "reasoning": "medium" },
-    "librarian": { "cli": "gemini", "model": "gemini-3-flash" },
-    "explore": { "cli": "gemini", "model": "gemini-3-flash" },
-    "frontend-ui-ux-engineer": { "cli": "gemini", "model": "gemini-3-pro" }
+    "sage": { "cli": "codex", "model": "gpt-5.2-codex", "reasoning": "medium", "description": "Deep reasoning for complex problems" },
+    "scout": { "cli": "gemini", "model": "gemini-3-flash", "description": "Web search and research" },
+    "pathfinder": { "cli": "gemini", "model": "gemini-3-flash", "description": "Codebase exploration and navigation" },
+    "pixel": { "cli": "gemini", "model": "gemini-3-pro", "description": "Web UI/UX design and frontend" }
   }
 }
 ```

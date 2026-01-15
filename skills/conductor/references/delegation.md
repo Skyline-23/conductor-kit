@@ -73,8 +73,8 @@ context_reduction: 50% on timeout
 
 | Delegate Type | Execution |
 |---------------|-----------|
-| Read-only (explore, librarian) | Parallel OK |
-| Analysis (oracle) | Parallel OK |
+| Read-only (pathfinder, scout) | Parallel OK |
+| Analysis (sage) | Parallel OK |
 | Write-capable (patch output) | Sequential only |
 
 ### Write-capable Rules
@@ -87,8 +87,8 @@ context_reduction: 50% on timeout
 
 ### Standard Task
 ```
-1. explore → find relevant files
-2. [parallel] librarian + oracle → analyze
+1. pathfinder → find relevant files
+2. [parallel] scout + sage → analyze
 3. synthesize findings
 4. execute changes
 5. verify
@@ -97,11 +97,11 @@ context_reduction: 50% on timeout
 ### Ultrawork Mode (staged)
 ```
 Stage 1 (Discovery):
-  - explore: file structure + entrypoints
+  - pathfinder: file structure + entrypoints
 
 Stage 2 (Analysis):
-  - oracle: deep reasoning (mandatory for complex tasks)
-  - librarian: doc/pattern verification
+  - sage: deep reasoning (mandatory for complex tasks)
+  - scout: doc/pattern verification
 
 Stage 3 (Review):
   - additional roles as configured

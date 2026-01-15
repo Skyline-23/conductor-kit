@@ -23,7 +23,7 @@ high|medium|low
 
 ## Analysis Response
 
-For `oracle` and analytical tasks:
+For `sage` and analytical tasks:
 
 ```
 ## Summary
@@ -60,7 +60,7 @@ step-by-step reasoning for the recommendation
 
 ## Search Response
 
-For `explore` and `librarian` tasks:
+For `pathfinder` and `scout` tasks:
 
 ```
 ## Summary

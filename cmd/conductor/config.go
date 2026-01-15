@@ -53,6 +53,7 @@ type RoleConfig struct {
 	ReasoningFlag  string            `json:"reasoning_flag"`
 	ReasoningKey   string            `json:"reasoning_key"`
 	Reasoning      string            `json:"reasoning"`
+	Description    string            `json:"description"`
 	ReadyCmd       string            `json:"ready_cmd"`
 	ReadyArgs      []string          `json:"ready_args"`
 	ReadyTimeoutMs int               `json:"ready_timeout_ms"`
