@@ -51,7 +51,7 @@ func ensureClaudeMCP(bundlesPath, claudeHome string, dryRun bool) error {
 func removeClaudeMCP(claudeHome string, dryRun bool) error {
 	if dryRun {
 		for _, name := range claudeMCPNames {
-			fmt.Printf("Remove Claude MCP -> claude mcp remove %s\n", name)
+			fmt.Printf("Remove Claude MCP -> claude mcp remove %s -s user\n", name)
 		}
 		return nil
 	}
@@ -59,11 +59,11 @@ func removeClaudeMCP(claudeHome string, dryRun bool) error {
 		return nil
 	}
 	for _, name := range claudeMCPNames {
-		cmd := exec.Command("claude", "mcp", "remove", name)
+		cmd := exec.Command("claude", "mcp", "remove", name, "-s", "user")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			fmt.Printf("Claude MCP removal failed for %s: %v\n", name, err)
+			// Ignore errors - server might not exist
 		}
 	}
 	return nil

@@ -40,16 +40,14 @@ func runUninstall(args []string) int {
 		return 1
 	}
 
-	configDest := filepath.Join(os.Getenv("HOME"), ".conductor-kit", "conductor.json")
-	bundlesDest := filepath.Join(os.Getenv("HOME"), ".conductor-kit", "mcp-bundles.json")
+	conductorKitDir := filepath.Join(os.Getenv("HOME"), ".conductor-kit")
 
 	if *project {
 		cwd, _ := os.Getwd()
 		*codexHome = filepath.Join(cwd, ".codex")
 		*claudeHome = filepath.Join(cwd, ".claude")
 		*opencodeHome = filepath.Join(cwd, ".opencode")
-		configDest = filepath.Join(cwd, ".conductor-kit", "conductor.json")
-		bundlesDest = filepath.Join(cwd, ".conductor-kit", "mcp-bundles.json")
+		conductorKitDir = filepath.Join(cwd, ".conductor-kit")
 	}
 
 	removeCommands := *commandsOnly || !*skillsOnly
@@ -86,12 +84,7 @@ func runUninstall(args []string) int {
 	}
 
 	if !*noConfig {
-		removePath(configDest, *dryRun)
-		removePath(bundlesDest, *dryRun)
-		removeIfEmpty(filepath.Dir(configDest), *dryRun)
-	}
-
-	if !*noConfig {
+		// Remove MCP configurations from each CLI
 		projectRoot := ""
 		if *project {
 			cwd, _ := os.Getwd()
@@ -110,6 +103,9 @@ func runUninstall(args []string) int {
 			fmt.Printf("Codex MCP removal failed: %v\n", err)
 			return 1
 		}
+
+		// Remove entire ~/.conductor-kit directory (includes config, bundles, etc.)
+		removePath(conductorKitDir, *dryRun)
 	}
 
 	fmt.Println("Done.")

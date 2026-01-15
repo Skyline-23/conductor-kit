@@ -37,6 +37,25 @@ func runSettings(args []string) int {
 		return 1
 	}
 
+	if *list && *listModels {
+		fmt.Println("Choose either --list or --list-models.")
+		return 1
+	}
+
+	// Handle --list-models --cli <cli> without loading config
+	if *listModels && *cli != "" {
+		models, source := listModelsForCLI(*cli, true)
+		if len(models) == 0 {
+			fmt.Printf("No models found for %s.\n", *cli)
+			return 1
+		}
+		fmt.Printf("Models for %s (%s):\n", *cli, source)
+		for _, item := range models {
+			fmt.Println("-", item)
+		}
+		return 0
+	}
+
 	path := resolveConfigPath(*configPath)
 	cfg, err := loadConfig(path)
 	if err != nil {
@@ -44,15 +63,10 @@ func runSettings(args []string) int {
 		return 1
 	}
 
-	interactiveRequested := *interactive || (!*list && *role == "" && *cli == "" && *model == "" && *reasoning == "" && isTerminal(os.Stdin))
-	if *list && *listModels {
-		fmt.Println("Choose either --list or --list-models.")
-		return 1
-	}
-
+	// Handle --list-models --role <role> (needs config for role lookup)
 	if *listModels {
-		targetCLI := *cli
-		if targetCLI == "" && *role != "" {
+		targetCLI := ""
+		if *role != "" {
 			if roleCfg, ok := cfg.Roles[*role]; ok {
 				targetCLI = roleCfg.CLI
 			}
@@ -72,6 +86,8 @@ func runSettings(args []string) int {
 		}
 		return 0
 	}
+
+	interactiveRequested := *interactive || (!*list && *role == "" && *cli == "" && *model == "" && *reasoning == "" && isTerminal(os.Stdin))
 
 	if *deleteRole {
 		if *role == "" {
@@ -472,12 +488,19 @@ func tuiGetCLIOptionsWithAuth() []tuiOption {
 
 func tuiSelectModel(cli, current string, allowCLI bool) (string, bool) {
 	models, source := listModelsForCLI(cli, allowCLI)
-	options := make([]tuiOption, 0, len(models)+1)
+	options := make([]tuiOption, 0, len(models)+2)
+	// Add manual entry at top for visibility
+	const gray = "\x1b[38;5;242m"
+	const cyan = "\x1b[38;5;86m"
+	const reset = "\x1b[0m"
+	options = append(options, tuiOption{
+		Label: cyan + "+ Enter model name" + reset,
+		Value: tuiManualValue,
+	})
 	for _, model := range models {
 		options = append(options, tuiOption{Label: model, Value: model})
 	}
-	options = append(options, tuiOption{Label: "Manual entry", Value: tuiManualValue})
-	title := fmt.Sprintf("Select model (%s)", source)
+	title := fmt.Sprintf("Select model %s(%s)%s", gray, source, reset)
 	return tuiSelectOptions(title, options, current)
 }
 
@@ -686,15 +709,64 @@ func promptModel(reader *bufio.Reader, cli, current string) string {
 }
 
 func listModelsForCLI(cli string, allowCLI bool) ([]string, string) {
+	// First, try to get current model from CLI's own config file
+	if currentModel := getModelFromCLIConfig(cli); currentModel != "" {
+		// Prepend current model to built-in list if not already present
+		builtIn := builtInModelList(cli)
+		if !contains(builtIn, currentModel) {
+			return append([]string{currentModel}, builtIn...), "config+" + cli
+		}
+	}
+	// Then try CLI command (usually doesn't work as CLIs don't expose model lists)
 	if allowCLI && isCommandAvailable(cli) {
 		if models := listModelsFromCLI(cli); len(models) > 0 {
 			return models, "cli"
 		}
 	}
+	// Fallback to built-in list from official docs
 	if models := builtInModelList(cli); len(models) > 0 {
-		return models, "defaults"
+		return models, "built-in"
 	}
 	return nil, "none"
+}
+
+// getModelFromCLIConfig reads the current model from each CLI's config file
+func getModelFromCLIConfig(cli string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	switch cli {
+	case "codex":
+		// ~/.codex/config.toml: model = "gpt-5.2-codex"
+		configPath := filepath.Join(home, ".codex", "config.toml")
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return ""
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "model") && strings.Contains(line, "=") {
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 {
+					model := strings.TrimSpace(parts[1])
+					model = strings.Trim(model, "\"'")
+					if model != "" {
+						return model
+					}
+				}
+			}
+		}
+	case "claude":
+		// ~/.claude/settings.json - currently doesn't store model preference
+		// Claude CLI uses --model flag or defaults
+		return ""
+	case "gemini":
+		// ~/.gemini/settings.json - currently doesn't store model preference
+		// Gemini CLI uses -m/--model flag or defaults
+		return ""
+	}
+	return ""
 }
 
 func listModelsFromCLI(cli string) []string {
@@ -736,27 +808,63 @@ func listModelsFromCLI(cli string) []string {
 	return nil
 }
 
+// builtInModelList returns known models for each CLI.
+// Source: OpenAI platform.openai.com/docs/models, Anthropic anthropic.com/pricing, Google ai.google.dev/gemini-api/docs/models
 func builtInModelList(cli string) []string {
 	switch cli {
 	case "codex":
 		return []string{
+			// Codex-optimized models
 			"gpt-5.2-codex",
+			"gpt-5.1-codex",
 			"gpt-5.1-codex-max",
 			"gpt-5.1-codex-mini",
+			// Frontier models
+			"gpt-5.2",
+			"gpt-5.1",
+			"gpt-5",
+			"gpt-5-mini",
+			"gpt-5-nano",
+			// Reasoning models
+			"o3",
+			"o4-mini",
+			"o3-mini",
+			// GPT-4 series
+			"gpt-4.1",
+			"gpt-4.1-mini",
+			"gpt-4o",
+			"gpt-4o-mini",
 		}
 	case "claude":
 		return []string{
-			"claude-3-5-sonnet-20241022",
-			"claude-3-5-haiku-20241022",
-			"claude-3-opus-20240229",
+			// Latest models (4.5)
+			"claude-opus-4-5-20250514",
+			"claude-sonnet-4-5-20250514",
+			"claude-haiku-4-5-20250514",
+			// Previous models (4.x)
+			"claude-opus-4-1-20250414",
+			"claude-sonnet-4-20250514",
+			"claude-opus-4-20250414",
+			"claude-haiku-3-20241022",
+			// Aliases (recommended for CLI)
+			"opus",
+			"sonnet",
+			"haiku",
 		}
 	case "gemini":
 		return []string{
+			// Gemini 3 series
 			"gemini-3-pro-preview",
 			"gemini-3-flash-preview",
+			"gemini-3-pro",
 			"gemini-3-flash",
+			// Gemini 2.5 series
 			"gemini-2.5-pro",
 			"gemini-2.5-flash",
+			"gemini-2.5-flash-lite",
+			// Gemini 2.0 series
+			"gemini-2.0-flash",
+			"gemini-2.0-flash-lite",
 		}
 	default:
 		return nil
