@@ -9,7 +9,6 @@ import (
 func TestLoadConfig(t *testing.T) {
 	content := `{
   "defaults": {
-    "timeout_ms": 5000,
     "idle_timeout_ms": 60000,
     "max_parallel": 2
   },
@@ -30,9 +29,6 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("loadConfig: %v", err)
 	}
 
-	if cfg.Defaults.TimeoutMs != 5000 {
-		t.Errorf("expected timeout_ms=5000, got %d", cfg.Defaults.TimeoutMs)
-	}
 	if cfg.Defaults.IdleTimeoutMs != 60000 {
 		t.Errorf("expected idle_timeout_ms=60000, got %d", cfg.Defaults.IdleTimeoutMs)
 	}
@@ -159,7 +155,6 @@ func TestNormalizeDefaults(t *testing.T) {
 			name:  "all zeros get defaults",
 			input: Defaults{},
 			expected: Defaults{
-				TimeoutMs:      0,
 				IdleTimeoutMs:  120000,
 				MaxParallel:    4,
 				Retry:          0,
@@ -169,14 +164,12 @@ func TestNormalizeDefaults(t *testing.T) {
 		{
 			name: "custom values preserved",
 			input: Defaults{
-				TimeoutMs:      10000,
 				IdleTimeoutMs:  30000,
 				MaxParallel:    8,
 				Retry:          3,
 				RetryBackoffMs: 1000,
 			},
 			expected: Defaults{
-				TimeoutMs:      10000,
 				IdleTimeoutMs:  30000,
 				MaxParallel:    8,
 				Retry:          3,

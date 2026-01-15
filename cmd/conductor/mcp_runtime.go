@@ -710,9 +710,6 @@ func buildSpecForInput(input RunInput, configPath string) (CmdSpec, error) {
 	if err != nil {
 		return CmdSpec{}, err
 	}
-	if input.TimeoutMs > 0 {
-		spec.TimeoutMs = input.TimeoutMs
-	}
 	if input.IdleTimeoutMs > 0 {
 		spec.IdleTimeoutMs = input.IdleTimeoutMs
 	}
@@ -782,9 +779,6 @@ func buildBatchSpecs(input BatchInput, configPath string) ([]specEntry, error) {
 			spec, err := buildSpecFromRole(cfg, role, taskPrompt, entry.Name, entry.ReasoningEffort, logPrompt)
 			if err != nil {
 				continue
-			}
-			if input.TimeoutMs > 0 {
-				spec.TimeoutMs = input.TimeoutMs
 			}
 			if input.IdleTimeoutMs > 0 {
 				spec.IdleTimeoutMs = input.IdleTimeoutMs

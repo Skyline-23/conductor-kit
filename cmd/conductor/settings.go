@@ -339,12 +339,7 @@ func runSettingsTUI(cfg Config, path string) int {
 			roleCfg = cfg.Roles[roleName]
 			currentStep = stepCLI
 		case stepCLI:
-			cliChoice, ok := tuiSelectOptions("Select CLI", []tuiOption{
-				{Label: "codex", Value: "codex"},
-				{Label: "claude", Value: "claude"},
-				{Label: "gemini", Value: "gemini"},
-				{Label: "Manual entry", Value: tuiManualValue},
-			}, roleCfg.CLI)
+			cliChoice, ok := tuiSelectOptions("Select CLI", tuiGetCLIOptionsWithAuth(), roleCfg.CLI)
 			if !ok {
 				currentStep = stepRole
 				continue
@@ -423,6 +418,40 @@ func tuiSelectRole(cfg Config) (string, bool) {
 	}
 	options = append(options, tuiOption{Label: "New role", Value: tuiNewRole})
 	return tuiSelectOptions("Select role", options, "")
+}
+
+// tuiGetCLIOptionsWithAuth returns CLI options with auth status indicators
+func tuiGetCLIOptionsWithAuth() []tuiOption {
+	clis := []struct {
+		name      string
+		checkAuth func() (bool, string)
+	}{
+		{"codex", mcpCheckCodexAuth},
+		{"claude", mcpCheckClaudeAuth},
+		{"gemini", mcpCheckGeminiAuth},
+	}
+
+	options := make([]tuiOption, 0, len(clis)+1)
+	for _, cli := range clis {
+		label := cli.name
+		if isCommandAvailable(cli.name) {
+			auth, status := cli.checkAuth()
+			if auth {
+				// Truncate status if too long
+				if len(status) > 40 {
+					status = status[:37] + "..."
+				}
+				label = fmt.Sprintf("%s [%s]", cli.name, status)
+			} else {
+				label = fmt.Sprintf("%s [not authenticated]", cli.name)
+			}
+		} else {
+			label = fmt.Sprintf("%s [not installed]", cli.name)
+		}
+		options = append(options, tuiOption{Label: label, Value: cli.name})
+	}
+	options = append(options, tuiOption{Label: "Manual entry", Value: tuiManualValue})
+	return options
 }
 
 func tuiSelectModel(cli, current string, allowCLI bool) (string, bool) {

@@ -11,7 +11,6 @@ func writeTempConfig(t *testing.T, approvalRequired bool) string {
 	t.Helper()
 	content := `{
   "defaults": {
-    "timeout_ms": 0,
     "idle_timeout_ms": 120000,
     "summary_only": false,
     "max_parallel": 4,
@@ -165,15 +164,12 @@ func TestRuntimeStatus(t *testing.T) {
 }
 
 func TestNormalizeDefaultsIdleTimeout(t *testing.T) {
-	defaults := normalizeDefaults(Defaults{TimeoutMs: 0, IdleTimeoutMs: 0})
-	if defaults.TimeoutMs != 0 {
-		t.Fatalf("expected timeout_ms=0, got %v", defaults.TimeoutMs)
-	}
+	defaults := normalizeDefaults(Defaults{IdleTimeoutMs: 0})
 	if defaults.IdleTimeoutMs != defaultIdleTimeoutMs {
 		t.Fatalf("expected idle_timeout_ms=%v, got %v", defaultIdleTimeoutMs, defaults.IdleTimeoutMs)
 	}
 
-	custom := normalizeDefaults(Defaults{TimeoutMs: 0, IdleTimeoutMs: 5000})
+	custom := normalizeDefaults(Defaults{IdleTimeoutMs: 5000})
 	if custom.IdleTimeoutMs != 5000 {
 		t.Fatalf("expected idle_timeout_ms=5000, got %v", custom.IdleTimeoutMs)
 	}

@@ -8,7 +8,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "timeout_ms": { "type": "integer", "minimum": 0 },
         "idle_timeout_ms": { "type": "integer", "minimum": 0 },
         "max_parallel": { "type": "integer", "minimum": 0 },
         "retry": { "type": "integer", "minimum": 0 },
@@ -61,7 +60,6 @@
             "additionalProperties": { "type": "string" }
           },
           "cwd": { "type": "string" },
-          "timeout_ms": { "type": "integer", "minimum": 0 },
           "idle_timeout_ms": { "type": "integer", "minimum": 0 },
           "max_parallel": { "type": "integer", "minimum": 0 },
           "retry": { "type": "integer", "minimum": 0 },

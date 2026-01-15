@@ -33,7 +33,6 @@ type CmdSpec struct {
 	ReadyTimeoutMs int
 	Env            map[string]string
 	Cwd            string
-	TimeoutMs      int
 	IdleTimeoutMs  int
 	Retry          int
 	RetryBackoffMs int
@@ -72,7 +71,6 @@ func buildSpecFromAgent(agent, prompt string, defaults Defaults, logPrompt bool)
 		"gemini": {Agent: "gemini", Cmd: "gemini", Args: []string{prompt}},
 	}
 	if spec, ok := mapping[agent]; ok {
-		spec.TimeoutMs = defaults.TimeoutMs
 		spec.IdleTimeoutMs = defaults.IdleTimeoutMs
 		spec.Retry = defaults.Retry
 		spec.RetryBackoffMs = defaults.RetryBackoffMs
@@ -141,7 +139,6 @@ func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverrid
 		ReadyTimeoutMs: roleCfg.ReadyTimeoutMs,
 		Env:            roleCfg.Env,
 		Cwd:            roleCfg.Cwd,
-		TimeoutMs:      effectiveInt(roleCfg.TimeoutMs, defaults.TimeoutMs),
 		IdleTimeoutMs:  effectiveInt(roleCfg.IdleTimeoutMs, defaults.IdleTimeoutMs),
 		Retry:          effectiveInt(roleCfg.Retry, defaults.Retry),
 		RetryBackoffMs: effectiveInt(roleCfg.RetryBackoffMs, defaults.RetryBackoffMs),
@@ -525,15 +522,8 @@ func checkReady(spec CmdSpec) error {
 }
 
 func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}, error) {
-	timeout := time.Duration(spec.TimeoutMs) * time.Millisecond
 	idleTimeout := time.Duration(spec.IdleTimeoutMs) * time.Millisecond
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	cwd := cwdForSpec(spec)
@@ -778,13 +768,7 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 
 	for attempt := 1; attempt <= attempts; attempt++ {
 		lastAttempt = attempt
-		ctx := context.Background()
-		var cancel context.CancelFunc
-		if spec.TimeoutMs > 0 {
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(spec.TimeoutMs)*time.Millisecond)
-		} else {
-			ctx, cancel = context.WithCancel(ctx)
-		}
+		ctx, cancel := context.WithCancel(context.Background())
 		activityCh := make(chan struct{}, 1)
 		var idleTimedOut atomic.Bool
 		stopIdle := startIdleTimer(ctx, time.Duration(spec.IdleTimeoutMs)*time.Millisecond, activityCh, func() {
@@ -1090,9 +1074,6 @@ func runBatch(prompt, roles, configPath, modelOverride, reasoningOverride string
 				results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
 				continue
 			}
-			if timeoutMs > 0 {
-				spec.TimeoutMs = timeoutMs
-			}
 			if idleTimeoutMs > 0 {
 				spec.IdleTimeoutMs = idleTimeoutMs
 			}
@@ -1234,9 +1215,6 @@ func runBatchAsync(prompt, roles, configPath, modelOverride, reasoningOverride s
 			if err != nil {
 				results = append(results, map[string]interface{}{"agent": role, "status": "error", "error": err.Error()})
 				continue
-			}
-			if timeoutMs > 0 {
-				spec.TimeoutMs = timeoutMs
 			}
 			if idleTimeoutMs > 0 {
 				spec.IdleTimeoutMs = idleTimeoutMs

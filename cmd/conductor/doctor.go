@@ -202,9 +202,6 @@ func validateConfig(cfg Config) []string {
 	if cfg.Defaults.MaxParallel < 0 {
 		errors = append(errors, "defaults.max_parallel must be >= 0")
 	}
-	if cfg.Defaults.TimeoutMs < 0 {
-		errors = append(errors, "defaults.timeout_ms must be >= 0")
-	}
 	if cfg.Defaults.IdleTimeoutMs < 0 {
 		errors = append(errors, "defaults.idle_timeout_ms must be >= 0")
 	}
@@ -220,9 +217,6 @@ func validateConfig(cfg Config) []string {
 		}
 		if role.MaxParallel < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.max_parallel must be >= 0", name))
-		}
-		if role.TimeoutMs < 0 {
-			errors = append(errors, fmt.Sprintf("roles.%s.timeout_ms must be >= 0", name))
 		}
 		if role.IdleTimeoutMs < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.idle_timeout_ms must be >= 0", name))

@@ -310,15 +310,6 @@ func effectiveMcpTimeoutMs(timeoutMs int) int {
 	return defaultMcpTimeoutMs
 }
 
-func applyTimeout(spec *CmdSpec, timeoutMs int) {
-	if timeoutMs <= 0 {
-		return
-	}
-	if spec.TimeoutMs == 0 || timeoutMs < spec.TimeoutMs {
-		spec.TimeoutMs = timeoutMs
-	}
-}
-
 func applyIdleTimeout(spec *CmdSpec, idleTimeoutMs int) {
 	if idleTimeoutMs <= 0 {
 		return
@@ -382,8 +373,7 @@ func summarizeBatchPayload(payload map[string]interface{}) map[string]interface{
 }
 
 func runBatchTool(input BatchInput, report progressReporter) (map[string]interface{}, error) {
-	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
-	payload, err := runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, timeoutMs, input.IdleTimeoutMs, report)
+	payload, err := runBatch(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, 0, input.IdleTimeoutMs, report)
 	if err != nil {
 		return payload, err
 	}
@@ -398,7 +388,7 @@ func runBatchAsyncTool(input BatchInput, report progressReporter) (map[string]in
 	if !input.NoRuntime {
 		return mcpRuntimeRunBatch(input)
 	}
-	return runBatchAsync(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, input.TimeoutMs, input.IdleTimeoutMs, report)
+	return runBatchAsync(input.Prompt, input.Roles, input.Config, input.Model, input.Reasoning, 0, input.IdleTimeoutMs, report)
 }
 
 func runTool(input RunInput, report progressReporter) (map[string]interface{}, error) {
@@ -408,7 +398,6 @@ func runTool(input RunInput, report progressReporter) (map[string]interface{}, e
 	if input.Role == "" {
 		return nil, errors.New("Missing role")
 	}
-	timeoutMs := effectiveMcpTimeoutMs(input.TimeoutMs)
 	configPath := resolveConfigPath(input.Config)
 
 	var cfg Config
@@ -428,7 +417,6 @@ func runTool(input RunInput, report progressReporter) (map[string]interface{}, e
 	if err != nil {
 		return nil, err
 	}
-	applyTimeout(&spec, timeoutMs)
 	applyIdleTimeout(&spec, input.IdleTimeoutMs)
 	reportRunLabel(report, spec, "starting")
 	payload, err := runCommand(spec)
@@ -465,9 +453,6 @@ func runAsyncTool(input RunInput, report progressReporter) (map[string]interface
 	spec, err = buildSpecFromRole(cfg, input.Role, input.Prompt, input.Model, input.Reasoning, logPrompt)
 	if err != nil {
 		return nil, err
-	}
-	if input.TimeoutMs > 0 {
-		spec.TimeoutMs = input.TimeoutMs
 	}
 	if input.IdleTimeoutMs > 0 {
 		spec.IdleTimeoutMs = input.IdleTimeoutMs

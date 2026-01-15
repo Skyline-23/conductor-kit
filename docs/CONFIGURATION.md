@@ -15,7 +15,6 @@ conductor-kit uses a JSON configuration file to control role-based CLI routing, 
 ```json
 {
   "defaults": {
-    "timeout_ms": 0,
     "idle_timeout_ms": 120000,
     "summary_only": false,
     "max_parallel": 4,
@@ -35,7 +34,6 @@ conductor-kit uses a JSON configuration file to control role-based CLI routing, 
       "models": ["model1", "model2"],
       "env": { "KEY": "value" },
       "cwd": "/path/to/dir",
-      "timeout_ms": 0,
       "idle_timeout_ms": 120000,
       "max_parallel": 4,
       "retry": 0,
@@ -51,7 +49,6 @@ Global defaults applied to all roles unless overridden.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `timeout_ms` | int | `0` | Hard timeout in milliseconds. `0` = no limit |
 | `idle_timeout_ms` | int | `120000` | Inactivity timeout (2 minutes) |
 | `summary_only` | bool | `false` | Return summary instead of full output |
 | `max_parallel` | int | `4` | Max concurrent CLI executions |
@@ -89,7 +86,6 @@ Each role can override any default:
 
 | Field | Description |
 |-------|-------------|
-| `timeout_ms` | Role-specific hard timeout |
 | `idle_timeout_ms` | Role-specific idle timeout |
 | `max_parallel` | Role-specific parallelism |
 | `retry` | Role-specific retry count |
@@ -124,7 +120,6 @@ When `args` and `model_flag` are omitted, these defaults are used:
 ```json
 {
   "defaults": {
-    "timeout_ms": 0,
     "idle_timeout_ms": 120000,
     "max_parallel": 4,
     "retry": 0,

@@ -16,7 +16,6 @@ type Config struct {
 
 // Defaults contains global default settings for all roles.
 type Defaults struct {
-	TimeoutMs      int  `json:"timeout_ms"`
 	IdleTimeoutMs  int  `json:"idle_timeout_ms"`
 	MaxParallel    int  `json:"max_parallel"`
 	Retry          int  `json:"retry"`
@@ -59,7 +58,6 @@ type RoleConfig struct {
 	ReadyTimeoutMs int               `json:"ready_timeout_ms"`
 	Env            map[string]string `json:"env"`
 	Cwd            string            `json:"cwd"`
-	TimeoutMs      int               `json:"timeout_ms"`
 	IdleTimeoutMs  int               `json:"idle_timeout_ms"`
 	MaxParallel    int               `json:"max_parallel"`
 	Retry          int               `json:"retry"`
@@ -182,7 +180,6 @@ func loadConfigOrEmpty(path string) (Config, error) {
 }
 
 const (
-	defaultTimeoutMs      = 0
 	defaultIdleTimeoutMs  = 120000
 	defaultMaxParallel    = 4
 	defaultRetry          = 0
@@ -191,9 +188,6 @@ const (
 
 // normalizeDefaults fills in missing default values with sensible defaults.
 func normalizeDefaults(d Defaults) Defaults {
-	if d.TimeoutMs <= 0 {
-		d.TimeoutMs = defaultTimeoutMs
-	}
 	if d.IdleTimeoutMs <= 0 {
 		d.IdleTimeoutMs = defaultIdleTimeoutMs
 	}
