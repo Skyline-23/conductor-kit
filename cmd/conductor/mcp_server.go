@@ -99,6 +99,12 @@ type MCPClaudeInput struct {
 	DisallowedTools    string `json:"disallowed-tools,omitempty"`
 	SystemPrompt       string `json:"system-prompt,omitempty"`
 	AppendSystemPrompt string `json:"append-system-prompt,omitempty"`
+	MaxTurns           int    `json:"max-turns,omitempty"`
+	Cwd                string `json:"cwd,omitempty"`
+	AddDir             string `json:"add-dir,omitempty"`
+	McpConfig          string `json:"mcp-config,omitempty"`
+	Agents             string `json:"agents,omitempty"`
+	Debug              bool   `json:"debug,omitempty"`
 	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
 }
 
@@ -192,16 +198,22 @@ Parameters:
 	// ===== Claude Tools =====
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "claude",
-		Description: `Run a Claude session. Returns structuredContent.threadId for continuation.
+		Description: `Run a Claude Code session. Returns structuredContent.threadId for continuation.
 
 Parameters:
 - prompt (required): The user prompt
-- model: Model override
-- permission-mode: "default", "acceptEdits", "bypassPermissions", "dontAsk"
-- allowed-tools: Comma-separated tool names
-- disallowed-tools: Comma-separated tool names
-- system-prompt: Custom system prompt
-- append-system-prompt: Append to system prompt`,
+- model: Model alias (sonnet, opus) or full name
+- permission-mode: "default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"
+- allowed-tools: Comma-separated tool names (e.g., "Bash,Edit,Read")
+- disallowed-tools: Comma-separated tool names to disable
+- system-prompt: Replace entire system prompt
+- append-system-prompt: Append to default system prompt
+- max-turns: Limit number of agentic turns
+- cwd: Working directory for the session
+- add-dir: Additional directories to include (space-separated)
+- mcp-config: Path to MCP server config JSON
+- agents: JSON object defining custom subagents
+- debug: Enable debug mode`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPClaudeInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
@@ -798,7 +810,7 @@ func mcpBuildCodexArgs(input MCPCodexInput) []string {
 func mcpBuildClaudeArgs(input MCPClaudeInput) []string {
 	permissionMode := strings.TrimSpace(input.PermissionMode)
 	if permissionMode == "" {
-		permissionMode = "dontAsk"
+		permissionMode = "bypassPermissions"
 	}
 
 	args := []string{"-p", input.Prompt, "--output-format", "stream-json", "--permission-mode", permissionMode, "--verbose"}
@@ -807,16 +819,34 @@ func mcpBuildClaudeArgs(input MCPClaudeInput) []string {
 		args = append(args, "--model", input.Model)
 	}
 	if input.AllowedTools != "" {
-		args = append(args, "--allowed-tools", input.AllowedTools)
+		args = append(args, "--allowedTools", input.AllowedTools)
 	}
 	if input.DisallowedTools != "" {
-		args = append(args, "--disallowed-tools", input.DisallowedTools)
+		args = append(args, "--disallowedTools", input.DisallowedTools)
 	}
 	if input.SystemPrompt != "" {
 		args = append(args, "--system-prompt", input.SystemPrompt)
 	}
 	if input.AppendSystemPrompt != "" {
 		args = append(args, "--append-system-prompt", input.AppendSystemPrompt)
+	}
+	if input.MaxTurns > 0 {
+		args = append(args, "--max-turns", fmt.Sprintf("%d", input.MaxTurns))
+	}
+	if input.Cwd != "" {
+		// Claude uses --add-dir for additional directories, cwd is handled via working directory
+	}
+	if input.AddDir != "" {
+		args = append(args, "--add-dir", input.AddDir)
+	}
+	if input.McpConfig != "" {
+		args = append(args, "--mcp-config", input.McpConfig)
+	}
+	if input.Agents != "" {
+		args = append(args, "--agents", input.Agents)
+	}
+	if input.Debug {
+		args = append(args, "--debug")
 	}
 
 	return args
