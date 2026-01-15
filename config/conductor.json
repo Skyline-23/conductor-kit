@@ -1,7 +1,7 @@
 {
   "defaults": {
     "idle_timeout_ms": 120000,
-    "summary_only": false,
+    "summary_only": true,
     "max_parallel": 4,
     "retry": 0,
     "retry_backoff_ms": 500,
