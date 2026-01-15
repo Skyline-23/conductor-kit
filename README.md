@@ -97,9 +97,9 @@ Config file: `~/.conductor-kit/conductor.json`
 {
   "roles": {
     "oracle": { "cli": "codex", "model": "gpt-5.2-codex", "reasoning": "medium" },
-    "librarian": { "cli": "gemini", "model": "gemini-3-flash-preview" },
-    "explore": { "cli": "gemini", "model": "gemini-3-flash-preview" },
-    "frontend-ui-ux-engineer": { "cli": "gemini", "model": "gemini-3-pro-preview" }
+    "librarian": { "cli": "gemini", "model": "gemini-3-flash" },
+    "explore": { "cli": "gemini", "model": "gemini-3-flash" },
+    "frontend-ui-ux-engineer": { "cli": "gemini", "model": "gemini-3-pro" }
   }
 }
 ```

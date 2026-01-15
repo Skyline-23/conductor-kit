@@ -134,23 +134,23 @@ When `args` and `model_flag` are omitted, these defaults are used:
     },
     "librarian": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash"
     },
     "explore": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash"
     },
     "frontend-ui-ux-engineer": {
       "cli": "gemini",
-      "model": "gemini-3-pro-preview"
+      "model": "gemini-3-pro"
     },
     "document-writer": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash"
     },
     "multimodal-looker": {
       "cli": "gemini",
-      "model": "gemini-3-flash-preview"
+      "model": "gemini-3-flash"
     }
   }
 }

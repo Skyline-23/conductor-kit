@@ -97,9 +97,9 @@ gemini 도구를 사용해서 인증 로직을 코드베이스에서 검색해�
 {
   "roles": {
     "oracle": { "cli": "codex", "model": "gpt-5.2-codex", "reasoning": "medium" },
-    "librarian": { "cli": "gemini", "model": "gemini-3-flash-preview" },
-    "explore": { "cli": "gemini", "model": "gemini-3-flash-preview" },
-    "frontend-ui-ux-engineer": { "cli": "gemini", "model": "gemini-3-pro-preview" }
+    "librarian": { "cli": "gemini", "model": "gemini-3-flash" },
+    "explore": { "cli": "gemini", "model": "gemini-3-flash" },
+    "frontend-ui-ux-engineer": { "cli": "gemini", "model": "gemini-3-pro" }
   }
 }
 ```
