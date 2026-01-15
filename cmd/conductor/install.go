@@ -167,14 +167,16 @@ func runInstall(args []string) int {
 	if installConfig {
 		ensureDir(filepath.Dir(configDest), *dryRun)
 		// Only install config if it doesn't exist (preserve user settings)
+		// Always use "copy" mode for config to prevent loss on brew upgrade
+		// (symlinks break when Caskroom version folder is replaced)
 		if !pathExists(configDest) || *force {
 			fmt.Printf("Install config -> %s\n", configDest)
-			doLinkOrCopy(configSource, configDest, *mode, *force, *dryRun)
+			doLinkOrCopy(configSource, configDest, "copy", *force, *dryRun)
 		} else {
 			fmt.Printf("Config exists, skipping: %s (use --force to overwrite)\n", configDest)
 		}
 		if pathExists(bundlesSource) && (!pathExists(bundlesDest) || *force) {
-			doLinkOrCopy(bundlesSource, bundlesDest, *mode, *force, *dryRun)
+			doLinkOrCopy(bundlesSource, bundlesDest, "copy", *force, *dryRun)
 		}
 	}
 
