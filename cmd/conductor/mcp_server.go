@@ -53,6 +53,10 @@ type MCPSessionConfig struct {
 	DisallowedTools    string
 	SystemPrompt       string
 	AppendSystemPrompt string
+	// Gemini settings
+	Yolo               bool
+	ApprovalMode       string
+	IncludeDirectories string
 }
 
 // MCPMessage represents a message in a session
@@ -98,10 +102,15 @@ type MCPClaudeInput struct {
 
 // MCPGeminiInput for gemini tool
 type MCPGeminiInput struct {
-	Prompt        string `json:"prompt"`
-	Model         string `json:"model,omitempty"`
-	Sandbox       string `json:"sandbox,omitempty"`
-	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
+	Prompt             string `json:"prompt"`
+	Model              string `json:"model,omitempty"`
+	Sandbox            string `json:"sandbox,omitempty"`
+	Yolo               bool   `json:"yolo,omitempty"`
+	ApprovalMode       string `json:"approval-mode,omitempty"`
+	IncludeDirectories string `json:"include-directories,omitempty"`
+	Cwd                string `json:"cwd,omitempty"`
+	Debug              bool   `json:"debug,omitempty"`
+	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
 }
 
 // MCPReplyInput for *-reply tools
@@ -231,14 +240,23 @@ Parameters:
 
 Parameters:
 - prompt (required): The user prompt
-- model: Model override
-- sandbox: Sandbox mode`,
+- model: Model override (e.g., "gemini-2.5-pro", "gemini-2.5-flash")
+- sandbox: Sandbox mode
+- yolo: Auto-approve all actions (equivalent to -y flag)
+- approval-mode: Approval policy ("auto_edit", etc.)
+- include-directories: Comma-separated additional directories to include
+- cwd: Working directory for the session
+- debug: Enable debug mode`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPGeminiInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
 		}
 		config := MCPSessionConfig{
-			Sandbox: input.Sandbox,
+			Sandbox:            input.Sandbox,
+			Yolo:               input.Yolo,
+			ApprovalMode:       input.ApprovalMode,
+			IncludeDirectories: input.IncludeDirectories,
+			Cwd:                input.Cwd,
 		}
 		result, err := mcpRunSessionWithConfig(ctx, "gemini", "", input.Model, input.Prompt, mcpBuildGeminiArgs(input), input.IdleTimeoutMs, config)
 		if err != nil {
@@ -645,6 +663,22 @@ func mcpBuildGeminiArgs(input MCPGeminiInput) []string {
 	if input.Sandbox != "" {
 		args = append(args, "--sandbox", input.Sandbox)
 	}
+	if input.Yolo {
+		args = append(args, "--yolo")
+	}
+	if input.ApprovalMode != "" {
+		args = append(args, "--approval-mode", input.ApprovalMode)
+	}
+	if input.IncludeDirectories != "" {
+		args = append(args, "--include-directories", input.IncludeDirectories)
+	}
+	if input.Cwd != "" {
+		// Gemini uses working directory from where it's run
+		// We'll handle this via the adapter's working directory
+	}
+	if input.Debug {
+		args = append(args, "--debug")
+	}
 
 	return args
 }
@@ -695,6 +729,15 @@ func mcpBuildReplyArgsWithConfig(cli, contextPrompt string, config MCPSessionCon
 		args := []string{"-p", contextPrompt, "--output-format", "stream-json"}
 		if config.Sandbox != "" {
 			args = append(args, "--sandbox", config.Sandbox)
+		}
+		if config.Yolo {
+			args = append(args, "--yolo")
+		}
+		if config.ApprovalMode != "" {
+			args = append(args, "--approval-mode", config.ApprovalMode)
+		}
+		if config.IncludeDirectories != "" {
+			args = append(args, "--include-directories", config.IncludeDirectories)
 		}
 		return args
 	}
