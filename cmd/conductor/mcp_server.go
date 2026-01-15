@@ -409,13 +409,30 @@ func mcpCheckCodexAuth() (bool, string) {
 	if !isCommandAvailable("codex") {
 		return false, "not installed"
 	}
+
+	// Get version first
+	version := ""
+	if out, err := mcpRunQuickCommand("codex", []string{"--version"}); err == nil {
+		version = strings.TrimSpace(out)
+	}
+
+	// Check login status
 	output, err := mcpRunQuickCommand("codex", []string{"login", "status"})
 	if err != nil {
+		if version != "" {
+			return false, fmt.Sprintf("%s, not authenticated (run 'codex login' to login)", version)
+		}
 		return false, "not authenticated"
 	}
 	output = strings.TrimSpace(output)
 	if strings.Contains(strings.ToLower(output), "logged in") {
+		if version != "" {
+			return true, fmt.Sprintf("%s, auth: %s", version, output)
+		}
 		return true, output
+	}
+	if version != "" {
+		return false, fmt.Sprintf("%s, %s", version, output)
 	}
 	return false, output
 }
