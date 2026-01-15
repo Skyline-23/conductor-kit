@@ -182,7 +182,7 @@ func runDoctorPretty(cfg Config, configPath string, errors []string) int {
 	}
 
 	if hasIssues {
-		summary := statusWarnStyle.Render("⚠ Some issues need attention")
+		summary := statusWarnStyle.Render("Some issues need attention")
 		sb.WriteString(summary + "\n")
 		fmt.Print(sb.String())
 		return 1

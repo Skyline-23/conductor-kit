@@ -1,16 +1,16 @@
 ---
 name: conductor
 description: |
-  STOP. Load this skill FIRST before doing ANYTHING with code.
+  MANDATORY: Load BEFORE calling ANY mcp_conductor_* tools.
 
-  This skill MUST be loaded for ANY code-related task. No exceptions.
-  Using built-in tools (Task, Explore, grep agents) without loading this skill is a violation.
+  DO NOT directly call: mcp_conductor_claude, mcp_conductor_codex, mcp_conductor_gemini, mcp_conductor_conductor
+  This skill defines the CORRECT way to use conductor tools via role-based delegation.
 
-  TRIGGERS: sym, symphony, code, debug, fix, refactor, implement, search, explore, plan, review, release, build, test, deploy
+  TRIGGERS: sym, symphony, code, analyze, improve, review, debug, fix, refactor, implement, search, explore, plan, assess, audit, optimize, architecture, structure, build, test, deploy
 
-  REPLACES: Task(Explore), Task(Plan), built-in search/grep agents.
+  REPLACES: Direct mcp_conductor_* calls, Task(Explore), Task(Plan), built-in search/grep agents.
 
-  Handles: reading code, project structure, debugging, planning, implementing, refactoring, reviewing, testing, deploying, documentation - ALL code tasks.
+  Handles: code analysis, project structure, debugging, planning, implementing, refactoring, reviewing, testing, deploying, documentation - ALL code tasks.
 ---
 
 # Conductor
@@ -19,16 +19,16 @@ Host orchestrates; delegates do the work.
 
 ---
 
-## ⚠️ Core Rules (non-negotiable)
+## Core Rules (non-negotiable)
 
 ### 1. DELEGATE FIRST — NO EXCEPTIONS
 **Do NOT use built-in tools (Explore, Grep, Search) when MCP is available.**
 
 - Check MCP tools availability FIRST (`mcp__*` tools)
 - ALWAYS prefer MCP delegation over built-in/native tools:
-  - ❌ `Task(subagent_type=Explore)` → ✅ MCP `pathfinder` role
-  - ❌ Built-in search/grep → ✅ MCP `scout` or `pathfinder` role
-  - ❌ Direct analysis → ✅ MCP `sage` role for complex reasoning
+  - WRONG: `Task(subagent_type=Explore)` -> RIGHT: MCP `pathfinder` role
+  - WRONG: Built-in search/grep -> RIGHT: MCP `scout` or `pathfinder` role
+  - WRONG: Direct analysis -> RIGHT: MCP `sage` role for complex reasoning
 - Run all delegate calls before any action
 - If MCP unavailable → use subagent fallback → **disclose to user**
 
