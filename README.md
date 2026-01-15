@@ -92,13 +92,14 @@ Use the gemini tool to search the codebase for authentication logic
 
 Config file: `~/.conductor-kit/conductor.json`
 
-### Role-based Routing
+### Role-based Routing (Default)
 ```json
 {
   "roles": {
-    "oracle": { "cli": "codex", "model": "o3" },
-    "librarian": { "cli": "gemini", "model": "gemini-2.5-flash" },
-    "frontend": { "cli": "claude", "model": "sonnet" }
+    "oracle": { "cli": "codex", "model": "gpt-5.2-codex", "reasoning": "medium" },
+    "librarian": { "cli": "gemini", "model": "gemini-3-flash-preview" },
+    "explore": { "cli": "gemini", "model": "gemini-3-flash-preview" },
+    "frontend-ui-ux-engineer": { "cli": "gemini", "model": "gemini-3-pro-preview" }
   }
 }
 ```
@@ -108,6 +109,8 @@ Config file: `~/.conductor-kit/conductor.json`
 conductor settings              # Interactive TUI wizard
 conductor settings --list-models --cli codex  # List available models
 ```
+
+For detailed configuration options, see [CONFIGURATION.md](docs/CONFIGURATION.md).
 
 ## Requirements
 

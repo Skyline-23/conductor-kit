@@ -92,13 +92,14 @@ gemini 도구를 사용해서 인증 로직을 코드베이스에서 검색해�
 
 설정 파일: `~/.conductor-kit/conductor.json`
 
-### 역할 기반 라우팅
+### 역할 기반 라우팅 (기본값)
 ```json
 {
   "roles": {
-    "oracle": { "cli": "codex", "model": "o3" },
-    "librarian": { "cli": "gemini", "model": "gemini-2.5-flash" },
-    "frontend": { "cli": "claude", "model": "sonnet" }
+    "oracle": { "cli": "codex", "model": "gpt-5.2-codex", "reasoning": "medium" },
+    "librarian": { "cli": "gemini", "model": "gemini-3-flash-preview" },
+    "explore": { "cli": "gemini", "model": "gemini-3-flash-preview" },
+    "frontend-ui-ux-engineer": { "cli": "gemini", "model": "gemini-3-pro-preview" }
   }
 }
 ```
@@ -108,6 +109,8 @@ gemini 도구를 사용해서 인증 로직을 코드베이스에서 검색해�
 conductor settings              # 대화형 TUI 마법사
 conductor settings --list-models --cli codex  # 사용 가능한 모델 목록
 ```
+
+자세한 설정 옵션은 [CONFIGURATION.md](docs/CONFIGURATION.md)를 참조하세요.
 
 ## 요구 사항
 
