@@ -143,7 +143,7 @@ When `args` and `model_flag` are omitted, these defaults are used:
       "model": "gemini-3-flash",
       "description": "Codebase exploration and navigation"
     },
-    "pixel": {
+    "pixelator": {
       "cli": "gemini",
       "model": "gemini-3-pro",
       "description": "Web UI/UX design and frontend"

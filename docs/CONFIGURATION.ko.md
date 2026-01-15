@@ -17,7 +17,7 @@ conductor-kit은 JSON 설정 파일을 사용하여 역할 기반 CLI 라우팅,
 | `sage` | codex | 복잡한 문제에 대한 심층 추론 |
 | `scout` | gemini | 웹 검색 및 리서치 |
 | `pathfinder` | gemini | 코드베이스 탐색 및 네비게이션 |
-| `pixel` | gemini | 웹 UI/UX 디자인 및 프론트엔드 |
+| `pixelator` | gemini | 웹 UI/UX 디자인 및 프론트엔드 |
 | `author` | gemini | 문서화 및 기술 문서 작성 |
 | `vision` | gemini | 이미지 및 스크린샷 분석 |
 
@@ -145,7 +145,7 @@ conductor-kit은 JSON 설정 파일을 사용하여 역할 기반 CLI 라우팅,
       "model": "gemini-3-flash",
       "description": "Codebase exploration and navigation"
     },
-    "pixel": {
+    "pixelator": {
       "cli": "gemini",
       "model": "gemini-3-pro",
       "description": "Web UI/UX design and frontend"

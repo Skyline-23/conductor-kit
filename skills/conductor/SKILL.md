@@ -123,7 +123,7 @@ Do NOT proceed until all delegates complete.
 | `sage` | Complex reasoning, architecture, security |
 | `pathfinder` | File discovery, codebase navigation, project structure |
 | `scout` | Doc lookup, web search, best practices |
-| `pixel` | Web UI/UX, React/Vue/CSS, responsive design |
+| `pixelator` | Web UI/UX, React/Vue/CSS, responsive design |
 | `author` | README, docs, changelogs |
 | `vision` | Screenshot/image analysis |
 

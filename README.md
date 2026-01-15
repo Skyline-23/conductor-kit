@@ -99,7 +99,7 @@ Config file: `~/.conductor-kit/conductor.json`
     "sage": { "cli": "codex", "model": "gpt-5.2-codex", "reasoning": "medium", "description": "Deep reasoning for complex problems" },
     "scout": { "cli": "gemini", "model": "gemini-3-flash", "description": "Web search and research" },
     "pathfinder": { "cli": "gemini", "model": "gemini-3-flash", "description": "Codebase exploration and navigation" },
-    "pixel": { "cli": "gemini", "model": "gemini-3-pro", "description": "Web UI/UX design and frontend" }
+    "pixelator": { "cli": "gemini", "model": "gemini-3-pro", "description": "Web UI/UX design and frontend" }
   }
 }
 ```

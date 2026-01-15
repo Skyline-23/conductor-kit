@@ -13,7 +13,7 @@ Roles are defined in `conductor.json`. Route tasks to the appropriate role based
 | `sage` | Deep analysis, architecture, security, algorithms | Extended thinking, trade-off analysis |
 | `scout` | Web search, API reference, best practices research | Fast retrieval, broad knowledge |
 | `pathfinder` | Codebase navigation, file discovery, pattern finding | Quick scanning, parallel search |
-| `pixel` | UI/UX review, component design, accessibility | Visual reasoning, design patterns |
+| `pixelator` | UI/UX review, component design, accessibility | Visual reasoning, design patterns |
 | `author` | README, docs, comments, changelogs | Clear writing, formatting |
 | `vision` | Screenshot analysis, image review, visual debugging | Image understanding |
 
@@ -42,7 +42,7 @@ Roles are defined in `conductor.json`. Route tasks to the appropriate role based
 - Understanding project structure
 - Locating similar implementations
 
-### Use `pixel` when:
+### Use `pixelator` when:
 - Reviewing UI component design
 - Accessibility audit
 - Layout/styling decisions
