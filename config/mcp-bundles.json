@@ -26,33 +26,13 @@
       ]
     },
 
-    "gemini-cli": {
+    "conductor": {
       "servers": [
         {
-          "name": "gemini-cli",
+          "name": "conductor",
           "command": "conductor",
-          "args": ["mcp-gemini"],
-          "note": "Uses Gemini CLI login (gemini -p ...) for MCP bridge."
-        }
-      ]
-    },
-    "claude-cli": {
-      "servers": [
-        {
-          "name": "claude-cli",
-          "command": "conductor",
-          "args": ["mcp-claude"],
-          "note": "Uses Claude CLI login (claude -p ...) for MCP bridge."
-        }
-      ]
-    },
-    "codex-cli": {
-      "servers": [
-        {
-          "name": "codex-cli",
-          "command": "conductor",
-          "args": ["mcp-codex"],
-          "note": "Uses Codex CLI login (codex exec --json) for MCP bridge."
+          "args": ["mcp"],
+          "note": "Unified MCP server with codex/claude/gemini + role-based conductor routing."
         }
       ]
     }

@@ -113,15 +113,11 @@ func initialInstallSelectModel() installSelectModel {
 	}
 
 	mcpItems := []selectableItem{
-		{name: "mcp-codex", description: "Codex CLI bridge"},
-		{name: "mcp-claude", description: "Claude CLI bridge"},
-		{name: "mcp-gemini", description: "Gemini CLI bridge"},
+		{name: "mcp", description: "Unified MCP server (codex/claude/gemini + conductor)"},
 	}
 
 	mcpCLIMap := map[string]string{
-		"mcp-codex":  "codex",
-		"mcp-claude": "claude",
-		"mcp-gemini": "gemini",
+		"mcp": "codex",
 	}
 
 	names := []string{}
@@ -429,7 +425,7 @@ func promptInstallSelectionsTUI() installSelections {
 		fmt.Printf("TUI error: %v\n", err)
 		return installSelections{
 			clis: map[string]bool{"codex": true, "claude": true, "opencode": true},
-			mcps: map[string]bool{"mcp-codex": true, "mcp-claude": true, "mcp-gemini": true},
+			mcps: map[string]bool{"mcp": true},
 		}
 	}
 

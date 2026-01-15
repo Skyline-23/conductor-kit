@@ -7,16 +7,14 @@ import (
 )
 
 var (
-	mcpBundleNames = []string{"gemini-cli", "claude-cli", "codex-cli"}
-	claudeMCPNames = []string{"gemini-cli", "claude-cli", "codex-cli"}
-	codexMCPNames  = []string{"gemini-cli", "claude-cli", "codex-cli"}
+	mcpBundleNames = []string{"conductor"}
+	claudeMCPNames = []string{"conductor"}
+	codexMCPNames  = []string{"conductor"}
 )
 
 func ensureClaudeMCP(bundlesPath, claudeHome string, dryRun bool) error {
 	if dryRun {
-		fmt.Println("Register Claude MCP -> claude mcp add -s user gemini-cli -- conductor mcp-gemini")
-		fmt.Println("Register Claude MCP -> claude mcp add -s user claude-cli -- conductor mcp-claude")
-		fmt.Println("Register Claude MCP -> claude mcp add -s user codex-cli -- conductor mcp-codex")
+		fmt.Println("Register Claude MCP -> claude mcp add -s user conductor -- conductor mcp")
 		return nil
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
@@ -73,9 +71,7 @@ func removeClaudeMCP(claudeHome string, dryRun bool) error {
 
 func ensureCodexMCP(bundlesPath string, dryRun bool) error {
 	if dryRun {
-		fmt.Println("Register Codex MCP -> codex mcp add gemini-cli -- conductor mcp-gemini")
-		fmt.Println("Register Codex MCP -> codex mcp add claude-cli -- conductor mcp-claude")
-		fmt.Println("Register Codex MCP -> codex mcp add codex-cli -- conductor mcp-codex")
+		fmt.Println("Register Codex MCP -> codex mcp add conductor -- conductor mcp")
 		return nil
 	}
 	if _, err := exec.LookPath("codex"); err != nil {

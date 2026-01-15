@@ -27,7 +27,7 @@ func runInstall(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print actions only")
 	interactive := fs.Bool("interactive", false, "prompt for CLI/MCP selection (default when TTY)")
 	cliFlag := fs.String("cli", "", "comma-separated CLIs to install (codex,claude,opencode)")
-	mcpFlag := fs.String("mcp", "", "comma-separated MCPs to register (mcp-codex,mcp-claude,mcp-gemini)")
+	mcpFlag := fs.String("mcp", "", "register conductor MCP server")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Println(installHelp())
@@ -95,7 +95,7 @@ func runInstall(args []string) int {
 	}
 
 	selectedCLIs := map[string]bool{"codex": true, "claude": true, "opencode": true}
-	selectedMCPs := map[string]bool{"mcp-codex": true, "mcp-claude": true, "mcp-gemini": true}
+	selectedMCPs := map[string]bool{"mcp": true}
 	if *cliFlag != "" {
 		selectedCLIs = parseCLIFlag(*cliFlag)
 	}
@@ -180,19 +180,15 @@ func runInstall(args []string) int {
 			projectRoot = cwd
 		}
 		configPath := openCodeConfigPath(*opencodeHome, projectRoot)
-		if selectedMCPs["mcp-codex"] || selectedMCPs["mcp-claude"] || selectedMCPs["mcp-gemini"] {
+		if selectedMCPs["mcp"] {
 			if err := ensureOpenCodeMCP(configPath, *dryRun); err != nil {
 				fmt.Printf("OpenCode MCP registration failed: %v\n", err)
 				return 1
 			}
-		}
-		if selectedMCPs["mcp-claude"] {
 			if err := ensureClaudeMCP(bundlesDest, *claudeHome, *dryRun); err != nil {
 				fmt.Printf("Claude MCP registration failed: %v\n", err)
 				return 1
 			}
-		}
-		if selectedMCPs["mcp-codex"] {
 			if err := ensureCodexMCP(bundlesDest, *dryRun); err != nil {
 				fmt.Printf("Codex MCP registration failed: %v\n", err)
 				return 1
@@ -385,10 +381,10 @@ func parseCLIFlag(flag string) map[string]bool {
 
 func parseMCPFlag(flag string) map[string]bool {
 	result := map[string]bool{}
-	for _, mcp := range strings.Split(flag, ",") {
-		mcp = strings.TrimSpace(strings.ToLower(mcp))
-		if mcp == "mcp-codex" || mcp == "mcp-claude" || mcp == "mcp-gemini" {
-			result[mcp] = true
+	for _, m := range strings.Split(flag, ",") {
+		m = strings.TrimSpace(strings.ToLower(m))
+		if m == "mcp" || m == "conductor" || m == "true" {
+			result["mcp"] = true
 		}
 	}
 	return result
