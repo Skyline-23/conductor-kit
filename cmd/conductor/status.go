@@ -45,12 +45,21 @@ func runStatus(args []string) int {
 func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 	var sb strings.Builder
 
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render("🎛  Conductor Status")
+	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99")).Render("Conductor Status")
 	sb.WriteString(title + "\n\n")
 
 	configPath, _ := payload["config"].(string)
-	sb.WriteString(labelStyle.Render("Config: ") + pathStyle.Render(configPath) + "\n")
-	sb.WriteString(renderDivider(50) + "\n\n")
+	sb.WriteString(labelStyle.Render("Config: ") + pathStyle.Render(configPath) + "\n\n")
+
+	// CLI Auth Status section
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Render("CLIs") + "\n")
+	sb.WriteString(renderDivider(50) + "\n")
+	renderCLIAuthStatus(&sb)
+	sb.WriteString("\n")
+
+	// Roles section
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Render("Roles") + "\n")
+	sb.WriteString(renderDivider(50) + "\n")
 
 	roles, _ := payload["roles"].([]map[string]interface{})
 
@@ -59,39 +68,60 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 		status, _ := role["status"].(string)
 		cli, _ := role["cli"].(string)
 		model, _ := role["model"].(string)
-		errMsg, _ := role["error"].(string)
+		reasoning, _ := role["reasoning"].(string)
 
 		icon := renderStatusIcon(status)
-		roleLine := fmt.Sprintf("%s %s", icon, roleNameStyle.Render(name))
 
-		var details []string
-		if cli != "" {
-			details = append(details, labelStyle.Render("cli=")+valueStyle.Render(cli))
-		}
-		if model != "" {
-			details = append(details, labelStyle.Render("model=")+valueStyle.Render(model))
-		}
+		// Format: icon role-name (padded) cli model [reasoning]
+		rolePart := fmt.Sprintf("%-24s", name)
+		cliPart := fmt.Sprintf("%-8s", cli)
+		modelPart := model
 
-		if len(details) > 0 {
-			roleLine += "  " + strings.Join(details, " ")
+		line := fmt.Sprintf("%s %s %s %s", icon, roleNameStyle.Render(rolePart), valueStyle.Render(cliPart), valueStyle.Render(modelPart))
+
+		if reasoning != "" {
+			line += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("["+reasoning+"]")
 		}
 
-		sb.WriteString(roleLine + "\n")
-
-		if errMsg != "" {
-			errLine := "    " + statusErrorStyle.Render("└─ "+errMsg)
-			sb.WriteString(errLine + "\n")
-		}
+		sb.WriteString(line + "\n")
 	}
 
 	sb.WriteString("\n")
 	if allOK {
-		summary := statusOKStyle.Render("✓ All systems ready")
+		summary := statusOKStyle.Render("All systems ready")
 		sb.WriteString(summary + "\n")
 	} else {
-		summary := statusErrorStyle.Render("✗ Some issues detected")
+		summary := statusErrorStyle.Render("Some issues detected")
 		sb.WriteString(summary + "\n")
 	}
 
 	fmt.Print(sb.String())
+}
+
+func renderCLIAuthStatus(sb *strings.Builder) {
+	clis := []struct {
+		name  string
+		check func() (bool, string)
+	}{
+		{"codex", mcpCheckCodexAuth},
+		{"claude", mcpCheckClaudeAuth},
+		{"gemini", mcpCheckGeminiAuth},
+	}
+
+	for _, cli := range clis {
+		authed, status := cli.check()
+		var icon, statusText string
+		if !isCommandAvailable(cli.name) {
+			icon = lipgloss.NewStyle().Foreground(grayColor).Render("○")
+			statusText = lipgloss.NewStyle().Foreground(grayColor).Render("not installed")
+		} else if authed {
+			icon = lipgloss.NewStyle().Foreground(greenColor).Render("●")
+			statusText = lipgloss.NewStyle().Foreground(greenColor).Render(status)
+		} else {
+			icon = lipgloss.NewStyle().Foreground(orangeColor).Render("○")
+			statusText = lipgloss.NewStyle().Foreground(orangeColor).Render(status)
+		}
+		line := fmt.Sprintf("%s %-10s %s", icon, cli.name, statusText)
+		sb.WriteString(line + "\n")
+	}
 }
