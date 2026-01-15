@@ -80,7 +80,7 @@ homebrew_casks:
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}"]
           end
-          system_command "#{staged_path}/conductor", args: ["install", "--mode", "link", "--repo", "#{staged_path}", "--force"]
+          system_command "#{staged_path}/conductor", args: ["install", "--mode", "link", "--repo", "#{staged_path}"]
       pre:
         uninstall: |
           if File.exist?("#{staged_path}/conductor")
