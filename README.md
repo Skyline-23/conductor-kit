@@ -38,7 +38,7 @@ conductor doctor   # Full diagnostics
 
 ### 1. Use the Skill
 In Claude Code or Codex CLI, trigger by saying:
-- `conductor` or `ultrawork` or `ulw`
+- `conductor` or `symphony` or `sym`
 
 ### 2. Use Slash Commands
 | Claude Code | Codex CLI |
@@ -47,7 +47,7 @@ In Claude Code or Codex CLI, trigger by saying:
 | `/conductor-search` | `/prompts:conductor-search` |
 | `/conductor-implement` | `/prompts:conductor-implement` |
 | `/conductor-release` | `/prompts:conductor-release` |
-| `/conductor-ultrawork` | `/prompts:conductor-ultrawork` |
+| `/conductor-symphony` | `/prompts:conductor-symphony` |
 
 ### 3. Use MCP Tools (Cross-CLI Delegation)
 

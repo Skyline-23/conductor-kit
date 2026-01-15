@@ -13,7 +13,7 @@ var conductorCommandFiles = []string{
 	"conductor-search.md",
 	"conductor-implement.md",
 	"conductor-release.md",
-	"conductor-ultrawork.md",
+	"conductor-symphony.md",
 }
 
 func runUninstall(args []string) int {

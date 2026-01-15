@@ -6,7 +6,7 @@ description: |
   This skill MUST be loaded for ANY code-related task. No exceptions.
   Using built-in tools (Task, Explore, grep agents) without loading this skill is a violation.
 
-  TRIGGERS: ulw, ultrawork, code, debug, fix, refactor, implement, search, explore, plan, review, release, build, test, deploy
+  TRIGGERS: sym, symphony, code, debug, fix, refactor, implement, search, explore, plan, review, release, build, test, deploy
 
   REPLACES: Task(Explore), Task(Plan), built-in search/grep agents.
 
@@ -74,7 +74,7 @@ Conductor assesses the task and chooses the appropriate mode:
 
 | Mode | When | Action |
 |------|------|--------|
-| **Ultrawork** | `ulw` or `ultrawork` command | Full automation: Search → Plan → Execute → Verify → Cleanup |
+| **Symphony** | `sym` or `symphony` command | Full automation: Search → Plan → Execute → Verify → Cleanup |
 | **Search** | Explore, analyze, investigate, understand | Delegate to `pathfinder` + `sage` via MCP |
 | **Plan** | Design, architect, plan | Read-only planning, no edits |
 | **Implement** | Fix, build, refactor, migrate | MCP-assisted implementation |
@@ -88,12 +88,12 @@ Conductor assesses the task and chooses the appropriate mode:
 
 ---
 
-## Ultrawork Mode
+## Symphony Mode
 
 When triggered, respond **immediately** with:
 
 ```
-ULTRAWORK MODE ENABLED!
+SYMPHONY MODE ENABLED!
 ```
 
 Then execute staged delegation:

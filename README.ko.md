@@ -38,7 +38,7 @@ conductor doctor   # 전체 진단
 
 ### 1. 스킬 사용
 Claude Code 또는 Codex CLI에서 다음으로 트리거:
-- `conductor` 또는 `ultrawork` 또는 `ulw`
+- `conductor` 또는 `symphony` 또는 `sym`
 
 ### 2. 슬래시 커맨드
 | Claude Code | Codex CLI |
@@ -47,7 +47,7 @@ Claude Code 또는 Codex CLI에서 다음으로 트리거:
 | `/conductor-search` | `/prompts:conductor-search` |
 | `/conductor-implement` | `/prompts:conductor-implement` |
 | `/conductor-release` | `/prompts:conductor-release` |
-| `/conductor-ultrawork` | `/prompts:conductor-ultrawork` |
+| `/conductor-symphony` | `/prompts:conductor-symphony` |
 
 ### 3. MCP 도구 사용 (CLI 간 위임)
 
