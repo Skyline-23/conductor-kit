@@ -439,10 +439,8 @@ func mcpCheckCodexAuth() (bool, string) {
 	output = strings.TrimSpace(output)
 	if strings.Contains(strings.ToLower(output), "logged in") {
 		// Simplify auth message
-		authMsg := "logged in"
-		if strings.Contains(output, "ChatGPT") {
-			authMsg = "ChatGPT"
-		} else if strings.Contains(output, "API") {
+		authMsg := "OAuth"
+		if strings.Contains(output, "API") {
 			authMsg = "API key"
 		}
 		if version != "" {
