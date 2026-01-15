@@ -155,9 +155,13 @@ func runMCP(args []string) int {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "conductor.run_history",
-		Description: "List recent run records.",
+		Description: "List recent run records. Default limit is 20 to prevent token explosion.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input HistoryInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		records, err := readRunHistory(input.Limit, input.Status, input.Role, input.Agent)
+		limit := input.Limit
+		if limit <= 0 {
+			limit = 20 // Default limit to prevent returning massive history
+		}
+		records, err := readRunHistory(limit, input.Status, input.Role, input.Agent)
 		if err != nil {
 			return nil, nil, err
 		}
