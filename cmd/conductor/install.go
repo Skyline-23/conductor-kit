@@ -165,10 +165,15 @@ func runInstall(args []string) int {
 	}
 
 	if installConfig {
-		fmt.Printf("Install config -> %s\n", configDest)
 		ensureDir(filepath.Dir(configDest), *dryRun)
-		doLinkOrCopy(configSource, configDest, *mode, *force, *dryRun)
-		if pathExists(bundlesSource) {
+		// Only install config if it doesn't exist (preserve user settings)
+		if !pathExists(configDest) || *force {
+			fmt.Printf("Install config -> %s\n", configDest)
+			doLinkOrCopy(configSource, configDest, *mode, *force, *dryRun)
+		} else {
+			fmt.Printf("Config exists, skipping: %s (use --force to overwrite)\n", configDest)
+		}
+		if pathExists(bundlesSource) && (!pathExists(bundlesDest) || *force) {
 			doLinkOrCopy(bundlesSource, bundlesDest, *mode, *force, *dryRun)
 		}
 	}
