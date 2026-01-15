@@ -501,7 +501,13 @@ func tuiSelectModel(cli, current string, allowCLI bool) (string, bool) {
 		options = append(options, tuiOption{Label: model, Value: model})
 	}
 	title := fmt.Sprintf("Select model %s(%s)%s", gray, source, reset)
-	return tuiSelectOptions(title, options, current)
+
+	// Only use current as selected if it's in this CLI's model list
+	selectedCurrent := ""
+	if current != "" && contains(models, current) {
+		selectedCurrent = current
+	}
+	return tuiSelectOptions(title, options, selectedCurrent)
 }
 
 func tuiSelectOptions(title string, options []tuiOption, current string) (string, bool) {
