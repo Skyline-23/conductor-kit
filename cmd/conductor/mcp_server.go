@@ -432,21 +432,28 @@ func mcpCheckCodexAuth() (bool, string) {
 	output, err := mcpRunQuickCommand("codex", []string{"login", "status"})
 	if err != nil {
 		if version != "" {
-			return false, fmt.Sprintf("%s, not authenticated (run 'codex login' to login)", version)
+			return false, fmt.Sprintf("%s, no auth", version)
 		}
-		return false, "not authenticated"
+		return false, "no auth"
 	}
 	output = strings.TrimSpace(output)
 	if strings.Contains(strings.ToLower(output), "logged in") {
-		if version != "" {
-			return true, fmt.Sprintf("%s, auth: %s", version, output)
+		// Simplify auth message
+		authMsg := "logged in"
+		if strings.Contains(output, "ChatGPT") {
+			authMsg = "ChatGPT"
+		} else if strings.Contains(output, "API") {
+			authMsg = "API key"
 		}
-		return true, output
+		if version != "" {
+			return true, fmt.Sprintf("%s, %s", version, authMsg)
+		}
+		return true, authMsg
 	}
 	if version != "" {
-		return false, fmt.Sprintf("%s, %s", version, output)
+		return false, fmt.Sprintf("%s, no auth", version)
 	}
-	return false, output
+	return false, "no auth"
 }
 
 // mcpCheckClaudeAuth checks Claude CLI authentication status
@@ -464,7 +471,7 @@ func mcpCheckClaudeAuth() (bool, string) {
 	// Check authentication methods:
 	// 1. ANTHROPIC_API_KEY environment variable
 	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
-		return true, fmt.Sprintf("version %s, auth: ANTHROPIC_API_KEY", version)
+		return true, fmt.Sprintf("%s, API key", version)
 	}
 
 	// 2. Check for Claude CLI session data (~/.claude/)
@@ -474,20 +481,20 @@ func mcpCheckClaudeAuth() (bool, string) {
 		// Check for session indicators (statsig = logged in user)
 		statsigDir := filepath.Join(claudeDir, "statsig")
 		if pathExists(statsigDir) {
-			return true, fmt.Sprintf("version %s, auth: OAuth session", version)
+			return true, fmt.Sprintf("%s, OAuth", version)
 		}
 		// Check for settings.json (indicates CLI has been configured)
 		settingsFile := filepath.Join(claudeDir, "settings.json")
 		if pathExists(settingsFile) {
-			return true, fmt.Sprintf("version %s, auth: configured", version)
+			return true, fmt.Sprintf("%s, configured", version)
 		}
 	}
 
 	// No authentication found
 	if version != "" {
-		return false, fmt.Sprintf("version %s, not authenticated (run 'claude' to login)", version)
+		return false, fmt.Sprintf("%s, no auth", version)
 	}
-	return false, "not authenticated"
+	return false, "no auth"
 }
 
 // mcpCheckGeminiAuth checks Gemini CLI authentication status
@@ -505,12 +512,12 @@ func mcpCheckGeminiAuth() (bool, string) {
 	// Check authentication methods in order of priority:
 	// 1. GEMINI_API_KEY environment variable
 	if apiKey := os.Getenv("GEMINI_API_KEY"); apiKey != "" {
-		return true, fmt.Sprintf("version %s, auth: GEMINI_API_KEY", version)
+		return true, fmt.Sprintf("%s, API key", version)
 	}
 
 	// 2. GOOGLE_API_KEY environment variable (Vertex AI)
 	if apiKey := os.Getenv("GOOGLE_API_KEY"); apiKey != "" {
-		return true, fmt.Sprintf("version %s, auth: GOOGLE_API_KEY (Vertex AI)", version)
+		return true, fmt.Sprintf("%s, Vertex AI", version)
 	}
 
 	// 3. Check for cached OAuth credentials (~/.gemini/)
@@ -520,33 +527,33 @@ func mcpCheckGeminiAuth() (bool, string) {
 		// Check for .env file with credentials
 		envFile := filepath.Join(geminiDir, ".env")
 		if pathExists(envFile) {
-			return true, fmt.Sprintf("version %s, auth: ~/.gemini/.env", version)
+			return true, fmt.Sprintf("%s, .env", version)
 		}
 		// Check for cached OAuth tokens (credentials directory or files)
 		credFiles := []string{"credentials", "oauth_credentials.json", "oauth_creds.json", "auth.json"}
 		for _, f := range credFiles {
 			if pathExists(filepath.Join(geminiDir, f)) {
-				return true, fmt.Sprintf("version %s, auth: OAuth cached", version)
+				return true, fmt.Sprintf("%s, OAuth", version)
 			}
 		}
 	}
 
 	// 4. Check for Google Cloud ADC (gcloud auth application-default)
 	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
-		return true, fmt.Sprintf("version %s, auth: GOOGLE_APPLICATION_CREDENTIALS", version)
+		return true, fmt.Sprintf("%s, ADC", version)
 	}
 
 	// 5. Check default ADC path
 	adcPath := filepath.Join(homeDir, ".config", "gcloud", "application_default_credentials.json")
 	if pathExists(adcPath) {
-		return true, fmt.Sprintf("version %s, auth: gcloud ADC", version)
+		return true, fmt.Sprintf("%s, gcloud ADC", version)
 	}
 
 	// No authentication found
 	if version != "" {
-		return false, fmt.Sprintf("version %s, not authenticated (set GEMINI_API_KEY or run 'gemini' to login)", version)
+		return false, fmt.Sprintf("%s, no auth", version)
 	}
-	return false, "not authenticated"
+	return false, "no auth"
 }
 
 // mcpGetStatus returns CLI availability and session status

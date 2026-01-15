@@ -132,10 +132,12 @@ func loadCLIStatuses(names []string) map[string]cliStatus {
 }
 
 func truncateStatus(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	// Handle Unicode properly by using runes
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }
 
 func initialInstallSelectModel() installSelectModel {
