@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -393,12 +394,89 @@ func mcpEvictOldestSession() {
 	}
 }
 
+// mcpRunQuickCommand runs a simple command with timeout and returns output
+func mcpRunQuickCommand(cmd string, args []string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, cmd, args...)
+	out, err := c.CombinedOutput()
+	return string(out), err
+}
+
+// mcpCheckCodexAuth checks Codex CLI authentication status
+func mcpCheckCodexAuth() (bool, string) {
+	if !isCommandAvailable("codex") {
+		return false, "not installed"
+	}
+	output, err := mcpRunQuickCommand("codex", []string{"login", "status"})
+	if err != nil {
+		return false, "not authenticated"
+	}
+	output = strings.TrimSpace(output)
+	if strings.Contains(strings.ToLower(output), "logged in") {
+		return true, output
+	}
+	return false, output
+}
+
+// mcpCheckClaudeAuth checks Claude CLI authentication status
+func mcpCheckClaudeAuth() (bool, string) {
+	if !isCommandAvailable("claude") {
+		return false, "not installed"
+	}
+	// Claude CLI doesn't have a direct auth status command
+	// Use 'claude --version' as a basic availability check
+	output, err := mcpRunQuickCommand("claude", []string{"--version"})
+	if err != nil {
+		return false, "error checking version"
+	}
+	return true, strings.TrimSpace(output)
+}
+
+// mcpCheckGeminiAuth checks Gemini CLI authentication status
+func mcpCheckGeminiAuth() (bool, string) {
+	if !isCommandAvailable("gemini") {
+		return false, "not installed"
+	}
+	// Gemini CLI uses OAuth or API key auth
+	// Use 'gemini -v' as a basic availability check
+	output, err := mcpRunQuickCommand("gemini", []string{"-v"})
+	if err != nil {
+		return false, "error checking version"
+	}
+	return true, strings.TrimSpace(output)
+}
+
 // mcpGetStatus returns CLI availability and session status
 func mcpGetStatus() map[string]interface{} {
+	// Check Codex auth
+	codexAuth, codexMsg := mcpCheckCodexAuth()
+	codexStatus := map[string]interface{}{
+		"available":     isCommandAvailable("codex"),
+		"authenticated": codexAuth,
+		"status":        codexMsg,
+	}
+
+	// Check Claude auth
+	claudeAuth, claudeMsg := mcpCheckClaudeAuth()
+	claudeStatus := map[string]interface{}{
+		"available":     isCommandAvailable("claude"),
+		"authenticated": claudeAuth,
+		"status":        claudeMsg,
+	}
+
+	// Check Gemini auth
+	geminiAuth, geminiMsg := mcpCheckGeminiAuth()
+	geminiStatus := map[string]interface{}{
+		"available":     isCommandAvailable("gemini"),
+		"authenticated": geminiAuth,
+		"status":        geminiMsg,
+	}
+
 	clis := map[string]interface{}{
-		"codex":  map[string]interface{}{"available": isCommandAvailable("codex")},
-		"claude": map[string]interface{}{"available": isCommandAvailable("claude")},
-		"gemini": map[string]interface{}{"available": isCommandAvailable("gemini")},
+		"codex":  codexStatus,
+		"claude": claudeStatus,
+		"gemini": geminiStatus,
 	}
 
 	mcpSessionStoreMu.RLock()
