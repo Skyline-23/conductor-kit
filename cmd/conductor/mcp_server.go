@@ -1161,6 +1161,10 @@ func mcpExtractText(output string) string {
 			if eventType, ok := event["type"].(string); ok {
 				switch eventType {
 				case "message":
+					// Gemini format: only extract assistant messages, skip user messages
+					if role, ok := event["role"].(string); ok && role == "user" {
+						continue
+					}
 					if content, ok := event["content"].(string); ok {
 						texts = append(texts, content)
 					}
