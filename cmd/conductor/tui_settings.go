@@ -19,7 +19,6 @@ const (
 	stepSelectCLI
 	stepSelectModel
 	stepSelectReasoning
-	stepConfirm
 	stepInputRole
 	stepInputModel
 )
@@ -112,7 +111,7 @@ func (m settingsModel) handleTextInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.roleCfg.CLI == "codex" {
 				m.step = stepSelectReasoning
 			} else {
-				m.step = stepConfirm
+				(&m).saveAndReset()
 			}
 		}
 		m.textInput.SetValue("")
@@ -143,12 +142,6 @@ func (m settingsModel) handleSelection(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.step = stepSelectModel
 		case stepDeleteRole:
 			m.step = stepSelectRole
-		case stepConfirm:
-			if m.roleCfg.CLI == "codex" {
-				m.step = stepSelectReasoning
-			} else {
-				m.step = stepSelectModel
-			}
 		}
 		m.cursor = 0
 		return m, nil
@@ -220,7 +213,8 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 			if m.roleCfg.CLI == "codex" {
 				m.step = stepSelectReasoning
 			} else {
-				m.step = stepConfirm
+				// Save and go back to role selection
+				(&m).saveAndReset()
 			}
 		}
 
@@ -228,7 +222,8 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 		if selected != tuiKeepValue {
 			m.roleCfg.Reasoning = selected
 		}
-		m.step = stepConfirm
+		// Save and go back to role selection
+		(&m).saveAndReset()
 
 	case stepDeleteRole:
 		if selected == tuiCancelValue {
@@ -250,36 +245,28 @@ func (m settingsModel) selectOption() (tea.Model, tea.Cmd) {
 		m.roleCfg = RoleConfig{}
 		m.step = stepSelectRole
 
-	case stepConfirm:
-		if selected == "save" {
-			if m.cfg.Roles == nil {
-				m.cfg.Roles = map[string]RoleConfig{}
-			}
-			m.cfg.Roles[m.roleName] = m.roleCfg
-			if err := writeConfig(m.configPath, m.cfg); err != nil {
-				m.message = "Error: " + err.Error()
-			} else {
-				m.saved = true
-				m.message = "Saved!"
-			}
-			return m, tea.Quit
-		} else if selected == "another" {
-			if m.cfg.Roles == nil {
-				m.cfg.Roles = map[string]RoleConfig{}
-			}
-			m.cfg.Roles[m.roleName] = m.roleCfg
-			writeConfig(m.configPath, m.cfg)
-			m.step = stepSelectRole
-			m.roleName = ""
-			m.roleCfg = RoleConfig{}
-		} else {
-			m.quitting = true
-			return m, tea.Quit
-		}
 	}
 
 	m.cursor = 0
 	return m, nil
+}
+
+func (m *settingsModel) saveAndReset() {
+	if m.cfg.Roles == nil {
+		m.cfg.Roles = map[string]RoleConfig{}
+	}
+	m.cfg.Roles[m.roleName] = m.roleCfg
+	if err := writeConfig(m.configPath, m.cfg); err != nil {
+		m.message = "Error: " + err.Error()
+	} else {
+		m.message = fmt.Sprintf("Saved %s", m.roleName)
+	}
+	m.step = stepSelectRole
+	m.roleName = ""
+	m.roleCfg = RoleConfig{}
+	m.modelCLI = ""
+	m.modelOptions = nil
+	m.cursor = 0
 }
 
 func (m settingsModel) ensureModelOptions() settingsModel {
@@ -360,12 +347,6 @@ func (m settingsModel) getOptions() []tuiOption {
 		options = append(options, tuiOption{Label: "Cancel", Value: tuiCancelValue})
 		return options
 
-	case stepConfirm:
-		return []tuiOption{
-			{Label: "Save and exit", Value: "save"},
-			{Label: "Save and configure another", Value: "another"},
-			{Label: "Cancel", Value: "cancel"},
-		}
 	}
 	return nil
 }
@@ -456,8 +437,6 @@ func (m settingsModel) getStepTitle() string {
 		return "Reasoning Effort"
 	case stepDeleteRole:
 		return "Delete Role"
-	case stepConfirm:
-		return "Confirm Changes"
 	default:
 		return ""
 	}
