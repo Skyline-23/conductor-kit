@@ -100,8 +100,15 @@ func (a *CLIAdapter) Run(ctx context.Context, opts CLIRunOptions) (string, error
 // extractConciseError extracts a concise error message from CLI output.
 // Avoids including full output to prevent token explosion on retries.
 func extractConciseError(output string, err error) string {
-	// Check for rate limit errors
 	lowerOutput := strings.ToLower(output)
+
+	// Check for quota errors (Google/Gemini specific)
+	if strings.Contains(lowerOutput, "quota") || strings.Contains(lowerOutput, "quotaerror") ||
+		strings.Contains(lowerOutput, "resource_exhausted") || strings.Contains(lowerOutput, "resourceexhausted") {
+		return "quota exceeded - please wait or check your Google API quota"
+	}
+
+	// Check for rate limit errors
 	if strings.Contains(lowerOutput, "rate limit") || strings.Contains(lowerOutput, "rate_limit") ||
 		strings.Contains(lowerOutput, "too many requests") || strings.Contains(lowerOutput, "429") {
 		return "rate limit exceeded - please wait before retrying"

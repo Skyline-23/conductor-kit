@@ -983,7 +983,7 @@ func mcpBuildRoleArgs(cli, prompt, model, reasoning string) []string {
 		}
 		return args
 	case "gemini":
-		args := []string{"--output-format", "stream-json"}
+		args := []string{"--output-format", "stream-json", "--sandbox"}
 		if model != "" {
 			args = append(args, "-m", model)
 		}
