@@ -3,14 +3,14 @@ package main
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	// Colors
-	colorPrimary   = lipgloss.Color("99")
-	colorSecondary = lipgloss.Color("241")
-	colorSuccess   = lipgloss.Color("82")
-	colorWarning   = lipgloss.Color("214")
-	colorError     = lipgloss.Color("196")
-	colorHighlight = lipgloss.Color("212")
-	colorMuted     = lipgloss.Color("245")
+	// Colors - Cyan-based theme for consistency
+	colorPrimary   = lipgloss.Color("86")  // Bright cyan
+	colorSecondary = lipgloss.Color("242") // Dim gray
+	colorSuccess   = lipgloss.Color("78")  // Green
+	colorWarning   = lipgloss.Color("214") // Orange
+	colorError     = lipgloss.Color("196") // Red
+	colorHighlight = lipgloss.Color("86")  // Cyan (same as primary)
+	colorMuted     = lipgloss.Color("242") // Gray
 
 	// Status/Doctor styles
 	headerStyle = lipgloss.NewStyle().
@@ -22,12 +22,12 @@ var (
 
 	sectionStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(colorHighlight).
+			Foreground(colorPrimary).
 			MarginTop(1)
 
 	roleNameStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("81"))
+			Foreground(colorPrimary)
 
 	statusOKStyle = lipgloss.NewStyle().
 			Bold(true).

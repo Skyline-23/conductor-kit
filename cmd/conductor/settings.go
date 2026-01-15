@@ -412,12 +412,21 @@ func tuiSelectRole(cfg Config) (string, bool) {
 		roles = append(roles, name)
 	}
 	sort.Strings(roles)
-	options := make([]tuiOption, 0, len(roles)+1)
+	options := make([]tuiOption, 0, len(roles)+2)
 	for _, name := range roles {
-		options = append(options, tuiOption{Label: name, Value: name})
+		roleCfg := cfg.Roles[name]
+		label := name
+		if roleCfg.CLI != "" {
+			info := roleCfg.CLI
+			if roleCfg.Model != "" {
+				info += "/" + roleCfg.Model
+			}
+			label = fmt.Sprintf("%-20s \x1b[38;5;242m%s\x1b[0m", name, info)
+		}
+		options = append(options, tuiOption{Label: label, Value: name})
 	}
-	options = append(options, tuiOption{Label: "New role", Value: tuiNewRole})
-	return tuiSelectOptions("Select role", options, "")
+	options = append(options, tuiOption{Label: "\x1b[38;5;86m+ New role\x1b[0m", Value: tuiNewRole})
+	return tuiSelectOptions("Select role to edit", options, "")
 }
 
 // tuiGetCLIOptionsWithAuth returns CLI options with auth status indicators
@@ -431,26 +440,33 @@ func tuiGetCLIOptionsWithAuth() []tuiOption {
 		{"gemini", mcpCheckGeminiAuth},
 	}
 
+	// ANSI color codes
+	const (
+		green = "\x1b[38;5;78m"
+		gray  = "\x1b[38;5;242m"
+		reset = "\x1b[0m"
+	)
+
 	options := make([]tuiOption, 0, len(clis)+1)
 	for _, cli := range clis {
 		label := cli.name
 		if isCommandAvailable(cli.name) {
 			auth, status := cli.checkAuth()
 			if auth {
-				// Truncate status if too long
-				if len(status) > 40 {
-					status = status[:37] + "..."
+				// Truncate and format status
+				if len(status) > 35 {
+					status = status[:32] + "..."
 				}
-				label = fmt.Sprintf("%s [%s]", cli.name, status)
+				label = fmt.Sprintf("%-8s %s● %s%s", cli.name, green, status, reset)
 			} else {
-				label = fmt.Sprintf("%s [not authenticated]", cli.name)
+				label = fmt.Sprintf("%-8s %s○ not authenticated%s", cli.name, gray, reset)
 			}
 		} else {
-			label = fmt.Sprintf("%s [not installed]", cli.name)
+			label = fmt.Sprintf("%-8s %s○ not installed%s", cli.name, gray, reset)
 		}
 		options = append(options, tuiOption{Label: label, Value: cli.name})
 	}
-	options = append(options, tuiOption{Label: "Manual entry", Value: tuiManualValue})
+	options = append(options, tuiOption{Label: gray + "Manual entry" + reset, Value: tuiManualValue})
 	return options
 }
 
@@ -490,18 +506,25 @@ func tuiSelectOptions(title string, options []tuiOption, current string) (string
 	}
 
 	reader := bufio.NewReader(os.Stdin)
+	// ANSI color codes for cyan theme
+	const (
+		cyan     = "\x1b[38;5;86m"
+		cyanBold = "\x1b[1;38;5;86m"
+		gray     = "\x1b[38;5;242m"
+		reset    = "\x1b[0m"
+	)
 	render := func() {
-		lines := make([]string, 0, len(options)+2)
-		lines = append(lines, title)
-		lines = append(lines, "Use Up/Down. Enter to select. Esc to cancel.")
+		lines := make([]string, 0, len(options)+4)
+		lines = append(lines, cyanBold+title+reset)
+		lines = append(lines, "")
+		lines = append(lines, gray+"↑/↓ navigate  enter select  esc cancel"+reset)
+		lines = append(lines, "")
 		for i, opt := range options {
 			line := opt.Label
-			prefix := "  "
 			if i == index {
-				prefix = "> "
-				line = fmt.Sprintf("\x1b[7m%s%s\x1b[0m", prefix, line)
+				line = fmt.Sprintf("%s▸ %s%s", cyan, line, reset)
 			} else {
-				line = fmt.Sprintf("%s%s", prefix, line)
+				line = fmt.Sprintf("  %s", line)
 			}
 			lines = append(lines, line)
 		}

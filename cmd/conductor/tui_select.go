@@ -10,10 +10,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Cyan-based color scheme for consistent TUI appearance
 var (
+	// Primary cyan color for headers and highlights
+	cyanColor   = lipgloss.Color("86")  // Bright cyan
+	cyanDim     = lipgloss.Color("37")  // Dim cyan
+	greenColor  = lipgloss.Color("78")  // Success green
+	grayColor   = lipgloss.Color("242") // Muted gray
+	orangeColor = lipgloss.Color("208") // Warning orange
+
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("99")).
+			Foreground(cyanColor).
 			MarginBottom(1)
 
 	itemStyle = lipgloss.NewStyle().
@@ -21,29 +29,22 @@ var (
 
 	selectedItemStyle = lipgloss.NewStyle().
 				PaddingLeft(2).
-				Foreground(lipgloss.Color("170"))
+				Foreground(cyanColor).
+				Bold(true)
 
 	checkboxStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212"))
+			Foreground(cyanColor)
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
+			Foreground(grayColor).
 			MarginTop(1)
 
 	confirmStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("82"))
-
-	badgeReady = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("82")).
-			Render("● available")
-
-	badgeMissing = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
-			Render("○ not installed")
+			Foreground(greenColor)
 
 	stepStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
+			Foreground(grayColor).
 			Render
 )
 
@@ -89,20 +90,52 @@ func loadCLIStatuses(names []string) map[string]cliStatus {
 		}
 		seen[name] = true
 		wg.Add(1)
-		go func() {
+		go func(cliName string) {
 			defer wg.Done()
-			available := isCommandAvailable(name)
-			authStatus := "missing"
+			available := isCommandAvailable(cliName)
+			authStatus := ""
 			if available {
-				authStatus = "unknown"
+				// Get actual auth status
+				switch cliName {
+				case "codex":
+					auth, msg := mcpCheckCodexAuth()
+					if auth {
+						authStatus = truncateStatus(msg, 30)
+					} else {
+						authStatus = "not authenticated"
+					}
+				case "claude":
+					auth, msg := mcpCheckClaudeAuth()
+					if auth {
+						authStatus = truncateStatus(msg, 30)
+					} else {
+						authStatus = "not authenticated"
+					}
+				case "gemini":
+					auth, msg := mcpCheckGeminiAuth()
+					if auth {
+						authStatus = truncateStatus(msg, 30)
+					} else {
+						authStatus = "not authenticated"
+					}
+				default:
+					authStatus = "available"
+				}
 			}
 			mu.Lock()
-			statuses[name] = cliStatus{available: available, authStatus: authStatus}
+			statuses[cliName] = cliStatus{available: available, authStatus: authStatus}
 			mu.Unlock()
-		}()
+		}(name)
 	}
 	wg.Wait()
 	return statuses
+}
+
+func truncateStatus(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 func initialInstallSelectModel() installSelectModel {
@@ -269,8 +302,8 @@ func (m installSelectModel) View() string {
 
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("🎛  Conductor Install"))
-	b.WriteString("\n")
+	b.WriteString(titleStyle.Render("Conductor Install"))
+	b.WriteString("\n\n")
 	b.WriteString(m.renderStepIndicator())
 	b.WriteString("\n\n")
 
@@ -291,14 +324,14 @@ func (m installSelectModel) renderStepIndicator() string {
 	var parts []string
 	for i, s := range steps {
 		if i == int(m.step) {
-			parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212")).Render(s))
+			parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(cyanColor).Render("● "+s))
 		} else if i < int(m.step) {
-			parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Render("✓ "+s))
+			parts = append(parts, lipgloss.NewStyle().Foreground(greenColor).Render("✓ "+s))
 		} else {
-			parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(s))
+			parts = append(parts, lipgloss.NewStyle().Foreground(grayColor).Render("○ "+s))
 		}
 	}
-	return strings.Join(parts, " → ")
+	return strings.Join(parts, "  ")
 }
 
 func (m installSelectModel) renderCLIStep() string {
@@ -406,9 +439,12 @@ func (m installSelectModel) getSelectedNames(items []selectableItem) []string {
 
 func renderCLIStatusBadge(available bool, authStatus string) string {
 	if !available {
-		return badgeMissing
+		return lipgloss.NewStyle().Foreground(grayColor).Render("○ not installed")
 	}
-	return badgeReady
+	if authStatus != "" && authStatus != "unknown" && authStatus != "missing" {
+		return lipgloss.NewStyle().Foreground(greenColor).Render("● " + authStatus)
+	}
+	return lipgloss.NewStyle().Foreground(greenColor).Render("● available")
 }
 
 type installSelections struct {
