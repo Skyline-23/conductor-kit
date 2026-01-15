@@ -1172,6 +1172,15 @@ func mcpExtractText(output string) string {
 					if result, ok := event["result"].(string); ok {
 						texts = append(texts, result)
 					}
+				case "item.completed":
+					// Codex JSON format: {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
+					if item, ok := event["item"].(map[string]interface{}); ok {
+						if itemType, ok := item["type"].(string); ok && itemType == "agent_message" {
+							if text, ok := item["text"].(string); ok {
+								texts = append(texts, text)
+							}
+						}
+					}
 				}
 			}
 			continue
