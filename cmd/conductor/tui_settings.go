@@ -290,17 +290,12 @@ func (m settingsModel) ensureModelOptions() settingsModel {
 	}
 	if m.modelCLI != m.roleCfg.CLI || m.modelOptions == nil {
 		models, _ := listModelsForCLI(m.roleCfg.CLI, false)
-		if m.roleCfg.Model != "" {
-			found := false
-			for _, model := range models {
-				if model == m.roleCfg.Model {
-					found = true
-					break
-				}
-			}
-			if !found {
-				models = append([]string{m.roleCfg.Model}, models...)
-			}
+		// Only add current model if it belongs to this CLI's model list
+		if m.roleCfg.Model != "" && contains(models, m.roleCfg.Model) {
+			// Model already in list, no need to add
+		} else if m.roleCfg.Model != "" {
+			// Model doesn't belong to this CLI, don't add it
+			// This prevents mixing models from different CLIs
 		}
 		options := make([]tuiOption, 0, len(models)+1)
 		for _, model := range models {
