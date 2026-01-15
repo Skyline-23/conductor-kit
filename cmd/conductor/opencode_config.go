@@ -92,43 +92,55 @@ func writeOpenCodeConfig(path string, cfg map[string]interface{}) error {
 }
 
 func upsertOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
-	mcp, changed, err := ensureOpenCodeMCPMap(cfg)
+	changed := false
+
+	// Ensure experimental.mcp_timeout
+	experimental, expChanged := ensureExperimentalMap(cfg)
+	if expChanged {
+		changed = true
+	}
+	if experimental["mcp_timeout"] != float64(600000000) {
+		experimental["mcp_timeout"] = 600000000
+		changed = true
+	}
+
+	// Ensure mcp.conductor
+	mcp, mcpChanged, err := ensureOpenCodeMCPMap(cfg)
 	if err != nil {
 		return false, err
 	}
-	desireds := map[string]map[string]interface{}{
-		"gemini-cli": {
-			"type":    "local",
-			"command": []string{"conductor", "mcp-gemini"},
-			"enabled": true,
-			"timeout": 600000,
-		},
-		"claude-cli": {
-			"type":    "local",
-			"command": []string{"conductor", "mcp-claude"},
-			"enabled": true,
-			"timeout": 600000,
-		},
-		"codex-cli": {
-			"type":    "local",
-			"command": []string{"conductor", "mcp-codex"},
-			"enabled": true,
-			"timeout": 600000,
-		},
+	if mcpChanged {
+		changed = true
 	}
 
-	updated := false
-	for name, desired := range desireds {
-		if existing, ok := mcp[name]; ok && reflect.DeepEqual(existing, desired) {
-			continue
-		}
-		mcp[name] = desired
-		updated = true
+	desired := map[string]interface{}{
+		"type":    "local",
+		"command": []string{"conductor", "mcp"},
+		"enabled": true,
 	}
-	if !updated {
-		return changed, nil
+
+	if existing, ok := mcp["conductor"]; !ok || !reflect.DeepEqual(existing, desired) {
+		mcp["conductor"] = desired
+		changed = true
 	}
-	return true, nil
+
+	return changed, nil
+}
+
+func ensureExperimentalMap(cfg map[string]interface{}) (map[string]interface{}, bool) {
+	expVal, ok := cfg["experimental"]
+	if !ok {
+		exp := map[string]interface{}{}
+		cfg["experimental"] = exp
+		return exp, true
+	}
+	exp, ok := expVal.(map[string]interface{})
+	if !ok {
+		exp := map[string]interface{}{}
+		cfg["experimental"] = exp
+		return exp, true
+	}
+	return exp, false
 }
 
 func deleteOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
