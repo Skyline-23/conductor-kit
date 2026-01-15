@@ -90,12 +90,49 @@ func (a *CLIAdapter) Run(ctx context.Context, opts CLIRunOptions) (string, error
 	}
 	if err != nil {
 		outputStr := strings.TrimSpace(output.String())
-		if outputStr != "" {
-			return "", fmt.Errorf("%s CLI failed: %w\n%s", a.Name, err, outputStr)
-		}
-		return "", fmt.Errorf("%s CLI failed: %w", a.Name, err)
+		// Extract concise error - avoid dumping entire output to prevent token explosion
+		errMsg := extractConciseError(outputStr, err)
+		return "", fmt.Errorf("%s CLI failed: %s", a.Name, errMsg)
 	}
 	return strings.TrimSpace(output.String()), nil
+}
+
+// extractConciseError extracts a concise error message from CLI output.
+// Avoids including full output to prevent token explosion on retries.
+func extractConciseError(output string, err error) string {
+	// Check for rate limit errors
+	lowerOutput := strings.ToLower(output)
+	if strings.Contains(lowerOutput, "rate limit") || strings.Contains(lowerOutput, "rate_limit") ||
+		strings.Contains(lowerOutput, "too many requests") || strings.Contains(lowerOutput, "429") {
+		return "rate limit exceeded - please wait before retrying"
+	}
+
+	// Check for auth errors
+	if strings.Contains(lowerOutput, "unauthorized") || strings.Contains(lowerOutput, "authentication") ||
+		strings.Contains(lowerOutput, "api key") || strings.Contains(lowerOutput, "401") {
+		return "authentication failed - check API key"
+	}
+
+	// Check for common error patterns in JSON output
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Look for error messages in the last few lines
+		if strings.Contains(strings.ToLower(line), "error") && len(line) < 200 {
+			return line
+		}
+	}
+
+	// Return just the underlying error, not the full output
+	if err != nil {
+		return err.Error()
+	}
+
+	// Truncate output if we must include it
+	if len(output) > 200 {
+		return output[:200] + "... (truncated)"
+	}
+	return output
 }
 
 // ValidatePrompt checks if prompt is non-empty.
