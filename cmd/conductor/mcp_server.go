@@ -7,9 +7,19 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const (
+	// Session TTL - sessions expire after 1 hour of inactivity
+	mcpSessionTTL = 1 * time.Hour
+	// Cleanup interval - check for expired sessions every 10 minutes
+	mcpSessionCleanupInterval = 10 * time.Minute
+	// Max sessions to prevent memory exhaustion
+	mcpMaxSessions = 100
 )
 
 // Session management for multi-turn conversations (matches OpenAI Codex MCP pattern)
@@ -20,9 +30,29 @@ var (
 
 // MCPSession represents a conversation session
 type MCPSession struct {
-	ID       string
-	CLI      string // codex, claude, gemini
-	Messages []MCPMessage
+	ID        string
+	CLI       string // codex, claude, gemini
+	Role      string // role name if created via conductor tool
+	Model     string // model used
+	Messages  []MCPMessage
+	Config    MCPSessionConfig // original session configuration
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// MCPSessionConfig stores original session settings for reply
+type MCPSessionConfig struct {
+	// Codex settings
+	ApprovalPolicy string
+	Sandbox        string
+	Cwd            string
+	Profile        string
+	// Claude settings
+	PermissionMode     string
+	AllowedTools       string
+	DisallowedTools    string
+	SystemPrompt       string
+	AppendSystemPrompt string
 }
 
 // MCPMessage represents a message in a session
@@ -90,6 +120,12 @@ type MCPConductorInput struct {
 
 func runMCPServer(args []string) int {
 	_ = args
+
+	// Start session cleanup goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mcpSessionCleanupLoop(ctx)
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "conductor-mcp-server",
 		Version: "1.0.0",
@@ -114,7 +150,13 @@ Parameters:
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
 		}
-		result, err := mcpRunSession(ctx, "codex", input.Prompt, mcpBuildCodexArgs(input), input.IdleTimeoutMs)
+		config := MCPSessionConfig{
+			ApprovalPolicy: input.ApprovalPolicy,
+			Sandbox:        input.Sandbox,
+			Cwd:            input.Cwd,
+			Profile:        input.Profile,
+		}
+		result, err := mcpRunSessionWithConfig(ctx, "codex", "", input.Model, input.Prompt, mcpBuildCodexArgs(input), input.IdleTimeoutMs, config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -153,7 +195,14 @@ Parameters:
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
 		}
-		result, err := mcpRunSession(ctx, "claude", input.Prompt, mcpBuildClaudeArgs(input), input.IdleTimeoutMs)
+		config := MCPSessionConfig{
+			PermissionMode:     input.PermissionMode,
+			AllowedTools:       input.AllowedTools,
+			DisallowedTools:    input.DisallowedTools,
+			SystemPrompt:       input.SystemPrompt,
+			AppendSystemPrompt: input.AppendSystemPrompt,
+		}
+		result, err := mcpRunSessionWithConfig(ctx, "claude", "", input.Model, input.Prompt, mcpBuildClaudeArgs(input), input.IdleTimeoutMs, config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -188,7 +237,10 @@ Parameters:
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
 		}
-		result, err := mcpRunSession(ctx, "gemini", input.Prompt, mcpBuildGeminiArgs(input), input.IdleTimeoutMs)
+		config := MCPSessionConfig{
+			Sandbox: input.Sandbox,
+		}
+		result, err := mcpRunSessionWithConfig(ctx, "gemini", "", input.Model, input.Prompt, mcpBuildGeminiArgs(input), input.IdleTimeoutMs, config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -249,6 +301,18 @@ Parameters:
 		return nil, result, nil
 	})
 
+	// ===== Status Tool =====
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "status",
+		Description: `Check CLI availability and session status.
+
+Returns:
+- cli: availability status for codex, claude, gemini
+- sessions: active session count and info`,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, map[string]interface{}, error) {
+		return nil, mcpGetStatus(), nil
+	})
+
 	transport := mcp.NewStdioTransport()
 	session, err := server.Connect(context.Background(), transport, nil)
 	if err != nil {
@@ -262,8 +326,97 @@ Parameters:
 	return 0
 }
 
+// mcpSessionCleanupLoop periodically removes expired sessions
+func mcpSessionCleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(mcpSessionCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			mcpCleanupExpiredSessions()
+		}
+	}
+}
+
+// mcpCleanupExpiredSessions removes sessions that have exceeded TTL
+func mcpCleanupExpiredSessions() {
+	now := time.Now()
+	mcpSessionStoreMu.Lock()
+	defer mcpSessionStoreMu.Unlock()
+
+	for id, sess := range mcpSessionStore {
+		if now.Sub(sess.UpdatedAt) > mcpSessionTTL {
+			delete(mcpSessionStore, id)
+		}
+	}
+}
+
+// mcpEvictOldestSession removes the oldest session if at capacity
+func mcpEvictOldestSession() {
+	if len(mcpSessionStore) < mcpMaxSessions {
+		return
+	}
+
+	var oldestID string
+	var oldestTime time.Time
+
+	for id, sess := range mcpSessionStore {
+		if oldestID == "" || sess.UpdatedAt.Before(oldestTime) {
+			oldestID = id
+			oldestTime = sess.UpdatedAt
+		}
+	}
+
+	if oldestID != "" {
+		delete(mcpSessionStore, oldestID)
+	}
+}
+
+// mcpGetStatus returns CLI availability and session status
+func mcpGetStatus() map[string]interface{} {
+	clis := map[string]interface{}{
+		"codex":  map[string]interface{}{"available": isCommandAvailable("codex")},
+		"claude": map[string]interface{}{"available": isCommandAvailable("claude")},
+		"gemini": map[string]interface{}{"available": isCommandAvailable("gemini")},
+	}
+
+	mcpSessionStoreMu.RLock()
+	sessionCount := len(mcpSessionStore)
+	sessions := make([]map[string]interface{}, 0, sessionCount)
+	for _, sess := range mcpSessionStore {
+		sessions = append(sessions, map[string]interface{}{
+			"threadId":  sess.ID,
+			"cli":       sess.CLI,
+			"role":      sess.Role,
+			"model":     sess.Model,
+			"messages":  len(sess.Messages),
+			"createdAt": sess.CreatedAt.Format(time.RFC3339),
+			"updatedAt": sess.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	mcpSessionStoreMu.RUnlock()
+
+	return map[string]interface{}{
+		"cli": clis,
+		"sessions": map[string]interface{}{
+			"count":  sessionCount,
+			"max":    mcpMaxSessions,
+			"ttl":    mcpSessionTTL.String(),
+			"active": sessions,
+		},
+	}
+}
+
 // mcpRunSession runs a new CLI session and creates a thread
 func mcpRunSession(ctx context.Context, cli, prompt string, args []string, idleTimeoutMs int) (map[string]interface{}, error) {
+	return mcpRunSessionWithConfig(ctx, cli, "", "", prompt, args, idleTimeoutMs, MCPSessionConfig{})
+}
+
+// mcpRunSessionWithConfig runs a new CLI session with full configuration
+func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt string, args []string, idleTimeoutMs int, config MCPSessionConfig) (map[string]interface{}, error) {
 	adapter := mcpGetAdapter(cli)
 	if adapter == nil {
 		return nil, fmt.Errorf("unknown CLI: %s", cli)
@@ -278,21 +431,28 @@ func mcpRunSession(ctx context.Context, cli, prompt string, args []string, idleT
 	}
 
 	// Create session
+	now := time.Now()
 	threadID := uuid.New().String()
 	sess := &MCPSession{
-		ID:  threadID,
-		CLI: cli,
+		ID:    threadID,
+		CLI:   cli,
+		Role:  role,
+		Model: model,
 		Messages: []MCPMessage{
 			{Role: "user", Content: prompt},
 			{Role: "assistant", Content: output},
 		},
+		Config:    config,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	mcpSessionStoreMu.Lock()
+	mcpEvictOldestSession()
 	mcpSessionStore[threadID] = sess
 	mcpSessionStoreMu.Unlock()
 
-	return mcpBuildResponse(output, threadID), nil
+	return mcpBuildResponseWithMeta(output, threadID, cli, role, model), nil
 }
 
 // mcpRunReply continues an existing session
@@ -324,7 +484,8 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 
 	// Build context prompt from history
 	contextPrompt := mcpBuildContextPrompt(sess.Messages, input.Prompt)
-	args := mcpBuildReplyArgs(sess.CLI, contextPrompt)
+	// Build args with original session config preserved
+	args := mcpBuildReplyArgsWithConfig(sess.CLI, contextPrompt, sess.Config)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
@@ -340,9 +501,10 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 		MCPMessage{Role: "user", Content: input.Prompt},
 		MCPMessage{Role: "assistant", Content: output},
 	)
+	sess.UpdatedAt = time.Now()
 	mcpSessionStoreMu.Unlock()
 
-	return mcpBuildResponse(output, threadID), nil
+	return mcpBuildResponseWithMeta(output, threadID, sess.CLI, sess.Role, sess.Model), nil
 }
 
 // mcpRunRoleSession runs a role-based session
@@ -374,22 +536,29 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 		return nil, err
 	}
 
-	// Create session
+	// Create session with role info
+	now := time.Now()
 	threadID := uuid.New().String()
 	sess := &MCPSession{
-		ID:  threadID,
-		CLI: cli,
+		ID:    threadID,
+		CLI:   cli,
+		Role:  input.Role,
+		Model: role.Model,
 		Messages: []MCPMessage{
 			{Role: "user", Content: input.Prompt},
 			{Role: "assistant", Content: output},
 		},
+		Config:    MCPSessionConfig{}, // Role-based sessions use default config
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	mcpSessionStoreMu.Lock()
+	mcpEvictOldestSession()
 	mcpSessionStore[threadID] = sess
 	mcpSessionStoreMu.Unlock()
 
-	return mcpBuildResponse(output, threadID), nil
+	return mcpBuildResponseWithMeta(output, threadID, cli, input.Role, role.Model), nil
 }
 
 // Helper functions
@@ -481,13 +650,53 @@ func mcpBuildGeminiArgs(input MCPGeminiInput) []string {
 }
 
 func mcpBuildReplyArgs(cli, contextPrompt string) []string {
+	return mcpBuildReplyArgsWithConfig(cli, contextPrompt, MCPSessionConfig{})
+}
+
+func mcpBuildReplyArgsWithConfig(cli, contextPrompt string, config MCPSessionConfig) []string {
 	switch cli {
 	case "codex":
-		return []string{"exec", "--json", contextPrompt}
+		args := []string{"exec", "--json"}
+		// Preserve original session settings
+		if config.ApprovalPolicy != "" {
+			args = append(args, "--approval-policy", config.ApprovalPolicy)
+		}
+		if config.Sandbox != "" {
+			args = append(args, "--sandbox", config.Sandbox)
+		}
+		if config.Cwd != "" {
+			args = append(args, "--cwd", config.Cwd)
+		}
+		if config.Profile != "" {
+			args = append(args, "-p", config.Profile)
+		}
+		args = append(args, contextPrompt)
+		return args
 	case "claude":
-		return []string{"-p", contextPrompt, "--output-format", "stream-json", "--permission-mode", "dontAsk", "--verbose"}
+		permissionMode := config.PermissionMode
+		if permissionMode == "" {
+			permissionMode = "dontAsk"
+		}
+		args := []string{"-p", contextPrompt, "--output-format", "stream-json", "--permission-mode", permissionMode, "--verbose"}
+		if config.AllowedTools != "" {
+			args = append(args, "--allowed-tools", config.AllowedTools)
+		}
+		if config.DisallowedTools != "" {
+			args = append(args, "--disallowed-tools", config.DisallowedTools)
+		}
+		if config.SystemPrompt != "" {
+			args = append(args, "--system-prompt", config.SystemPrompt)
+		}
+		if config.AppendSystemPrompt != "" {
+			args = append(args, "--append-system-prompt", config.AppendSystemPrompt)
+		}
+		return args
 	case "gemini":
-		return []string{"-p", contextPrompt, "--output-format", "stream-json"}
+		args := []string{"-p", contextPrompt, "--output-format", "stream-json"}
+		if config.Sandbox != "" {
+			args = append(args, "--sandbox", config.Sandbox)
+		}
+		return args
 	}
 	return []string{contextPrompt}
 }
@@ -532,15 +741,30 @@ func mcpBuildContextPrompt(messages []MCPMessage, newPrompt string) string {
 }
 
 func mcpBuildResponse(output, threadID string) map[string]interface{} {
+	return mcpBuildResponseWithMeta(output, threadID, "", "", "")
+}
+
+func mcpBuildResponseWithMeta(output, threadID, cli, role, model string) map[string]interface{} {
 	textContent := mcpExtractText(output)
+
+	structured := map[string]interface{}{
+		"threadId": threadID,
+	}
+	if cli != "" {
+		structured["cli"] = cli
+	}
+	if role != "" {
+		structured["role"] = role
+	}
+	if model != "" {
+		structured["model"] = model
+	}
 
 	return map[string]interface{}{
 		"content": []map[string]interface{}{
 			{"type": "text", "text": textContent},
 		},
-		"structuredContent": map[string]interface{}{
-			"threadId": threadID,
-		},
+		"structuredContent": structured,
 	}
 }
 
