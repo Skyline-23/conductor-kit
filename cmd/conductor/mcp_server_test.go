@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -146,22 +147,41 @@ func TestMcpGetAdapter(t *testing.T) {
 	}
 }
 
-func TestMcpBuildContextPrompt(t *testing.T) {
-	messages := []MCPMessage{
-		{Role: "user", Content: "first question"},
-		{Role: "assistant", Content: "first answer"},
-		{Role: "user", Content: "second question"},
-		{Role: "assistant", Content: "second answer"},
+func TestMcpBuildResumeArgs(t *testing.T) {
+	tests := []struct {
+		cli            string
+		nativeThreadID string
+		prompt         string
+		wantContains   []string
+	}{
+		{
+			cli:            "codex",
+			nativeThreadID: "session-123",
+			prompt:         "continue task",
+			wantContains:   []string{"exec", "resume", "session-123", "--json", "continue task"},
+		},
+		{
+			cli:            "claude",
+			nativeThreadID: "session-456",
+			prompt:         "next question",
+			wantContains:   []string{"--resume", "session-456", "-p", "next question"},
+		},
+		{
+			cli:            "gemini",
+			nativeThreadID: "session-789",
+			prompt:         "follow up",
+			wantContains:   []string{"--resume", "session-789", "follow up"},
+		},
 	}
 
-	result := mcpBuildContextPrompt(messages, "new question")
-
-	// Should contain previous messages and new prompt
-	if result == "" {
-		t.Error("expected non-empty context prompt")
-	}
-	if len(result) < len("new question") {
-		t.Error("context prompt should include new question")
+	for _, tt := range tests {
+		args := mcpBuildResumeArgs(tt.cli, tt.nativeThreadID, tt.prompt, MCPSessionConfig{})
+		argsStr := strings.Join(args, " ")
+		for _, want := range tt.wantContains {
+			if !strings.Contains(argsStr, want) {
+				t.Errorf("mcpBuildResumeArgs(%s): expected args to contain %q, got %v", tt.cli, want, args)
+			}
+		}
 	}
 }
 

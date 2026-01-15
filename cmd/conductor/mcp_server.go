@@ -31,15 +31,16 @@ var (
 )
 
 // MCPSession represents a conversation session
+// For Codex/Claude/Gemini: uses native session resume (no history re-transmission)
 type MCPSession struct {
-	ID        string
-	CLI       string // codex, claude, gemini
-	Role      string // role name if created via conductor tool
-	Model     string // model used
-	Messages  []MCPMessage
-	Config    MCPSessionConfig // original session configuration
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID             string           // Our session ID (maps to native thread/session ID)
+	NativeThreadID string           // Native CLI thread ID (for Codex: from structuredContent.threadId)
+	CLI            string           // codex, claude, gemini
+	Role           string           // role name if created via conductor tool
+	Model          string           // model used
+	Config         MCPSessionConfig // original session configuration
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // MCPSessionConfig stores original session settings for reply
@@ -88,6 +89,8 @@ type MCPCodexInput struct {
 	Profile          string                 `json:"profile,omitempty"`
 	Sandbox          string                 `json:"sandbox,omitempty"`
 	IdleTimeoutMs    int                    `json:"idle_timeout_ms,omitempty"`
+	// Reasoning effort for o-series models (low, medium, high)
+	ReasoningEffort string `json:"reasoning-effort,omitempty"`
 }
 
 // MCPClaudeInput for claude tool
@@ -162,7 +165,8 @@ Parameters:
 - cwd: Working directory
 - config: Individual config overrides
 - base-instructions: Custom base instructions
-- include-plan-tool: Include plan tool in conversation`,
+- include-plan-tool: Include plan tool in conversation
+- reasoning-effort: Reasoning effort for o-series models ("low", "medium", "high")`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPCodexInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
@@ -591,13 +595,13 @@ func mcpGetStatus() map[string]interface{} {
 	sessions := make([]map[string]interface{}, 0, sessionCount)
 	for _, sess := range mcpSessionStore {
 		sessions = append(sessions, map[string]interface{}{
-			"threadId":  sess.ID,
-			"cli":       sess.CLI,
-			"role":      sess.Role,
-			"model":     sess.Model,
-			"messages":  len(sess.Messages),
-			"createdAt": sess.CreatedAt.Format(time.RFC3339),
-			"updatedAt": sess.UpdatedAt.Format(time.RFC3339),
+			"threadId":       sess.ID,
+			"nativeThreadId": sess.NativeThreadID,
+			"cli":            sess.CLI,
+			"role":           sess.Role,
+			"model":          sess.Model,
+			"createdAt":      sess.CreatedAt.Format(time.RFC3339),
+			"updatedAt":      sess.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 	mcpSessionStoreMu.RUnlock()
@@ -619,6 +623,7 @@ func mcpRunSession(ctx context.Context, cli, prompt string, args []string, idleT
 }
 
 // mcpRunSessionWithConfig runs a new CLI session with full configuration
+// Uses native session/resume support - no history re-transmission needed
 func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt string, args []string, idleTimeoutMs int, config MCPSessionConfig) (map[string]interface{}, error) {
 	adapter := mcpGetAdapter(cli)
 	if adapter == nil {
@@ -633,21 +638,25 @@ func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt strin
 		return nil, err
 	}
 
-	// Create session
+	// Extract native thread ID from output (for Codex JSON output)
+	nativeThreadID := mcpExtractNativeThreadID(cli, output)
+
+	// Create session - use native thread ID if available, otherwise generate one
 	now := time.Now()
-	threadID := uuid.New().String()
+	threadID := nativeThreadID
+	if threadID == "" {
+		threadID = uuid.New().String()
+	}
+
 	sess := &MCPSession{
-		ID:    threadID,
-		CLI:   cli,
-		Role:  role,
-		Model: model,
-		Messages: []MCPMessage{
-			{Role: "user", Content: prompt},
-			{Role: "assistant", Content: output},
-		},
-		Config:    config,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             threadID,
+		NativeThreadID: nativeThreadID,
+		CLI:            cli,
+		Role:           role,
+		Model:          model,
+		Config:         config,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	mcpSessionStoreMu.Lock()
@@ -655,10 +664,13 @@ func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt strin
 	mcpSessionStore[threadID] = sess
 	mcpSessionStoreMu.Unlock()
 
-	return mcpBuildResponseWithMeta(output, threadID, cli, role, model), nil
+	// Extract text content for response
+	textContent := mcpExtractTextContent(cli, output)
+	return mcpBuildResponseWithMeta(textContent, threadID, cli, role, model), nil
 }
 
-// mcpRunReply continues an existing session
+// mcpRunReply continues an existing session using native CLI resume
+// NO HISTORY RE-TRANSMISSION - uses native session/resume support
 func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface{}, error) {
 	if err := ValidatePrompt(input.Prompt); err != nil {
 		return nil, err
@@ -685,10 +697,8 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 		return nil, fmt.Errorf("unknown CLI: %s", sess.CLI)
 	}
 
-	// Build context prompt from history
-	contextPrompt := mcpBuildContextPrompt(sess.Messages, input.Prompt)
-	// Build args with original session config preserved
-	args := mcpBuildReplyArgsWithConfig(sess.CLI, contextPrompt, sess.Config)
+	// Build args using native resume - NO history re-transmission
+	args := mcpBuildResumeArgs(sess.CLI, sess.NativeThreadID, input.Prompt, sess.Config)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
@@ -698,16 +708,13 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 		return nil, err
 	}
 
-	// Update session
+	// Update session timestamp only (no message storage)
 	mcpSessionStoreMu.Lock()
-	sess.Messages = append(sess.Messages,
-		MCPMessage{Role: "user", Content: input.Prompt},
-		MCPMessage{Role: "assistant", Content: output},
-	)
 	sess.UpdatedAt = time.Now()
 	mcpSessionStoreMu.Unlock()
 
-	return mcpBuildResponseWithMeta(output, threadID, sess.CLI, sess.Role, sess.Model), nil
+	textContent := mcpExtractTextContent(sess.CLI, output)
+	return mcpBuildResponseWithMeta(textContent, threadID, sess.CLI, sess.Role, sess.Model), nil
 }
 
 // mcpRunRoleSession runs a role-based session
@@ -739,21 +746,25 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 		return nil, err
 	}
 
+	// Extract native thread ID
+	nativeThreadID := mcpExtractNativeThreadID(cli, output)
+
 	// Create session with role info
 	now := time.Now()
-	threadID := uuid.New().String()
+	threadID := nativeThreadID
+	if threadID == "" {
+		threadID = uuid.New().String()
+	}
+
 	sess := &MCPSession{
-		ID:    threadID,
-		CLI:   cli,
-		Role:  input.Role,
-		Model: role.Model,
-		Messages: []MCPMessage{
-			{Role: "user", Content: input.Prompt},
-			{Role: "assistant", Content: output},
-		},
-		Config:    MCPSessionConfig{}, // Role-based sessions use default config
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             threadID,
+		NativeThreadID: nativeThreadID,
+		CLI:            cli,
+		Role:           input.Role,
+		Model:          role.Model,
+		Config:         MCPSessionConfig{},
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	mcpSessionStoreMu.Lock()
@@ -761,7 +772,8 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 	mcpSessionStore[threadID] = sess
 	mcpSessionStoreMu.Unlock()
 
-	return mcpBuildResponseWithMeta(output, threadID, cli, input.Role, role.Model), nil
+	textContent := mcpExtractTextContent(cli, output)
+	return mcpBuildResponseWithMeta(textContent, threadID, cli, input.Role, role.Model), nil
 }
 
 // Helper functions
@@ -806,6 +818,10 @@ func mcpBuildCodexArgs(input MCPCodexInput) []string {
 	}
 	if input.IncludePlanTool != nil && *input.IncludePlanTool {
 		args = append(args, "-c", "include_plan_tool=true")
+	}
+	// Add reasoning effort for o-series models (o3, o4-mini, etc.)
+	if input.ReasoningEffort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%s", input.ReasoningEffort))
 	}
 
 	args = append(args, input.Prompt)
@@ -954,36 +970,146 @@ func mcpBuildRoleArgs(cli, prompt, model, reasoning string) []string {
 		if model != "" {
 			args = append(args, "-m", model)
 		}
+		// Reasoning effort for o-series models - no quotes needed
 		if reasoning != "" {
-			args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=\"%s\"", reasoning))
+			args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%s", reasoning))
 		}
 		args = append(args, prompt)
 		return args
 	case "claude":
-		args := []string{"-p", prompt, "--output-format", "stream-json", "--permission-mode", "dontAsk", "--verbose"}
+		args := []string{"-p", prompt, "--output-format", "stream-json", "--permission-mode", "bypassPermissions", "--verbose"}
 		if model != "" {
 			args = append(args, "--model", model)
 		}
 		return args
 	case "gemini":
-		args := []string{"-p", prompt, "--output-format", "stream-json"}
+		args := []string{"--output-format", "stream-json"}
 		if model != "" {
 			args = append(args, "-m", model)
 		}
+		args = append(args, prompt)
 		return args
 	}
 	return []string{prompt}
 }
 
-func mcpBuildContextPrompt(messages []MCPMessage, newPrompt string) string {
-	var sb strings.Builder
-	sb.WriteString("Previous conversation:\n")
-	for _, msg := range messages {
-		sb.WriteString(fmt.Sprintf("[%s]: %s\n", msg.Role, msg.Content))
+// mcpBuildResumeArgs builds arguments for native CLI resume (no history re-transmission)
+func mcpBuildResumeArgs(cli, nativeThreadID, prompt string, config MCPSessionConfig) []string {
+	switch cli {
+	case "codex":
+		// Codex: codex exec resume <session-id> [prompt]
+		args := []string{"exec", "resume"}
+		if nativeThreadID != "" {
+			args = append(args, nativeThreadID)
+		} else {
+			args = append(args, "--last")
+		}
+		args = append(args, "--json")
+		if config.ApprovalPolicy != "" {
+			args = append(args, "--approval-policy", config.ApprovalPolicy)
+		}
+		if config.Sandbox != "" {
+			args = append(args, "--sandbox", config.Sandbox)
+		}
+		args = append(args, prompt)
+		return args
+
+	case "claude":
+		// Claude: claude --resume <session-id> -p <prompt>
+		args := []string{"--output-format", "stream-json"}
+		if nativeThreadID != "" {
+			args = append(args, "--resume", nativeThreadID)
+		} else {
+			args = append(args, "--continue")
+		}
+		permissionMode := config.PermissionMode
+		if permissionMode == "" {
+			permissionMode = "bypassPermissions"
+		}
+		args = append(args, "--permission-mode", permissionMode, "--verbose")
+		args = append(args, "-p", prompt)
+		return args
+
+	case "gemini":
+		// Gemini: gemini --resume <session-id> <prompt>
+		args := []string{"--output-format", "stream-json"}
+		if nativeThreadID != "" {
+			args = append(args, "--resume", nativeThreadID)
+		} else {
+			args = append(args, "--resume", "latest")
+		}
+		if config.Yolo {
+			args = append(args, "--yolo")
+		}
+		if config.ApprovalMode != "" {
+			args = append(args, "--approval-mode", config.ApprovalMode)
+		}
+		args = append(args, prompt)
+		return args
 	}
-	sb.WriteString("\nCurrent request:\n")
-	sb.WriteString(newPrompt)
-	return sb.String()
+	return []string{prompt}
+}
+
+// mcpExtractNativeThreadID extracts the native thread/session ID from CLI output
+func mcpExtractNativeThreadID(cli, output string) string {
+	if output == "" {
+		return ""
+	}
+
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		switch cli {
+		case "codex":
+			// Codex JSON output: look for session_id or thread_id in various locations
+			if sessionID, ok := event["session_id"].(string); ok && sessionID != "" {
+				return sessionID
+			}
+			if threadID, ok := event["thread_id"].(string); ok && threadID != "" {
+				return threadID
+			}
+			// Check structuredContent.threadId pattern
+			if structured, ok := event["structuredContent"].(map[string]interface{}); ok {
+				if threadID, ok := structured["threadId"].(string); ok && threadID != "" {
+					return threadID
+				}
+			}
+
+		case "claude":
+			// Claude stream-json: look for session_id in system events
+			if sessionID, ok := event["session_id"].(string); ok && sessionID != "" {
+				return sessionID
+			}
+			if eventType, ok := event["type"].(string); ok && eventType == "system" {
+				if sessionID, ok := event["session_id"].(string); ok && sessionID != "" {
+					return sessionID
+				}
+			}
+
+		case "gemini":
+			// Gemini: look for session identifier
+			if sessionID, ok := event["session_id"].(string); ok && sessionID != "" {
+				return sessionID
+			}
+		}
+	}
+
+	return ""
+}
+
+// mcpExtractTextContent extracts user-facing text from CLI output
+func mcpExtractTextContent(cli, output string) string {
+	// For now, delegate to existing mcpExtractText which handles JSON parsing
+	return mcpExtractText(output)
 }
 
 func mcpBuildResponse(output, threadID string) map[string]interface{} {
