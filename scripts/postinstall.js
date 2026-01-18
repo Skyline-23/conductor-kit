@@ -109,8 +109,9 @@ async function main() {
     console.log(`Binary: ${binaryPath}`);
     
     // Run install command to set up skills/commands
+    // Use packageDir (npm package root) which contains skills/commands, not nativeDir (binary only)
     console.log('\nSetting up skills and commands...');
-    const installProcess = spawn(binaryPath, ['install', '--mode', 'link', '--repo', nativeDir], {
+    const installProcess = spawn(binaryPath, ['install', '--mode', 'copy', '--repo', packageDir], {
       stdio: 'inherit',
     });
     
