@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+const BINARY_NAME = 'conductor';
+
+function getBinaryPath() {
+  // Check for binary in package directory first
+  const packageBinary = path.join(__dirname, '..', 'native', BINARY_NAME);
+  if (fs.existsSync(packageBinary)) {
+    return packageBinary;
+  }
+
+  // Check common global install locations
+  const homeDir = os.homedir();
+  const possiblePaths = [
+    path.join(homeDir, '.conductor-kit', 'bin', BINARY_NAME),
+    '/usr/local/bin/' + BINARY_NAME,
+    '/opt/homebrew/bin/' + BINARY_NAME,
+  ];
+
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  return null;
+}
+
+function main() {
+  const binaryPath = getBinaryPath();
+
+  if (!binaryPath) {
+    console.error('Error: conductor binary not found.');
+    console.error('Run postinstall or install via Homebrew:');
+    console.error('  brew install Skyline-23/conductor-kit/conductor-kit');
+    process.exit(1);
+  }
+
+  const args = process.argv.slice(2);
+  const child = spawn(binaryPath, args, {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      CONDUCTOR_NPX: '1',
+    },
+  });
+
+  child.on('error', (err) => {
+    console.error(`Failed to start conductor: ${err.message}`);
+    process.exit(1);
+  });
+
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+    } else {
+      process.exit(code ?? 1);
+    }
+  });
+}
+
+main();

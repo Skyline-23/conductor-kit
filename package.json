@@ -1,0 +1,48 @@
+{
+  "name": "conductor-kit",
+  "version": "0.0.0",
+  "description": "Global skills pack and Go helper for Codex CLI and Claude Code",
+  "keywords": [
+    "claude",
+    "codex",
+    "cli",
+    "mcp",
+    "ai",
+    "assistant",
+    "skills"
+  ],
+  "homepage": "https://github.com/Skyline-23/conductor-kit",
+  "bugs": {
+    "url": "https://github.com/Skyline-23/conductor-kit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Skyline-23/conductor-kit.git"
+  },
+  "license": "MIT",
+  "author": "Skyline-23",
+  "bin": {
+    "conductor": "./bin/conductor"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "skills/",
+    "commands/",
+    "config/"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
