@@ -1,16 +1,14 @@
 ---
 name: conductor
 description: |
-  MANDATORY: Load BEFORE calling ANY mcp_conductor_* tools.
-
-  DO NOT directly call: mcp_conductor_claude, mcp_conductor_codex, mcp_conductor_gemini, mcp_conductor_conductor
-  This skill defines the CORRECT way to use conductor tools via role-based delegation.
-
-  TRIGGERS: sym, symphony, code, analyze, improve, review, debug, fix, refactor, implement, search, explore, plan, assess, audit, optimize, architecture, structure, build, test, deploy
-
-  REPLACES: Direct mcp_conductor_* calls, Task(Explore), Task(Plan), built-in search/grep agents.
-
-  Handles: code analysis, project structure, debugging, planning, implementing, refactoring, reviewing, testing, deploying, documentation - ALL code tasks.
+  CRITICAL: Load and read ENTIRE skill content before ANY coding task.
+  
+  This skill defines orchestration rules and role-based delegation.
+  DO NOT skip. DO NOT skim. Read the full SKILL.md content first.
+  
+  NEVER use built-in subagents - delegate via MCP roles defined in this skill.
+  
+  TRIGGERS: code, file, function, class, bug, error, fix, debug, refactor, implement, build, test, deploy, analyze, review, search, explore, find, plan, design, architecture, optimize, improve, migrate, security, performance
 ---
 
 # Conductor
