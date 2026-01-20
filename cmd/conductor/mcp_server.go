@@ -89,6 +89,8 @@ type MCPCodexInput struct {
 	Profile          string                 `json:"profile,omitempty"`
 	Sandbox          string                 `json:"sandbox,omitempty"`
 	IdleTimeoutMs    int                    `json:"idle_timeout_ms,omitempty"`
+	MemoryKey        string                 `json:"memory_key,omitempty"`
+	MemoryMode       string                 `json:"memory_mode,omitempty"`
 	// Reasoning effort for o-series models (low, medium, high)
 	ReasoningEffort string `json:"reasoning-effort,omitempty"`
 }
@@ -109,6 +111,8 @@ type MCPClaudeInput struct {
 	Agents             string `json:"agents,omitempty"`
 	Debug              bool   `json:"debug,omitempty"`
 	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
+	MemoryKey          string `json:"memory_key,omitempty"`
+	MemoryMode         string `json:"memory_mode,omitempty"`
 }
 
 // MCPGeminiInput for gemini tool
@@ -122,6 +126,8 @@ type MCPGeminiInput struct {
 	Cwd                string `json:"cwd,omitempty"`
 	Debug              bool   `json:"debug,omitempty"`
 	IdleTimeoutMs      int    `json:"idle_timeout_ms,omitempty"`
+	MemoryKey          string `json:"memory_key,omitempty"`
+	MemoryMode         string `json:"memory_mode,omitempty"`
 }
 
 // MCPReplyInput for *-reply tools
@@ -129,6 +135,8 @@ type MCPReplyInput struct {
 	Prompt         string `json:"prompt"`
 	ThreadID       string `json:"threadId"`
 	ConversationID string `json:"conversationId,omitempty"` // deprecated alias
+	MemoryKey      string `json:"memory_key,omitempty"`
+	MemoryMode     string `json:"memory_mode,omitempty"`
 }
 
 // MCPConductorInput for role-based routing
@@ -136,6 +144,15 @@ type MCPConductorInput struct {
 	Prompt        string `json:"prompt"`
 	Role          string `json:"role"`
 	IdleTimeoutMs int    `json:"idle_timeout_ms,omitempty"`
+	MemoryKey     string `json:"memory_key,omitempty"`
+	MemoryMode    string `json:"memory_mode,omitempty"`
+}
+
+type MCPMemoryInput struct {
+	Action    string `json:"action"`
+	Key       string `json:"key,omitempty"`
+	Value     string `json:"value,omitempty"`
+	Separator string `json:"separator,omitempty"`
 }
 
 func runMCPServer(args []string) int {
@@ -166,18 +183,29 @@ Parameters:
 - config: Individual config overrides
 - base-instructions: Custom base instructions
 - include-plan-tool: Include plan tool in conversation
-- reasoning-effort: Reasoning effort for o-series models ("low", "medium", "high")`,
+- reasoning-effort: Reasoning effort for o-series models ("low", "medium", "high")
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPCodexInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
 		}
+		prompt := input.Prompt
+		if input.MemoryKey != "" {
+			var err error
+			prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		prompt = applySharedMemory(prompt)
 		config := MCPSessionConfig{
 			ApprovalPolicy: input.ApprovalPolicy,
 			Sandbox:        input.Sandbox,
 			Cwd:            input.Cwd,
 			Profile:        input.Profile,
 		}
-		result, err := mcpRunSessionWithConfig(ctx, "codex", "", input.Model, input.Prompt, mcpBuildCodexArgs(input), input.IdleTimeoutMs, config)
+		result, err := mcpRunSessionWithConfig(ctx, "codex", "", input.Model, prompt, mcpBuildCodexArgs(input), input.IdleTimeoutMs, config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -190,7 +218,9 @@ Parameters:
 
 Parameters:
 - prompt (required): The next user prompt
-- threadId (required): Thread ID from previous response`,
+- threadId (required): Thread ID from previous response
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		result, err := mcpRunReply(ctx, input)
 		if err != nil {
@@ -217,11 +247,22 @@ Parameters:
 - add-dir: Additional directories to include (space-separated)
 - mcp-config: Path to MCP server config JSON
 - agents: JSON object defining custom subagents
-- debug: Enable debug mode`,
+- debug: Enable debug mode
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPClaudeInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
 		}
+		prompt := input.Prompt
+		if input.MemoryKey != "" {
+			var err error
+			prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		prompt = applySharedMemory(prompt)
 		config := MCPSessionConfig{
 			PermissionMode:     input.PermissionMode,
 			AllowedTools:       input.AllowedTools,
@@ -229,7 +270,7 @@ Parameters:
 			SystemPrompt:       input.SystemPrompt,
 			AppendSystemPrompt: input.AppendSystemPrompt,
 		}
-		result, err := mcpRunSessionWithConfig(ctx, "claude", "", input.Model, input.Prompt, mcpBuildClaudeArgs(input), input.IdleTimeoutMs, config)
+		result, err := mcpRunSessionWithConfig(ctx, "claude", "", input.Model, prompt, mcpBuildClaudeArgs(input), input.IdleTimeoutMs, config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -242,7 +283,9 @@ Parameters:
 
 Parameters:
 - prompt (required): The next user prompt
-- threadId (required): Thread ID from previous response`,
+- threadId (required): Thread ID from previous response
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		result, err := mcpRunReply(ctx, input)
 		if err != nil {
@@ -264,11 +307,22 @@ Parameters:
 - approval-mode: Approval policy ("auto_edit", etc.)
 - include-directories: Comma-separated additional directories to include
 - cwd: Working directory for the session
-- debug: Enable debug mode`,
+- debug: Enable debug mode
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPGeminiInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		if err := ValidatePrompt(input.Prompt); err != nil {
 			return nil, nil, err
 		}
+		prompt := input.Prompt
+		if input.MemoryKey != "" {
+			var err error
+			prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		prompt = applySharedMemory(prompt)
 		config := MCPSessionConfig{
 			Sandbox:            input.Sandbox,
 			Yolo:               input.Yolo,
@@ -276,7 +330,7 @@ Parameters:
 			IncludeDirectories: input.IncludeDirectories,
 			Cwd:                input.Cwd,
 		}
-		result, err := mcpRunSessionWithConfig(ctx, "gemini", "", input.Model, input.Prompt, mcpBuildGeminiArgs(input), input.IdleTimeoutMs, config)
+		result, err := mcpRunSessionWithConfig(ctx, "gemini", "", input.Model, prompt, mcpBuildGeminiArgs(input), input.IdleTimeoutMs, config)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -289,7 +343,9 @@ Parameters:
 
 Parameters:
 - prompt (required): The next user prompt
-- threadId (required): Thread ID from previous response`,
+- threadId (required): Thread ID from previous response
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		result, err := mcpRunReply(ctx, input)
 		if err != nil {
@@ -306,6 +362,8 @@ Parameters:
 Parameters:
 - prompt (required): The user prompt
 - role (required): Role name (e.g., "oracle", "explore", "librarian")
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"
 
 Available roles are defined in ~/.conductor-kit/conductor.json`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPConductorInput) (*mcp.CallToolResult, map[string]interface{}, error) {
@@ -314,6 +372,13 @@ Available roles are defined in ~/.conductor-kit/conductor.json`,
 		}
 		if input.Role == "" {
 			return nil, nil, fmt.Errorf("role is required")
+		}
+		if input.MemoryKey != "" {
+			prompt, err := applyMemoryToPrompt(input.Prompt, input.MemoryKey, input.MemoryMode)
+			if err != nil {
+				return nil, nil, err
+			}
+			input.Prompt = prompt
 		}
 		result, err := mcpRunRoleSession(ctx, input)
 		if err != nil {
@@ -328,13 +393,37 @@ Available roles are defined in ~/.conductor-kit/conductor.json`,
 
 Parameters:
 - prompt (required): The next user prompt
-- threadId (required): Thread ID from previous response`,
+- threadId (required): Thread ID from previous response
+- memory_key: Shared memory key to inject
+- memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 		result, err := mcpRunReply(ctx, input)
 		if err != nil {
 			return nil, nil, err
 		}
 		return nil, result, nil
+	})
+
+	// ===== Shared Memory Tool =====
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "memory",
+		Description: `Manage shared memory for this MCP server.
+
+Cached per project (TTL + git HEAD invalidation).
+
+Actions:
+- set: store value at key
+- append: append value with separator
+- get: fetch value by key
+- list: list keys
+- clear: delete a key
+- clear_all: clear everything`,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPMemoryInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+		payload, err := mcpHandleMemory(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		return nil, payload, nil
 	})
 
 	// ===== Status Tool =====
@@ -666,6 +755,7 @@ func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt strin
 
 	// Extract text content for response
 	textContent := mcpExtractTextContent(cli, output)
+	rememberSharedMemory(cli, role, textContent)
 	return mcpBuildResponseWithMeta(textContent, threadID, cli, role, model), nil
 }
 
@@ -675,6 +765,16 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 	if err := ValidatePrompt(input.Prompt); err != nil {
 		return nil, err
 	}
+
+	prompt := input.Prompt
+	if input.MemoryKey != "" {
+		var err error
+		prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+		if err != nil {
+			return nil, err
+		}
+	}
+	prompt = applySharedMemory(prompt)
 
 	threadID := input.ThreadID
 	if threadID == "" {
@@ -698,7 +798,7 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 	}
 
 	// Build args using native resume - NO history re-transmission
-	args := mcpBuildResumeArgs(sess.CLI, sess.NativeThreadID, input.Prompt, sess.Config)
+	args := mcpBuildResumeArgs(sess.CLI, sess.NativeThreadID, prompt, sess.Config)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
@@ -714,6 +814,7 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 	mcpSessionStoreMu.Unlock()
 
 	textContent := mcpExtractTextContent(sess.CLI, output)
+	rememberSharedMemory(sess.CLI, sess.Role, textContent)
 	return mcpBuildResponseWithMeta(textContent, threadID, sess.CLI, sess.Role, sess.Model), nil
 }
 
@@ -736,7 +837,8 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 		return nil, fmt.Errorf("unknown CLI for role %s: %s", input.Role, cli)
 	}
 
-	args := mcpBuildRoleArgs(cli, input.Prompt, role.Model, role.Reasoning)
+	prompt := applySharedMemory(input.Prompt)
+	args := mcpBuildRoleArgs(cli, prompt, role.Model, role.Reasoning)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
@@ -773,6 +875,7 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 	mcpSessionStoreMu.Unlock()
 
 	textContent := mcpExtractTextContent(cli, output)
+	rememberSharedMemory(cli, input.Role, textContent)
 	return mcpBuildResponseWithMeta(textContent, threadID, cli, input.Role, role.Model), nil
 }
 

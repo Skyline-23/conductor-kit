@@ -65,6 +65,7 @@ type AsyncMeta struct {
 }
 
 func buildSpecFromAgent(agent, prompt string, defaults Defaults, logPrompt bool) (CmdSpec, error) {
+	prompt = applySharedMemory(prompt)
 	mapping := map[string]CmdSpec{
 		"claude": {Agent: "claude", Cmd: "claude", Args: []string{"-p", prompt}},
 		"codex":  {Agent: "codex", Cmd: "codex", Args: []string{"exec", prompt}},
@@ -93,6 +94,7 @@ func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverrid
 	if err != nil {
 		return CmdSpec{}, err
 	}
+	prompt = applySharedMemory(prompt)
 	defaults := normalizeDefaults(cfg.Defaults)
 	model := modelOverride
 	if model == "" {
@@ -634,6 +636,15 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 		Error:        errMsg,
 	}
 	_ = appendRunRecord(record, spec.LogPrompt)
+	if status == "ok" {
+		output := strings.TrimSpace(stdout.String())
+		if output == "" {
+			output = strings.TrimSpace(stderr.String())
+		}
+		if output != "" {
+			rememberSharedMemory(spec.Agent, spec.Role, strings.TrimSpace(mcpExtractText(output)))
+		}
+	}
 
 	return payload, nil
 }
@@ -894,6 +905,17 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 		record.Error = ""
 	}
 	_ = appendRunRecord(record, spec.LogPrompt)
+	if finalMeta.Status == "ok" {
+		_ = stdoutFile.Sync()
+		_ = stderrFile.Sync()
+		output := strings.TrimSpace(readTail(stdoutFile.Name(), memoryMaxBytes))
+		if output == "" {
+			output = strings.TrimSpace(readTail(stderrFile.Name(), memoryMaxBytes))
+		}
+		if output != "" {
+			rememberSharedMemory(spec.Agent, spec.Role, strings.TrimSpace(mcpExtractText(output)))
+		}
+	}
 }
 
 func getRunStatus(runID string, tailBytes int) (map[string]interface{}, error) {
