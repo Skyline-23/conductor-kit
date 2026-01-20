@@ -825,6 +825,9 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
+	if cfg.Disabled {
+		return nil, fmt.Errorf("conductor is disabled (run `conductor enable` to resume)")
+	}
 
 	role, ok := cfg.Roles[input.Role]
 	if !ok {

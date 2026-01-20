@@ -26,6 +26,10 @@ func main() {
 		os.Exit(runInstall(rest))
 	case "uninstall":
 		os.Exit(runUninstall(rest))
+	case "disable":
+		os.Exit(runDisable(rest))
+	case "enable":
+		os.Exit(runEnable(rest))
 	case "settings":
 		os.Exit(runSettings(rest))
 	case "status":
@@ -51,6 +55,8 @@ func resolveCommand(args []string) (string, []string) {
 	subcommands := map[string]bool{
 		"install":         true,
 		"uninstall":       true,
+		"disable":         true,
+		"enable":          true,
 		"settings":        true,
 		"status":          true,
 		"roles":           true,
@@ -70,6 +76,8 @@ func resolveCommand(args []string) (string, []string) {
 		"conductor":                 "",
 		"conductor-kit":             "install",
 		"conductor-kit-install":     "install",
+		"conductor-disable":         "disable",
+		"conductor-enable":          "enable",
 		"conductor-uninstall":       "uninstall",
 		"conductor-settings":        "settings",
 		"conductor-status":          "status",
@@ -80,6 +88,8 @@ func resolveCommand(args []string) (string, []string) {
 
 		"conductor-config-validate.exe": "config-validate",
 		"conductor-doctor.exe":          "doctor",
+		"conductor-disable.exe":         "disable",
+		"conductor-enable.exe":          "enable",
 		"conductor-settings.exe":        "settings",
 		"conductor-uninstall.exe":       "uninstall",
 		"conductor-mcp-bundle.exe":      "mcp-bundle",
@@ -105,9 +115,11 @@ Usage:
   conductor <command> [options]
 
 Commands:
-  install              Install skills, commands, bins, and config
-  uninstall            Remove skills, commands, bins, and config
-  settings             Update role CLI/model settings
+	  install              Install skills, commands, bins, and config
+	  uninstall            Remove skills, commands, bins, and config
+	  disable              Disable conductor role routing
+	  enable               Re-enable conductor role routing
+	  settings             Update role CLI/model settings
   status               Check CLI availability and readiness
   roles                List role -> CLI/model mappings
   config-validate      Validate conductor config JSON
@@ -116,9 +128,10 @@ Commands:
   mcp                  Run unified MCP server (codex/claude/gemini + conductor)
   version              Show version information
 
-Aliases:
-  conductor-kit, conductor-kit-install
-  conductor-uninstall, conductor-settings, conductor-status
+	Aliases:
+	  conductor-kit, conductor-kit-install
+	  conductor-disable, conductor-enable, conductor-uninstall
+	  conductor-settings, conductor-status
   conductor-config-validate, conductor-doctor
   conductor-mcp-bundle, conductor-mcp
 `, Version)

@@ -12,6 +12,7 @@ type Config struct {
 	Defaults Defaults              `json:"defaults"`
 	Roles    map[string]RoleConfig `json:"roles"`
 	Runtime  RuntimeConfig         `json:"runtime"`
+	Disabled bool                  `json:"disabled,omitempty"`
 }
 
 // Defaults contains global default settings for all roles.

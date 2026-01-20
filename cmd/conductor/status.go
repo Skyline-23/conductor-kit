@@ -51,6 +51,12 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 	configPath, _ := payload["config"].(string)
 	sb.WriteString(labelStyle.Render("Config: ") + pathStyle.Render(configPath) + "\n\n")
 
+	disabled, _ := payload["disabled"].(bool)
+	if disabled {
+		sb.WriteString(statusWarnStyle.Render("Conductor disabled") + "\n")
+		sb.WriteString(valueStyle.Render("Use `conductor enable` to resume.") + "\n\n")
+	}
+
 	// CLI Auth Status section
 	sb.WriteString(lipgloss.NewStyle().Bold(true).Render("CLIs") + "\n")
 	sb.WriteString(renderDivider(50) + "\n")
@@ -87,7 +93,10 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 	}
 
 	sb.WriteString("\n")
-	if allOK {
+	if disabled {
+		summary := statusWarnStyle.Render("Conductor disabled")
+		sb.WriteString(summary + "\n")
+	} else if allOK {
 		summary := statusOKStyle.Render("All systems ready")
 		sb.WriteString(summary + "\n")
 	} else {

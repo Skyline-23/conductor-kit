@@ -33,9 +33,10 @@ func listRolesPayload(cfg Config, configPath string) map[string]interface{} {
 		roles = append(roles, entry)
 	}
 	return map[string]interface{}{
-		"count":  len(roles),
-		"roles":  roles,
-		"config": configPath,
+		"count":    len(roles),
+		"roles":    roles,
+		"config":   configPath,
+		"disabled": cfg.Disabled,
 	}
 }
 
@@ -81,9 +82,10 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 		roles = append(roles, entry)
 	}
 	return map[string]interface{}{
-		"count":  len(roles),
-		"roles":  roles,
-		"config": configPath,
+		"count":    len(roles),
+		"roles":    roles,
+		"config":   configPath,
+		"disabled": cfg.Disabled,
 	}, ok
 }
 
