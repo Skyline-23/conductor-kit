@@ -9,7 +9,7 @@ import (
 	"reflect"
 )
 
-var opencodeMCPNames = []string{"gemini-cli", "claude-cli", "codex-cli"}
+var opencodeMCPNames = []string{"conductor"}
 
 func openCodeConfigPath(opencodeHome, projectRoot string) string {
 	if projectRoot != "" {
