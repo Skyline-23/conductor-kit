@@ -141,8 +141,11 @@ conductor 도구를 "sage" 역할로 사용해서 이 복잡한 문제를 해결
 | `claude` | Claude Code 세션 실행 | 코드 생성, 리팩토링 |
 | `gemini` | Gemini CLI 세션 실행 | 웹 검색, 리서치 |
 | `conductor` | 역할 기반 라우팅 | 작업에 최적의 CLI 자동 선택 |
+| `memory` | 공유 메모리 캐시 | 공유 컨텍스트 저장/조회 |
 | `*-reply` | 세션 계속 | 멀티턴 대화 |
 | `status` | CLI 가용성 확인 | 진단 |
+
+공유 메모리는 프로젝트 단위로 캐시됩니다(TTL + git HEAD 변경 시 무효화). MCP 호출에 자동으로 prepend 되며, `memory`로 갱신하거나 `memory_key`/`memory_mode`로 추가 키를 주입하세요.
 
 ### 예시: 멀티-CLI 워크플로우
 
@@ -233,6 +236,8 @@ conductor settings --list-models --cli codex  # 모델 목록
 |--------|------|
 | `conductor install` | CLI에 스킬/커맨드 설치 |
 | `conductor uninstall` | 설치된 파일 제거 |
+| `conductor disable` | 역할 라우팅 비활성화 |
+| `conductor enable` | 역할 라우팅 재활성화 |
 | `conductor status` | CLI 인증 및 가용성 확인 |
 | `conductor doctor` | 전체 진단 |
 | `conductor settings` | 역할 및 모델 설정 |

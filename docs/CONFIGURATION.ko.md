@@ -25,6 +25,7 @@ conductor-kit은 JSON 설정 파일을 사용하여 역할 기반 CLI 라우팅,
 
 ```json
 {
+  "disabled": false,
   "defaults": {
     "idle_timeout_ms": 120000,
     "summary_only": false,
@@ -54,6 +55,12 @@ conductor-kit은 JSON 설정 파일을 사용하여 역할 기반 CLI 라우팅,
   }
 }
 ```
+
+## 전역 플래그
+
+| 필드 | 타입 | 기본값 | 설명 |
+|------|------|--------|------|
+| `disabled` | bool | `false` | 역할 라우팅을 일시 정지합니다. 재개하려면 다시 활성화하세요. |
 
 ## Defaults 섹션
 
@@ -121,6 +128,7 @@ conductor-kit은 JSON 설정 파일을 사용하여 역할 기반 CLI 라우팅,
 
 ```json
 {
+  "disabled": false,
   "defaults": {
     "idle_timeout_ms": 120000,
     "max_parallel": 4,

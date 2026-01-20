@@ -14,6 +14,7 @@ conductor-kit uses a JSON configuration file to control role-based CLI routing, 
 
 ```json
 {
+  "disabled": false,
   "defaults": {
     "idle_timeout_ms": 120000,
     "summary_only": false,
@@ -42,6 +43,12 @@ conductor-kit uses a JSON configuration file to control role-based CLI routing, 
   }
 }
 ```
+
+## Global Flags
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `disabled` | bool | `false` | Short-circuit conductor role routing until re-enabled |
 
 ## Defaults Section
 
@@ -119,6 +126,7 @@ When `args` and `model_flag` are omitted, these defaults are used:
 
 ```json
 {
+  "disabled": false,
   "defaults": {
     "idle_timeout_ms": 120000,
     "max_parallel": 4,
