@@ -129,7 +129,7 @@ Do NOT proceed until all delegates complete.
 
 **Step 1: Get role mappings** via CLI (avoids config file permission issues):
 ```bash
-conductor roles --json
+conductor roles
 ```
 
 **Step 2: Find the MCP tool** from your available tools list:
