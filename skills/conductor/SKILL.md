@@ -66,7 +66,8 @@ When delegating to external CLIs (gemini, codex, claude via MCP):
 
 ## Activation
 
-**This skill activates automatically for all code-related tasks.**
+**This skill activates automatically for all code-related tasks when Conductor is enabled.**
+If Conductor is disabled, do not auto-activate or re-enable it; inform the user and proceed without Conductor unless they explicitly request enabling.
 
 Conductor assesses the task and chooses the appropriate mode:
 
@@ -79,10 +80,11 @@ Conductor assesses the task and chooses the appropriate mode:
 | **Release** | Deploy, publish, release | Release checklist + validation |
 
 **Decision flow:**
-1. Skill loads → Conductor activates
-2. Assess task complexity
-3. Simple task → execute directly
-4. Complex/specialized → delegate via MCP
+1. Skill loads → Conductor activates (only when enabled)
+2. If disabled → do not enable; inform user and proceed without Conductor
+3. Assess task complexity
+4. Simple task → execute directly
+5. Complex/specialized → delegate via MCP
 
 ---
 

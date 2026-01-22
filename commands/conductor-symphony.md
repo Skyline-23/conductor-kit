@@ -3,7 +3,8 @@ description: "Symphony mode: full orchestration loop (search -> plan -> execute 
 argument-hint: "task or objective"
 ---
 
-Load conductor skill. Activate symphony mode.
+Respect disabled state. If Conductor is disabled, do not enable it automatically; inform the user and proceed without Conductor unless they explicitly request enabling.
+If enabled, load conductor skill. Activate symphony mode.
 
 Your first response must start with "SYMPHONY MODE ENABLED!".
 

@@ -113,10 +113,19 @@ func upsertOpenCodeMCP(cfg map[string]interface{}) (bool, error) {
 		changed = true
 	}
 
+	desiredEnabled := true
+	if existingVal, ok := mcp["conductor"]; ok {
+		if existingMap, ok := existingVal.(map[string]interface{}); ok {
+			if enabledVal, ok := existingMap["enabled"].(bool); ok {
+				desiredEnabled = enabledVal
+			}
+		}
+	}
+
 	desired := map[string]interface{}{
 		"type":    "local",
 		"command": []string{"conductor", "mcp"},
-		"enabled": true,
+		"enabled": desiredEnabled,
 	}
 
 	if existing, ok := mcp["conductor"]; !ok || !reflect.DeepEqual(existing, desired) {
