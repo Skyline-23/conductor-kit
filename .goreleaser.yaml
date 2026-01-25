@@ -84,7 +84,7 @@ homebrew_casks:
       pre:
         uninstall: |
           if File.exist?("#{staged_path}/conductor")
-            system_command "#{staged_path}/conductor", args: ["uninstall", "--force"]
+            system_command "#{staged_path}/conductor", args: ["uninstall", "--force", "--no-config"]
           end
     caveats: |
       Skills/commands were linked into ~/.codex and ~/.claude during install.
