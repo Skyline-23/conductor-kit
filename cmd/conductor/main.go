@@ -117,8 +117,8 @@ Usage:
 Commands:
 	  install              Install skills, commands, bins, and config
 	  uninstall            Remove skills, commands, bins, and config
-	  disable              Disable conductor role routing
-	  enable               Re-enable conductor role routing
+	  disable              Disable conductor (remove skills/commands + MCP)
+	  enable               Enable conductor (restore skills/commands + MCP)
 	  settings             Update role CLI/model settings
   status               Check CLI availability and readiness
   roles                List role -> CLI/model mappings

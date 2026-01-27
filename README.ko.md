@@ -236,8 +236,8 @@ conductor settings --list-models --cli codex  # 모델 목록
 |--------|------|
 | `conductor install` | CLI에 스킬/커맨드 설치 |
 | `conductor uninstall` | 설치된 파일 제거 |
-| `conductor disable` | 역할 라우팅 비활성화 |
-| `conductor enable` | 역할 라우팅 재활성화 |
+| `conductor disable` | Conductor 비활성화 (스킬/커맨드 제거 + MCP 해제) |
+| `conductor enable` | Conductor 활성화 (스킬/커맨드 복구 + MCP 등록) |
 | `conductor status` | CLI 인증 및 가용성 확인 |
 | `conductor doctor` | 전체 진단 |
 | `conductor settings` | 역할 및 모델 설정 |

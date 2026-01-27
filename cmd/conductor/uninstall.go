@@ -6,15 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
-
-var conductorCommandFiles = []string{
-	"conductor-plan.md",
-	"conductor-search.md",
-	"conductor-implement.md",
-	"conductor-release.md",
-	"conductor-symphony.md",
-}
 
 func runUninstall(args []string) int {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
@@ -71,9 +64,7 @@ func runUninstall(args []string) int {
 		}
 		if removeCommands {
 			commandsDir := filepath.Join(t.home, t.commandsDir)
-			for _, name := range conductorCommandFiles {
-				removePath(filepath.Join(commandsDir, name), *dryRun)
-			}
+			removeConductorCommands(commandsDir, *dryRun)
 		}
 	}
 
@@ -132,6 +123,22 @@ func removePath(path string, dryRun bool) {
 		return
 	}
 	_ = os.RemoveAll(path)
+}
+
+func removeConductorCommands(commandsDir string, dryRun bool) {
+	entries, err := os.ReadDir(commandsDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "conductor-") && strings.HasSuffix(name, ".md") {
+			removePath(filepath.Join(commandsDir, name), dryRun)
+		}
+	}
 }
 
 func removeBin(path string, force, dryRun bool) {

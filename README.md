@@ -236,8 +236,8 @@ conductor settings --list-models --cli codex  # List models
 |---------|-------------|
 | `conductor install` | Install skills/commands to CLIs |
 | `conductor uninstall` | Remove installed files |
-| `conductor disable` | Disable conductor role routing |
-| `conductor enable` | Re-enable conductor role routing |
+| `conductor disable` | Disable conductor (remove skills/commands + MCP) |
+| `conductor enable` | Enable conductor (restore skills/commands + MCP) |
 | `conductor status` | Check CLI auth and availability |
 | `conductor doctor` | Full diagnostics |
 | `conductor settings` | Configure roles and models |
