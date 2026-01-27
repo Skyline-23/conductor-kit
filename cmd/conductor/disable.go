@@ -47,6 +47,12 @@ func runToggleDisabled(args []string, disabled bool) int {
 		return 1
 	}
 
+	*configPath = expandPath(*configPath)
+	*codexHome = expandPath(*codexHome)
+	*claudeHome = expandPath(*claudeHome)
+	*opencodeHome = expandPath(*opencodeHome)
+	*repoRoot = expandPath(*repoRoot)
+
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
 		fmt.Println("Config error:", err.Error())

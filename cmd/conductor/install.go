@@ -43,6 +43,12 @@ func runInstall(args []string) int {
 		return 1
 	}
 
+	*codexHome = expandPath(*codexHome)
+	*claudeHome = expandPath(*claudeHome)
+	*opencodeHome = expandPath(*opencodeHome)
+	*binDir = expandPath(*binDir)
+	*repoRoot = expandPath(*repoRoot)
+
 	root := *repoRoot
 	if root == "" {
 		root = detectRepoRoot()

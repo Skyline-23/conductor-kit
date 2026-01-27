@@ -43,6 +43,11 @@ func runUninstall(args []string) int {
 		conductorKitDir = filepath.Join(cwd, ".conductor-kit")
 	}
 
+	*codexHome = expandPath(*codexHome)
+	*claudeHome = expandPath(*claudeHome)
+	*opencodeHome = expandPath(*opencodeHome)
+	*binDir = expandPath(*binDir)
+
 	removeCommands := *commandsOnly || !*skillsOnly
 	removeSkills := !*commandsOnly
 
