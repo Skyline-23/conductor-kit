@@ -74,6 +74,22 @@ func runInstall(args []string) int {
 	installSkills := !*commandsOnly
 	installBins := !*noBins
 	installConfig := !*noConfig
+	disabled := false
+	if pathExists(configDest) {
+		cfg, err := loadConfig(configDest)
+		if err != nil {
+			fmt.Printf("Config error: %v\n", err)
+			return 1
+		}
+		if cfg.Disabled {
+			disabled = true
+			if installSkills || installCommands {
+				fmt.Printf("Conductor is disabled in %s; skipping skills/commands/MCP install. Run `conductor enable` to re-enable.\n", configDest)
+			}
+			installSkills = false
+			installCommands = false
+		}
+	}
 
 	if installSkills && !pathExists(skillsSource) {
 		fmt.Printf("Missing skills source: %s\n", skillsSource)
@@ -108,7 +124,7 @@ func runInstall(args []string) int {
 	if *mcpFlag != "" {
 		selectedMCPs = parseMCPFlag(*mcpFlag)
 	}
-	if *cliFlag == "" && *mcpFlag == "" && (*interactive || (!*dryRun && isTerminal(os.Stdout))) {
+	if *cliFlag == "" && *mcpFlag == "" && !disabled && (*interactive || (!*dryRun && isTerminal(os.Stdout))) {
 		selections := promptInstallSelectionsTUI()
 		selectedCLIs = selections.clis
 		selectedMCPs = selections.mcps
@@ -116,6 +132,9 @@ func runInstall(args []string) int {
 			fmt.Println("Installation cancelled.")
 			return 0
 		}
+	}
+	if disabled {
+		selectedMCPs["mcp"] = false
 	}
 
 	var targets []struct {
