@@ -195,6 +195,12 @@ func projectRootFromConfigPath(configPath string) string {
 	if filepath.Base(configDir) != ".conductor-kit" {
 		return ""
 	}
+	if home := os.Getenv("HOME"); home != "" {
+		userConfigDir := filepath.Clean(filepath.Join(home, ".conductor-kit"))
+		if filepath.Clean(configDir) == userConfigDir {
+			return ""
+		}
+	}
 	return filepath.Dir(configDir)
 }
 
