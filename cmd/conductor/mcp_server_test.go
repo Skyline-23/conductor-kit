@@ -185,6 +185,53 @@ func TestMcpBuildResumeArgs(t *testing.T) {
 	}
 }
 
+func TestEnsureMCPRoleArgsClaudeAddsDefaults(t *testing.T) {
+	args := []string{"-p", "prompt"}
+	out := ensureMCPRoleArgs("claude", args)
+	if !hasArgFlag(out, "--output-format") {
+		t.Errorf("expected --output-format in args, got %v", out)
+	}
+	if !hasArgFlag(out, "--permission-mode") {
+		t.Errorf("expected --permission-mode in args, got %v", out)
+	}
+	if !hasArgFlag(out, "--verbose") {
+		t.Errorf("expected --verbose in args, got %v", out)
+	}
+}
+
+func TestEnsureMCPRoleArgsGeminiAddsDefaults(t *testing.T) {
+	args := []string{"-p", "prompt"}
+	out := ensureMCPRoleArgs("gemini", args)
+	if !hasArgFlag(out, "--output-format") {
+		t.Errorf("expected --output-format in args, got %v", out)
+	}
+}
+
+func TestEnsureMCPRoleArgsRespectsExistingFlags(t *testing.T) {
+	args := []string{"-p", "prompt", "--output-format", "text", "--permission-mode", "dontAsk", "--verbose"}
+	out := ensureMCPRoleArgs("claude", args)
+	if countArgFlag(out, "--output-format") != 1 {
+		t.Errorf("expected single --output-format flag, got %v", out)
+	}
+	if countArgFlag(out, "--permission-mode") != 1 {
+		t.Errorf("expected single --permission-mode flag, got %v", out)
+	}
+	if countArgFlag(out, "--verbose") != 1 {
+		t.Errorf("expected single --verbose flag, got %v", out)
+	}
+}
+
+func countArgFlag(args []string, flag string) int {
+	count := 0
+	prefix := flag + "="
+	for _, arg := range args {
+		if arg == flag || strings.HasPrefix(arg, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
 func TestBuildCodexBridgeInputRespectsRoleArgs(t *testing.T) {
 	role := RoleConfig{
 		Model:     "gpt-5.2-codex",

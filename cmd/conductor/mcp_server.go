@@ -914,6 +914,7 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 	}
 
 	args := buildRoleArgs(role, prompt, role.Model, role.Reasoning)
+	args = ensureMCPRoleArgs(cli, args)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
@@ -1288,6 +1289,47 @@ func mcpBuildRoleArgs(cli, prompt, model, reasoning string) []string {
 		return args
 	}
 	return []string{prompt}
+}
+
+func ensureMCPRoleArgs(cli string, args []string) []string {
+	switch cli {
+	case "claude":
+		return ensureClaudeMCPArgs(args)
+	case "gemini":
+		return ensureGeminiMCPArgs(args)
+	default:
+		return args
+	}
+}
+
+func ensureClaudeMCPArgs(args []string) []string {
+	if !hasArgFlag(args, "--output-format") {
+		args = append(args, "--output-format", "stream-json")
+	}
+	if !hasArgFlag(args, "--permission-mode") {
+		args = append(args, "--permission-mode", "bypassPermissions")
+	}
+	if !hasArgFlag(args, "--verbose") {
+		args = append(args, "--verbose")
+	}
+	return args
+}
+
+func ensureGeminiMCPArgs(args []string) []string {
+	if !hasArgFlag(args, "--output-format") {
+		args = append(args, "--output-format", "stream-json")
+	}
+	return args
+}
+
+func hasArgFlag(args []string, flag string) bool {
+	prefix := flag + "="
+	for _, arg := range args {
+		if arg == flag || strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildCodexBridgeInput(prompt string, idleTimeoutMs int, role RoleConfig) MCPCodexInput {
