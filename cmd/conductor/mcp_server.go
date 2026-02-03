@@ -1234,6 +1234,12 @@ func ensureClaudeMCPArgs(args []string, prompt string) []string {
 	if !hasArgFlag(args, "--verbose") {
 		extra = append(extra, "--verbose")
 	}
+	if hasArgExact(args, "-p") {
+		return insertArgsBeforeFlag(args, "-p", extra)
+	}
+	if hasArgExact(args, "--print") {
+		return insertArgsBeforeFlag(args, "--print", extra)
+	}
 	return insertArgsBeforePrompt(args, prompt, extra)
 }
 
@@ -1341,6 +1347,20 @@ func insertArgsBeforePrompt(args []string, prompt string, extra []string) []stri
 		return args
 	}
 	idx := indexOf(args, prompt)
+	if idx < 0 {
+		return append(args, extra...)
+	}
+	out := append([]string{}, args[:idx]...)
+	out = append(out, extra...)
+	out = append(out, args[idx:]...)
+	return out
+}
+
+func insertArgsBeforeFlag(args []string, flag string, extra []string) []string {
+	if len(extra) == 0 {
+		return args
+	}
+	idx := indexOf(args, flag)
 	if idx < 0 {
 		return append(args, extra...)
 	}

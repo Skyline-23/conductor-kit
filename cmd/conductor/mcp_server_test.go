@@ -197,13 +197,20 @@ func TestEnsureMCPRoleArgsClaudeAddsDefaults(t *testing.T) {
 	if !hasArgFlag(out, "--verbose") {
 		t.Errorf("expected --verbose in args, got %v", out)
 	}
+	pIndex := indexOf(out, "-p")
+	if pIndex < 0 {
+		t.Fatalf("expected -p to be present, got %v", out)
+	}
 	promptIndex := indexOf(out, "prompt")
 	if promptIndex < 0 {
 		t.Fatalf("expected prompt to be present, got %v", out)
 	}
+	if promptIndex != pIndex+1 {
+		t.Errorf("expected prompt immediately after -p, got %v", out)
+	}
 	formatIndex := indexOf(out, "--output-format")
-	if formatIndex > -1 && formatIndex > promptIndex {
-		t.Errorf("expected --output-format before prompt, got %v", out)
+	if formatIndex > -1 && formatIndex > pIndex {
+		t.Errorf("expected --output-format before -p, got %v", out)
 	}
 }
 
