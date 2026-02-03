@@ -12,6 +12,7 @@ import (
 	"os/user"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,6 +23,44 @@ const (
 	geminiTokenFileV2Path = "~/.gemini/mcp-oauth-tokens-v2.json"
 	geminiTokenFilePath   = "~/.gemini/mcp-oauth-tokens.json"
 )
+
+var (
+	authCacheMu       sync.Mutex
+	authCacheStamp    = map[string]time.Time{}
+	authCacheStatus   = map[string]string{}
+	authCacheDetail   = map[string]string{}
+	authCacheDuration = 30 * time.Second
+)
+
+func authCacheTTL() time.Duration {
+	if val := strings.TrimSpace(os.Getenv("CONDUCTOR_AUTH_CACHE_TTL")); val != "" {
+		if parsed, err := time.ParseDuration(val); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return authCacheDuration
+}
+
+func authCacheGet(cli string) (string, string, bool) {
+	authCacheMu.Lock()
+	defer authCacheMu.Unlock()
+	stamp, ok := authCacheStamp[cli]
+	if !ok || stamp.IsZero() {
+		return "", "", false
+	}
+	if time.Since(stamp) > authCacheTTL() {
+		return "", "", false
+	}
+	return authCacheStatus[cli], authCacheDetail[cli], true
+}
+
+func authCacheSet(cli, status, detail string) {
+	authCacheMu.Lock()
+	authCacheStamp[cli] = time.Now()
+	authCacheStatus[cli] = status
+	authCacheDetail[cli] = detail
+	authCacheMu.Unlock()
+}
 
 func checkAuthForCLI(cli string) (string, string) {
 	switch cli {
@@ -37,30 +76,48 @@ func checkAuthForCLI(cli string) (string, string) {
 }
 
 func checkCodexAuthActive() (string, string) {
+	if status, detail, ok := authCacheGet("codex"); ok {
+		return status, detail
+	}
 	status, detail, ok := runAuthProbe("codex", authProbeArgs("codex"))
 	if ok {
+		authCacheSet("codex", status, detail)
 		return status, detail
 	}
 	status, detail = checkCodexAuth()
-	return status, wrapAuthFallback(detail)
+	detail = wrapAuthFallback(detail)
+	authCacheSet("codex", status, detail)
+	return status, detail
 }
 
 func checkGeminiAuthActive() (string, string) {
+	if status, detail, ok := authCacheGet("gemini"); ok {
+		return status, detail
+	}
 	status, detail, ok := runAuthProbe("gemini", authProbeArgs("gemini"))
 	if ok {
+		authCacheSet("gemini", status, detail)
 		return status, detail
 	}
 	status, detail = checkGeminiAuth()
-	return status, wrapAuthFallback(detail)
+	detail = wrapAuthFallback(detail)
+	authCacheSet("gemini", status, detail)
+	return status, detail
 }
 
 func checkClaudeAuthActive() (string, string) {
+	if status, detail, ok := authCacheGet("claude"); ok {
+		return status, detail
+	}
 	status, detail, ok := runAuthProbe("claude", authProbeArgs("claude"))
 	if ok {
+		authCacheSet("claude", status, detail)
 		return status, detail
 	}
 	status, detail = checkClaudeAuth()
-	return status, wrapAuthFallback(detail)
+	detail = wrapAuthFallback(detail)
+	authCacheSet("claude", status, detail)
+	return status, detail
 }
 
 func wrapAuthFallback(detail string) string {
