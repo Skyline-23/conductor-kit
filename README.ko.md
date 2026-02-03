@@ -129,6 +129,7 @@ opencode mcp add conductor -- conductor mcp
 ### 헤드리스 + 브리지 모드
 
 - `conductor mcp`는 어떤 MCP 클라이언트에도 연결 가능한 stdio MCP 서버입니다.
+- 기본 동작으로 `conductor mcp`는 사용 가능한 Codex/Claude MCP 서버를 자동 브리지합니다(best-effort). `--no-bridge`로 비활성화하거나, `--bridge` / `--bridge-codex` / `--bridge-claude`로 강제(엄격)할 수 있습니다.
 - Claude Code는 `claude mcp serve`로 헤드리스 MCP 서버로 실행할 수 있습니다(stdio).
 - Codex CLI는 `codex mcp-server`로 MCP 서버로 실행할 수 있습니다(stdio).
 - Codex `app-server`는 MCP가 아닌 별도 JSON-RPC 프로토콜입니다.

@@ -129,6 +129,7 @@ Notes:
 ### Headless + bridge modes
 
 - `conductor mcp` runs the unified MCP server in stdio mode for any MCP client.
+- By default, `conductor mcp` auto-bridges Codex/Claude MCP servers when available (best-effort). Use `--no-bridge` to disable, or `--bridge` / `--bridge-codex` / `--bridge-claude` to force (strict).
 - Claude Code can run as a headless MCP server via `claude mcp serve` (stdio).
 - Codex CLI can run as an MCP server via `codex mcp-server` (stdio).
 - Codex `app-server` is a separate JSON-RPC protocol (not MCP).

@@ -41,28 +41,46 @@ func parseMCPBridgeMode(list string, codexFlag, claudeFlag bool) mcpBridgeMode {
 	return mode
 }
 
-func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode) error {
+func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode, strict bool) error {
 	if !mode.Codex && !mode.Claude {
 		return nil
 	}
 
 	if mode.Codex {
-		bridge := newMcpBridgeClient("codex", "codex", []string{"mcp-server"})
-		if err := registerBridgeTools(server, bridge, "codex", map[string]bool{
-			"codex":       true,
-			"codex-reply": true,
-		}); err != nil {
-			return err
+		if !isCommandAvailable("codex") {
+			if strict {
+				return fmt.Errorf("%s CLI not found for MCP bridge", bridgeTitle("codex"))
+			}
+		} else {
+			bridge := newMcpBridgeClient("codex", "codex", []string{"mcp-server"})
+			if err := registerBridgeTools(server, bridge, "codex", map[string]bool{
+				"codex":       true,
+				"codex-reply": true,
+			}); err != nil {
+				if strict {
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "Warning: Codex MCP bridge unavailable: %v\n", err)
+			}
 		}
 	}
 
 	if mode.Claude {
-		bridge := newMcpBridgeClient("claude", "claude", []string{"mcp", "serve"})
-		if err := registerBridgeTools(server, bridge, "claude", map[string]bool{
-			"claude":       true,
-			"claude-reply": true,
-		}); err != nil {
-			return err
+		if !isCommandAvailable("claude") {
+			if strict {
+				return fmt.Errorf("%s CLI not found for MCP bridge", bridgeTitle("claude"))
+			}
+		} else {
+			bridge := newMcpBridgeClient("claude", "claude", []string{"mcp", "serve"})
+			if err := registerBridgeTools(server, bridge, "claude", map[string]bool{
+				"claude":       true,
+				"claude-reply": true,
+			}); err != nil {
+				if strict {
+					return err
+				}
+				fmt.Fprintf(os.Stderr, "Warning: Claude MCP bridge unavailable: %v\n", err)
+			}
 		}
 	}
 

@@ -163,11 +163,17 @@ func runMCPServer(args []string) int {
 	bridge := fs.String("bridge", "", "comma-separated MCP bridges (codex,claude,all)")
 	bridgeCodex := fs.Bool("bridge-codex", false, "bridge Codex MCP server mode")
 	bridgeClaude := fs.Bool("bridge-claude", false, "bridge Claude MCP server mode")
+	noBridge := fs.Bool("no-bridge", false, "disable automatic MCP bridging")
 	if err := fs.Parse(args); err != nil {
 		fmt.Println("Invalid flags.")
 		return 1
 	}
+	explicitBridge := *bridge != "" || *bridgeCodex || *bridgeClaude
 	bridgeMode := parseMCPBridgeMode(*bridge, *bridgeCodex, *bridgeClaude)
+	if !explicitBridge && !*noBridge {
+		bridgeMode = mcpBridgeMode{Codex: true, Claude: true}
+	}
+	bridgeStrict := explicitBridge
 
 	// Start session cleanup goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -449,7 +455,7 @@ Returns:
 		return nil, mcpGetStatus(), nil
 	})
 
-	if err := registerMCPBridges(server, bridgeMode); err != nil {
+	if err := registerMCPBridges(server, bridgeMode, bridgeStrict); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
