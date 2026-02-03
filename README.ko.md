@@ -138,11 +138,13 @@ opencode mcp add conductor -- conductor mcp
 - Claude Code MCP 서버는 View/Edit/LS 같은 도구를 노출하며, MCP 클라이언트가 승인 흐름을 책임집니다.
 - Codex `mcp-server`는 전역 설정 오버라이드를 상속하므로, 필요 시 Codex 설정에서 승인/샌드박스를 지정하세요.
 - Codex `app-server`는 MCP가 아닌 별도 JSON-RPC 프로토콜입니다.
-- `conductor mcp`는 상위 MCP 서버를 시작/연결하지 못하면 즉시 실패합니다.
+- `conductor mcp`는 상위 MCP 서버에 연결하지 못해도 경고 후 계속 동작합니다(`CONDUCTOR_BRIDGE_STRICT=1`이면 즉시 실패).
 - OpenCode는 MCP 클라이언트이므로 `opencode mcp add`로 로컬/원격 서버에 연결하세요.
 
 Status 팁:
 - `conductor status --skip-bridges`로 MCP 브리지 체크를 생략할 수 있습니다(더 빠름).
+- `CONDUCTOR_BRIDGE=codex,claude|all|none`로 브리지 대상을 선택할 수 있습니다.
+- `CONDUCTOR_BRIDGE_STRICT=1`로 브리지 실패 시 즉시 종료할 수 있습니다.
 - `CONDUCTOR_BRIDGE_CACHE_TTL=30s`로 브리지 상태 캐시 시간을 조절할 수 있습니다.
 - `CONDUCTOR_AUTH_CACHE_TTL=30s`로 CLI 인증 캐시 시간을 조절할 수 있습니다.
 - `CONDUCTOR_ASYNC_LOG_MAX_BYTES=40000`로 async stdout/stderr 로그 크기를 제한할 수 있습니다.
@@ -288,9 +290,13 @@ conductor settings --list-models --cli codex  # 모델 목록
 | `conductor disable` | Conductor 비활성화 (스킬/커맨드 제거 + MCP 해제) |
 | `conductor enable` | Conductor 활성화 (스킬/커맨드 복구 + MCP 등록) |
 | `conductor status` | CLI 인증 및 가용성 확인 |
+| `conductor roles` | role → CLI/model 매핑 목록 |
+| `conductor config-validate` | config JSON 검증 |
 | `conductor doctor` | 전체 진단 |
 | `conductor settings` | 역할 및 모델 설정 |
+| `conductor mcp-bundle` | MCP 번들 템플릿 렌더링 |
 | `conductor mcp` | 통합 MCP 서버 시작 |
+| `conductor help` | 명령어 도움말 |
 
 ---
 

@@ -138,11 +138,13 @@ Notes:
 - Claude Code MCP server exposes tools like View/Edit/LS; the MCP client is responsible for any tool approval flow.
 - Codex `mcp-server` inherits global config overrides, so approvals/sandboxing should be set in Codex config when needed.
 - Codex `app-server` is a separate JSON-RPC protocol (not MCP).
-- `conductor mcp` fails fast if it cannot start or connect to the upstream MCP servers.
+- `conductor mcp` warns and continues if an upstream MCP server is unavailable (set `CONDUCTOR_BRIDGE_STRICT=1` to fail fast).
 - OpenCode is an MCP client; connect it to local or remote servers via `opencode mcp add`.
 
 Status tips:
 - `conductor status --skip-bridges` skips MCP bridge probes (faster).
+- `CONDUCTOR_BRIDGE=codex,claude|all|none` controls which bridges are enabled.
+- `CONDUCTOR_BRIDGE_STRICT=1` fails fast when a bridge is unavailable.
 - `CONDUCTOR_BRIDGE_CACHE_TTL=30s` controls bridge status cache duration.
 - `CONDUCTOR_AUTH_CACHE_TTL=30s` controls CLI auth cache duration.
 - `CONDUCTOR_ASYNC_LOG_MAX_BYTES=40000` caps async stdout/stderr log size.
@@ -288,9 +290,13 @@ conductor settings --list-models --cli codex  # List models
 | `conductor disable` | Disable conductor (remove skills/commands + MCP) |
 | `conductor enable` | Enable conductor (restore skills/commands + MCP) |
 | `conductor status` | Check CLI auth and availability |
+| `conductor roles` | List role → CLI/model mappings |
+| `conductor config-validate` | Validate config JSON |
 | `conductor doctor` | Full diagnostics |
 | `conductor settings` | Configure roles and models |
+| `conductor mcp-bundle` | Render MCP bundle templates |
 | `conductor mcp` | Start unified MCP server |
+| `conductor help` | Show command help |
 
 ---
 
