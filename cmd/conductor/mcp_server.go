@@ -913,7 +913,7 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 		return nil, nil, fmt.Errorf("unknown CLI for role %s: %s", input.Role, cli)
 	}
 
-	args := mcpBuildRoleArgs(cli, prompt, role.Model, role.Reasoning)
+	args := buildRoleArgs(role, prompt, role.Model, role.Reasoning)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,

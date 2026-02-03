@@ -104,6 +104,32 @@ func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverrid
 	if reasoning == "" {
 		reasoning = roleCfg.Reasoning
 	}
+	args := buildRoleArgs(roleCfg, prompt, model, reasoning)
+	spec := CmdSpec{
+		Agent:          roleCfg.CLI,
+		Role:           role,
+		Model:          model,
+		Reasoning:      reasoning,
+		Cmd:            roleCfg.CLI,
+		Args:           args,
+		ReadyCmd:       roleCfg.ReadyCmd,
+		ReadyArgs:      roleCfg.ReadyArgs,
+		ReadyTimeoutMs: roleCfg.ReadyTimeoutMs,
+		Env:            roleCfg.Env,
+		Cwd:            roleCfg.Cwd,
+		IdleTimeoutMs:  effectiveInt(roleCfg.IdleTimeoutMs, defaults.IdleTimeoutMs),
+		Retry:          effectiveInt(roleCfg.Retry, defaults.Retry),
+		RetryBackoffMs: effectiveInt(roleCfg.RetryBackoffMs, defaults.RetryBackoffMs),
+	}
+	spec.PromptHash, spec.PromptLen = promptMeta(prompt)
+	if logPrompt {
+		spec.Prompt = prompt
+		spec.LogPrompt = true
+	}
+	return spec, nil
+}
+
+func buildRoleArgs(roleCfg RoleConfig, prompt, model, reasoning string) []string {
 	args := append([]string{}, roleCfg.Args...)
 	promptIndex := indexOf(args, "{prompt}")
 	insertIndex := promptIndex
@@ -129,28 +155,7 @@ func buildSpecFromRole(cfg Config, role, prompt, modelOverride, reasoningOverrid
 	} else {
 		args = append(args, prompt)
 	}
-	spec := CmdSpec{
-		Agent:          roleCfg.CLI,
-		Role:           role,
-		Model:          model,
-		Reasoning:      reasoning,
-		Cmd:            roleCfg.CLI,
-		Args:           args,
-		ReadyCmd:       roleCfg.ReadyCmd,
-		ReadyArgs:      roleCfg.ReadyArgs,
-		ReadyTimeoutMs: roleCfg.ReadyTimeoutMs,
-		Env:            roleCfg.Env,
-		Cwd:            roleCfg.Cwd,
-		IdleTimeoutMs:  effectiveInt(roleCfg.IdleTimeoutMs, defaults.IdleTimeoutMs),
-		Retry:          effectiveInt(roleCfg.Retry, defaults.Retry),
-		RetryBackoffMs: effectiveInt(roleCfg.RetryBackoffMs, defaults.RetryBackoffMs),
-	}
-	spec.PromptHash, spec.PromptLen = promptMeta(prompt)
-	if logPrompt {
-		spec.Prompt = prompt
-		spec.LogPrompt = true
-	}
-	return spec, nil
+	return args
 }
 
 func indexOf(items []string, target string) int {
