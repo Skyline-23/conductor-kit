@@ -164,7 +164,7 @@ func runMCPServer(args []string) int {
 	bridgeMode := mcpBridgeMode{Codex: true, Claude: true}
 	bridgeStrict := true
 	useNativeCodex := !bridgeMode.Codex
-	useNativeClaude := !bridgeMode.Claude
+	useNativeClaude := true
 
 	// Start session cleanup goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -746,7 +746,7 @@ func mcpRunSession(ctx context.Context, cli, prompt string, args []string, idleT
 // mcpRunSessionWithConfig runs a new CLI session with full configuration
 // Uses native session/resume support - no history re-transmission needed
 func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt string, args []string, idleTimeoutMs int, config MCPSessionConfig) (map[string]interface{}, error) {
-	if cli == "codex" || cli == "claude" {
+	if cli == "codex" {
 		return nil, fmt.Errorf("%s sessions must use the MCP bridge in bridge-only mode", strings.Title(cli))
 	}
 	adapter := mcpGetAdapter(cli)
@@ -878,7 +878,7 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 	}
 
 	cli := role.CLI
-	if cli == "codex" || cli == "claude" {
+	if cli == "codex" {
 		result, err := mcpRunBridgeRoleSession(ctx, input, role)
 		if err != nil {
 			return nil, nil, err

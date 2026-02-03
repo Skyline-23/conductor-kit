@@ -82,10 +82,7 @@ func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode, strict bool) err
 			}
 		} else {
 			bridge := newMcpBridgeClient("claude", "claude", []string{"mcp", "serve"})
-			if err := registerBridgeTools(server, bridge, "claude", map[string]bool{
-				"claude":       true,
-				"claude-reply": true,
-			}); err != nil {
+			if err := registerBridgeTools(server, bridge, "claude", map[string]bool{}); err != nil {
 				if strict {
 					return err
 				}

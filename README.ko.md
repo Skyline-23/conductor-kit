@@ -129,7 +129,7 @@ opencode mcp add conductor -- conductor mcp
 ### 헤드리스 + 브리지 모드
 
 - `conductor mcp`는 어떤 MCP 클라이언트에도 연결 가능한 stdio MCP 서버입니다.
-- `conductor mcp`는 브리지 전용 모드로 Codex/Claude MCP 서버의 도구를 프록시합니다.
+- `conductor mcp`는 Codex(`codex mcp-server`)와 Claude 도구(`claude mcp serve`)를 브리지하고, Claude 프롬프트는 네이티브 CLI로 실행합니다.
 - Claude Code MCP 서버는 View/Edit/LS 같은 도구를 노출하며, MCP 클라이언트가 승인 흐름을 책임집니다.
 - Codex `mcp-server`는 전역 설정 오버라이드를 상속하므로, 필요 시 Codex 설정에서 승인/샌드박스를 지정하세요.
 - Claude Code는 `claude mcp serve`로 헤드리스 MCP 서버로 실행할 수 있습니다(stdio).
@@ -169,11 +169,12 @@ conductor 도구를 "sage" 역할로 사용해서 이 복잡한 문제를 해결
 | 도구 | 설명 | 예시 |
 |------|------|------|
 | `codex` | Codex MCP 세션 실행(브리지) | 깊은 추론, 복잡한 분석 |
+| `claude` | Claude Code 세션 실행(네이티브 CLI) | 코드 생성, 리팩토링 |
 | `claude__*` | Claude Code 도구(브리지) | View/Edit/LS 등 |
 | `gemini` | Gemini CLI 세션 실행 | 웹 검색, 리서치 |
 | `conductor` | 역할 기반 라우팅 | 작업에 최적의 CLI 자동 선택 |
 | `memory` | 공유 메모리 캐시 | 공유 컨텍스트 저장/조회 |
-| `codex-reply` / `gemini-reply` | 세션 계속 | 멀티턴 대화 |
+| `codex-reply` / `claude-reply` / `gemini-reply` | 세션 계속 | 멀티턴 대화 |
 | `status` | CLI 가용성 확인 | 진단 |
 
 공유 메모리는 프로젝트 단위로 캐시됩니다(TTL + git HEAD 변경 시 무효화). MCP 호출에 자동으로 prepend 되며, `memory`로 갱신하거나 `memory_key`/`memory_mode`로 추가 키를 주입하세요.
