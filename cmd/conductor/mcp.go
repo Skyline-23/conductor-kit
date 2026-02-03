@@ -303,8 +303,9 @@ func progressReporterForRequest(ctx context.Context, req *mcp.CallToolRequest) p
 }
 
 const (
-	defaultMcpTimeoutMs  = 0
-	defaultWaitTimeoutMs = 120000
+	defaultMcpTimeoutMs   = 0
+	defaultWaitTimeoutMs  = 120000
+	defaultQueueListLimit = 200
 )
 
 func effectiveMcpTimeoutMs(timeoutMs int) int {
@@ -518,6 +519,9 @@ func queueListTool(input QueueListInput) (map[string]interface{}, error) {
 	runtime := mcpRuntimeSnapshot()
 	if runtime == nil {
 		return map[string]interface{}{"status": "runtime_not_running"}, nil
+	}
+	if input.Limit <= 0 {
+		input.Limit = defaultQueueListLimit
 	}
 	runs := runtime.listRuns(input.Status, input.Limit)
 	return map[string]interface{}{"count": len(runs), "runs": runs}, nil
