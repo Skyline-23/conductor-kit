@@ -247,6 +247,53 @@ type activityWriter struct {
 	activityCh chan struct{}
 }
 
+type boundedBuffer struct {
+	max   int
+	buf   []byte
+	total int
+}
+
+func newBoundedBuffer(max int) *boundedBuffer {
+	return &boundedBuffer{max: max}
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if n == 0 {
+		return 0, nil
+	}
+	b.total += n
+	if b.max <= 0 {
+		return n, nil
+	}
+	if n >= b.max {
+		b.buf = append(b.buf[:0], p[n-b.max:]...)
+		return n, nil
+	}
+	if len(b.buf)+n > b.max {
+		overflow := len(b.buf) + n - b.max
+		if overflow >= len(b.buf) {
+			b.buf = b.buf[:0]
+		} else {
+			b.buf = b.buf[overflow:]
+		}
+	}
+	b.buf = append(b.buf, p...)
+	return n, nil
+}
+
+func (b *boundedBuffer) String() string {
+	return string(b.buf)
+}
+
+func (b *boundedBuffer) Total() int {
+	return b.total
+}
+
+func (b *boundedBuffer) Truncated() bool {
+	return b.total > len(b.buf)
+}
+
 func (a *activityWriter) Write(p []byte) (int, error) {
 	n, err := a.w.Write(p)
 	if n > 0 && a.activityCh != nil {
@@ -562,10 +609,10 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 	if err != nil {
 		return nil, err
 	}
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	stdoutWriter := &activityWriter{w: &stdout, activityCh: activityCh}
-	stderrWriter := &activityWriter{w: &stderr, activityCh: activityCh}
+	stdoutBuf := newBoundedBuffer(outputTailMaxBytes)
+	stderrBuf := newBoundedBuffer(outputTailMaxBytes)
+	stdoutWriter := &activityWriter{w: stdoutBuf, activityCh: activityCh}
+	stderrWriter := &activityWriter{w: stderrBuf, activityCh: activityCh}
 	if spec.Cwd != "" {
 		cmd.Dir = spec.Cwd
 	}
@@ -599,12 +646,10 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 	if snapshot, err := gitStatusSnapshot(cwd); err == nil {
 		changedFiles = diffGitStatus(beforeStatus, snapshot)
 	}
-	stdoutText := strings.TrimSpace(stdout.String())
-	stderrText := strings.TrimSpace(stderr.String())
+	stdoutText := strings.TrimSpace(stdoutBuf.String())
+	stderrText := strings.TrimSpace(stderrBuf.String())
 	readFiles := extractReadFiles(stdoutText + "\n" + stderrText)
 	status, exitCode, errMsg := statusFromErrorWithTimeout(ctx, err, idleTimedOut.Load())
-	stdoutTail, stdoutTruncated := trimMemoryValue(stdoutText, outputTailMaxBytes)
-	stderrTail, stderrTruncated := trimMemoryValue(stderrText, outputTailMaxBytes)
 
 	payload := map[string]interface{}{
 		"run_id":        runID,
@@ -617,21 +662,21 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 		"attempt":       attempt,
 		"attempts":      attempts,
 		"exit_code":     exitCode,
-		"stdout":        strings.TrimSpace(stdoutTail),
-		"stderr":        strings.TrimSpace(stderrTail),
+		"stdout":        stdoutText,
+		"stderr":        stderrText,
 		"duration_ms":   duration,
 		"started_at":    start.Format(time.RFC3339),
 		"ended_at":      end.Format(time.RFC3339),
 		"read_files":    readFiles,
 		"changed_files": changedFiles,
 	}
-	if stdoutTruncated {
+	if stdoutBuf.Truncated() {
 		payload["stdout_truncated"] = true
-		payload["stdout_total_bytes"] = len(stdoutText)
+		payload["stdout_total_bytes"] = stdoutBuf.Total()
 	}
-	if stderrTruncated {
+	if stderrBuf.Truncated() {
 		payload["stderr_truncated"] = true
-		payload["stderr_total_bytes"] = len(stderrText)
+		payload["stderr_total_bytes"] = stderrBuf.Total()
 	}
 	if errMsg != "" {
 		payload["error"] = errMsg
@@ -658,9 +703,9 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 	}
 	_ = appendRunRecord(record, spec.LogPrompt)
 	if status == "ok" {
-		output := strings.TrimSpace(stdout.String())
+		output := stdoutText
 		if output == "" {
-			output = strings.TrimSpace(stderr.String())
+			output = stderrText
 		}
 		if output != "" {
 			rememberSharedMemory(spec.Agent, spec.Role, strings.TrimSpace(mcpExtractText(output)))
