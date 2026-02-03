@@ -78,13 +78,23 @@ func runToggleDisabled(args []string, disabled bool) int {
 		"opencode": true,
 	}
 	if *cliFlag != "" {
-		selectedCLIs = parseCLIFlag(*cliFlag)
+		parsed, err := parseCLIFlag(*cliFlag)
+		if err != nil {
+			fmt.Println(err.Error())
+			return 1
+		}
+		selectedCLIs = parsed
 	}
 	selectedMCPs := map[string]bool{
 		"mcp": true,
 	}
 	if *mcpFlag != "" {
-		selectedMCPs = parseMCPFlag(*mcpFlag)
+		parsed, err := parseMCPFlag(*mcpFlag)
+		if err != nil {
+			fmt.Println(err.Error())
+			return 1
+		}
+		selectedMCPs = parsed
 	}
 
 	targets := resolveToggleTargets(selectedCLIs, *codexHome, *claudeHome, *opencodeHome)
@@ -175,7 +185,7 @@ func toggleHelp(name string) string {
 		"Usage:",
 		"  conductor " + verb + " [--config PATH] [--project]",
 		"                      [--codex-home PATH] [--claude-home PATH] [--opencode-home PATH]",
-		"                      [--cli codex,claude,opencode] [--mcp mcp]",
+		"                      [--cli codex,claude,opencode|all|none] [--mcp mcp|none]",
 		"                      [--dry-run] [--json] " + note,
 		"",
 	}

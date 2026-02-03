@@ -118,10 +118,20 @@ func runInstall(args []string) int {
 	selectedCLIs := map[string]bool{"codex": true, "claude": true, "opencode": true}
 	selectedMCPs := map[string]bool{"mcp": true}
 	if *cliFlag != "" {
-		selectedCLIs = parseCLIFlag(*cliFlag)
+		parsed, err := parseCLIFlag(*cliFlag)
+		if err != nil {
+			fmt.Println(err.Error())
+			return 1
+		}
+		selectedCLIs = parsed
 	}
 	if *mcpFlag != "" {
-		selectedMCPs = parseMCPFlag(*mcpFlag)
+		parsed, err := parseMCPFlag(*mcpFlag)
+		if err != nil {
+			fmt.Println(err.Error())
+			return 1
+		}
+		selectedMCPs = parsed
 	}
 	if *cliFlag == "" && *mcpFlag == "" && !disabled && (*interactive || (!*dryRun && isTerminal(os.Stdout))) {
 		selections := promptInstallSelectionsTUI()
@@ -150,7 +160,7 @@ func runInstall(args []string) int {
 	}
 
 	if len(targets) == 0 {
-		if !installConfig && !selectedMCPs["mcp"] {
+		if !installConfig && !selectedMCPs["mcp"] && !installBins {
 			fmt.Println("No CLIs selected. Nothing to install.")
 			return 0
 		}
@@ -246,6 +256,7 @@ func installHelp() string {
 Usage:
   conductor install [--mode link|copy] [--skills-only|--commands-only]
                     [--project] [--codex-home PATH] [--claude-home PATH] [--opencode-home PATH]
+                    [--cli codex,claude,opencode|all|none] [--mcp mcp|none] [--interactive]
                     [--force] [--dry-run]
                     [--no-bins] [--bin-dir PATH] [--no-config] [--repo PATH]
 `
@@ -428,24 +439,54 @@ func copyDir(src, dest string) error {
 	return nil
 }
 
-func parseCLIFlag(flag string) map[string]bool {
+func parseCLIFlag(flag string) (map[string]bool, error) {
 	result := map[string]bool{}
+	if strings.TrimSpace(flag) == "" {
+		return result, nil
+	}
+	invalid := []string{}
 	for _, cli := range strings.Split(flag, ",") {
 		cli = strings.TrimSpace(strings.ToLower(cli))
-		if cli == "codex" || cli == "claude" || cli == "opencode" {
-			result[cli] = true
+		switch cli {
+		case "", "none", "false":
+			// explicit none
+		case "all", "codex", "claude", "opencode":
+			if cli == "all" {
+				result["codex"] = true
+				result["claude"] = true
+				result["opencode"] = true
+			} else {
+				result[cli] = true
+			}
+		default:
+			invalid = append(invalid, cli)
 		}
 	}
-	return result
+	if len(invalid) > 0 {
+		return nil, fmt.Errorf("Invalid --cli value(s): %s", strings.Join(invalid, ", "))
+	}
+	return result, nil
 }
 
-func parseMCPFlag(flag string) map[string]bool {
+func parseMCPFlag(flag string) (map[string]bool, error) {
 	result := map[string]bool{}
+	if strings.TrimSpace(flag) == "" {
+		return result, nil
+	}
+	invalid := []string{}
 	for _, m := range strings.Split(flag, ",") {
 		m = strings.TrimSpace(strings.ToLower(m))
-		if m == "mcp" || m == "conductor" || m == "true" {
+		switch m {
+		case "", "none", "false", "0":
+			// explicit none
+		case "mcp", "conductor", "true", "all", "1":
 			result["mcp"] = true
+		default:
+			invalid = append(invalid, m)
 		}
 	}
-	return result
+	if len(invalid) > 0 {
+		return nil, fmt.Errorf("Invalid --mcp value(s): %s", strings.Join(invalid, ", "))
+	}
+	return result, nil
 }
