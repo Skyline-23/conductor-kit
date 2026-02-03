@@ -19,3 +19,21 @@ func TestBuildRoleArgsKeepsClaudePromptAdjacent(t *testing.T) {
 		t.Fatalf("expected -p hello adjacency, got %v", args)
 	}
 }
+
+func TestBuildRoleArgsKeepsClaudePrintAdjacent(t *testing.T) {
+	role := RoleConfig{
+		CLI:       "claude",
+		Args:      []string{"--print", "{prompt}"},
+		ModelFlag: "--model",
+	}
+	args := buildRoleArgs(role, "hello", "sonnet", "")
+	if len(args) < 4 {
+		t.Fatalf("expected args with model and prompt, got %v", args)
+	}
+	if args[0] != "--model" || args[1] != "sonnet" {
+		t.Fatalf("expected model flags first, got %v", args)
+	}
+	if args[2] != "--print" || args[3] != "hello" {
+		t.Fatalf("expected --print hello adjacency, got %v", args)
+	}
+}
