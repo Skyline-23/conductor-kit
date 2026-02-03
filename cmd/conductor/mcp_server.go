@@ -915,6 +915,7 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 
 	args := buildRoleArgs(role, prompt, role.Model, role.Reasoning)
 	args = ensureMCPRoleArgs(cli, args, prompt)
+	sessionConfig := roleSessionConfig(cli, role, args)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
@@ -942,12 +943,9 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 		CLI:            cli,
 		Role:           input.Role,
 		Model:          role.Model,
-		Config: MCPSessionConfig{
-			Cwd: role.Cwd,
-			Env: role.Env,
-		},
-		CreatedAt: now,
-		UpdatedAt: now,
+		Config:         sessionConfig,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	mcpSessionStoreMu.Lock()
@@ -1302,6 +1300,20 @@ func ensureMCPRoleArgs(cli string, args []string, prompt string) []string {
 	}
 }
 
+func roleSessionConfig(cli string, role RoleConfig, args []string) MCPSessionConfig {
+	cfg := MCPSessionConfig{
+		Cwd: role.Cwd,
+		Env: role.Env,
+	}
+	switch cli {
+	case "claude":
+		applyClaudeRoleArgs(&cfg, args)
+	case "gemini":
+		applyGeminiRoleArgs(&cfg, args)
+	}
+	return cfg
+}
+
 func ensureClaudeMCPArgs(args []string, prompt string) []string {
 	extra := []string{}
 	if !hasArgFlag(args, "--output-format") {
@@ -1332,6 +1344,87 @@ func hasArgFlag(args []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+func applyClaudeRoleArgs(cfg *MCPSessionConfig, args []string) {
+	if cfg == nil {
+		return
+	}
+	if cfg.PermissionMode == "" {
+		if val, ok := readFlagValue(args, "--permission-mode"); ok {
+			cfg.PermissionMode = val
+		}
+	}
+	if cfg.AllowedTools == "" {
+		if val, ok := readFirstFlagValue(args, []string{"--allowed-tools", "--allowedTools"}); ok {
+			cfg.AllowedTools = val
+		}
+	}
+	if cfg.DisallowedTools == "" {
+		if val, ok := readFirstFlagValue(args, []string{"--disallowed-tools", "--disallowedTools"}); ok {
+			cfg.DisallowedTools = val
+		}
+	}
+	if cfg.SystemPrompt == "" {
+		if val, ok := readFlagValue(args, "--system-prompt"); ok {
+			cfg.SystemPrompt = val
+		}
+	}
+	if cfg.AppendSystemPrompt == "" {
+		if val, ok := readFlagValue(args, "--append-system-prompt"); ok {
+			cfg.AppendSystemPrompt = val
+		}
+	}
+}
+
+func applyGeminiRoleArgs(cfg *MCPSessionConfig, args []string) {
+	if cfg == nil {
+		return
+	}
+	if !cfg.Yolo && (hasArgFlag(args, "--yolo") || hasArgFlag(args, "-y")) {
+		cfg.Yolo = true
+	}
+	if cfg.ApprovalMode == "" {
+		if val, ok := readFlagValue(args, "--approval-mode"); ok {
+			cfg.ApprovalMode = val
+		}
+	}
+	if cfg.IncludeDirectories == "" {
+		if val, ok := readFlagValue(args, "--include-directories"); ok {
+			cfg.IncludeDirectories = val
+		}
+	}
+	if cfg.Sandbox == "" {
+		if val, ok := readFlagValue(args, "--sandbox"); ok {
+			cfg.Sandbox = val
+		}
+	}
+}
+
+func readFirstFlagValue(args []string, flags []string) (string, bool) {
+	for _, flag := range flags {
+		if val, ok := readFlagValue(args, flag); ok {
+			return val, true
+		}
+	}
+	return "", false
+}
+
+func readFlagValue(args []string, flag string) (string, bool) {
+	prefix := flag + "="
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == flag {
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", false
+		}
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix), true
+		}
+	}
+	return "", false
 }
 
 func insertArgsBeforePrompt(args []string, prompt string, extra []string) []string {

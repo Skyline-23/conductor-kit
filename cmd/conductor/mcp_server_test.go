@@ -229,6 +229,58 @@ func TestEnsureMCPRoleArgsRespectsExistingFlags(t *testing.T) {
 	}
 }
 
+func TestRoleSessionConfigParsesClaudeArgs(t *testing.T) {
+	role := RoleConfig{
+		Cwd: "/tmp",
+		Env: map[string]string{"FOO": "bar"},
+	}
+	args := []string{
+		"-p", "prompt",
+		"--permission-mode", "dontAsk",
+		"--allowed-tools", "Read,Edit",
+		"--disallowedTools", "Bash",
+		"--system-prompt", "system",
+		"--append-system-prompt", "append",
+	}
+	cfg := roleSessionConfig("claude", role, args)
+	if cfg.PermissionMode != "dontAsk" {
+		t.Errorf("expected permission mode dontAsk, got %q", cfg.PermissionMode)
+	}
+	if cfg.AllowedTools != "Read,Edit" {
+		t.Errorf("expected allowed tools Read,Edit, got %q", cfg.AllowedTools)
+	}
+	if cfg.DisallowedTools != "Bash" {
+		t.Errorf("expected disallowed tools Bash, got %q", cfg.DisallowedTools)
+	}
+	if cfg.SystemPrompt != "system" {
+		t.Errorf("expected system prompt system, got %q", cfg.SystemPrompt)
+	}
+	if cfg.AppendSystemPrompt != "append" {
+		t.Errorf("expected append system prompt append, got %q", cfg.AppendSystemPrompt)
+	}
+	if cfg.Cwd != "/tmp" {
+		t.Errorf("expected cwd /tmp, got %q", cfg.Cwd)
+	}
+	if cfg.Env["FOO"] != "bar" {
+		t.Errorf("expected env FOO=bar, got %v", cfg.Env)
+	}
+}
+
+func TestRoleSessionConfigParsesGeminiArgs(t *testing.T) {
+	role := RoleConfig{}
+	args := []string{"-p", "prompt", "--yolo", "--approval-mode", "auto_edit", "--include-directories", "/tmp"}
+	cfg := roleSessionConfig("gemini", role, args)
+	if !cfg.Yolo {
+		t.Errorf("expected yolo true")
+	}
+	if cfg.ApprovalMode != "auto_edit" {
+		t.Errorf("expected approval mode auto_edit, got %q", cfg.ApprovalMode)
+	}
+	if cfg.IncludeDirectories != "/tmp" {
+		t.Errorf("expected include directories /tmp, got %q", cfg.IncludeDirectories)
+	}
+}
+
 func countArgFlag(args []string, flag string) int {
 	count := 0
 	prefix := flag + "="
