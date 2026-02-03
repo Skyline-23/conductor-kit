@@ -6,7 +6,7 @@ description: |
   This skill defines orchestration rules and role-based delegation.
   DO NOT skip. DO NOT skim. Read the full SKILL.md content first.
   
-  NEVER use built-in subagents - delegate via MCP roles defined in this skill.
+  Avoid built-in subagents except for trivial tasks or when MCP is unavailable.
   
   TRIGGERS: code, file, function, class, bug, error, fix, debug, refactor, implement, build, test, deploy, analyze, review, search, explore, find, plan, design, architecture, optimize, improve, migrate, security, performance
 ---
@@ -19,15 +19,17 @@ Host orchestrates; delegates do the work.
 
 ## Core Rules (non-negotiable)
 
-### 1. DELEGATE FIRST — NO EXCEPTIONS
-**Do NOT use built-in tools (Explore, Grep, Search) when MCP is available.**
+### 1. DELEGATE FIRST — EXCEPT TRIVIAL TASKS
+**Do NOT use built-in tools (Explore, Grep, Search) for non-trivial tasks when MCP is available.**
 
 - Check MCP tools availability FIRST (`mcp__*` tools)
 - ALWAYS prefer MCP delegation over built-in/native tools:
   - WRONG: `Task(subagent_type=Explore)` -> RIGHT: MCP `pathfinder` role
   - WRONG: Built-in search/grep -> RIGHT: MCP `scout` or `pathfinder` role
   - WRONG: Direct analysis -> RIGHT: MCP `sage` role for complex reasoning
-- Run all delegate calls before any action
+- Exception: trivial tasks (no repo search, no file edits, no multi-step reasoning) may be executed directly
+- When delegating, run all delegate calls before any action
+- If unsure whether a task is trivial, treat it as complex and delegate
 - If MCP unavailable → use subagent fallback → **disclose to user**
 
 ### 2. SAGE FOR COMPLEX TASKS

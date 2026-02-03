@@ -2,7 +2,9 @@
 
 ## Core Principle
 
-**Delegate first, act later.** Never search, plan, or edit before delegation completes.
+**Delegate first, act later.** For non-trivial tasks, never search, plan, or edit before delegation completes.
+
+Trivial tasks (no repo search, no file edits, no multi-step reasoning) may be executed directly.
 
 ## Context Budget
 
