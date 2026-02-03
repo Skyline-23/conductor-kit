@@ -147,6 +147,7 @@ func (b *mcpBridgeClient) ensureSession(ctx context.Context) (*mcp.ClientSession
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "conductor-mcp-bridge", Version: Version}, nil)
 	cmd := exec.Command(b.cmd, b.args...)
+	cmd.Env = append(os.Environ(), "CI=1", "NO_COLOR=1")
 	cmd.Stderr = os.Stderr
 	transport := &mcp.CommandTransport{Command: cmd}
 	session, err := client.Connect(ctx, transport, nil)
