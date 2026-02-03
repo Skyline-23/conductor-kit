@@ -260,6 +260,7 @@ Roles map task types to CLI/model combinations:
 
 Notes for custom role args:
 - Claude: keep `-p {prompt}` (or `--print {prompt}`) adjacent.
+- Gemini: if using `-p`, keep `-p {prompt}` adjacent.
 - Claude/Gemini: keep `--output-format stream-json` so session IDs can be parsed.
 
 ### Interactive Setup
