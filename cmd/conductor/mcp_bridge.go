@@ -347,8 +347,6 @@ func listBridgeTools(ctx context.Context, cmd string, args []string) (map[string
 	client := mcp.NewClient(&mcp.Implementation{Name: "conductor-bridge-probe", Version: Version}, nil)
 	command := exec.Command(cmd, args...)
 	command.Env = append(os.Environ(), "CI=1", "NO_COLOR=1")
-	command.Stdin = strings.NewReader("")
-	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	transport := &mcp.CommandTransport{Command: command}
 
