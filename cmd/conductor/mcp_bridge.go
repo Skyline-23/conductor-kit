@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -268,6 +270,112 @@ func bridgeHasTool(bridge *mcpBridgeClient, name string) bool {
 	}
 	_, ok := tools[name]
 	return ok
+}
+
+func bridgeStatusPayload() ([]map[string]interface{}, bool) {
+	statuses := []map[string]interface{}{}
+	ok := true
+
+	codexStatus, codexOK := probeMCPBridge("codex", "codex", []string{"mcp-server"}, []string{"codex"})
+	statuses = append(statuses, codexStatus)
+	if !codexOK {
+		ok = false
+	}
+
+	claudeStatus, claudeOK := probeMCPBridge("claude", "claude", []string{"mcp", "serve"}, nil)
+	statuses = append(statuses, claudeStatus)
+	if !claudeOK {
+		ok = false
+	}
+
+	return statuses, ok
+}
+
+func probeMCPBridge(name, cmd string, args []string, requiredTools []string) (map[string]interface{}, bool) {
+	entry := map[string]interface{}{
+		"name": name,
+	}
+	if !isCommandAvailable(cmd) {
+		entry["status"] = "missing"
+		entry["error"] = "CLI not found: " + cmd
+		return entry, false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tools, err := listBridgeTools(ctx, cmd, args)
+	if err != nil {
+		entry["status"] = "error"
+		entry["error"] = err.Error()
+		return entry, false
+	}
+	if len(tools) == 0 {
+		entry["status"] = "error"
+		entry["error"] = "no tools returned"
+		return entry, false
+	}
+
+	toolNames := make([]string, 0, len(tools))
+	for name := range tools {
+		toolNames = append(toolNames, name)
+	}
+	sort.Strings(toolNames)
+
+	missing := []string{}
+	for _, req := range requiredTools {
+		if _, ok := tools[req]; !ok {
+			missing = append(missing, req)
+		}
+	}
+	if len(missing) > 0 {
+		entry["status"] = "error"
+		entry["missing_tools"] = missing
+		entry["tool_count"] = len(toolNames)
+		entry["tools"] = toolNames
+		return entry, false
+	}
+
+	entry["status"] = "ready"
+	entry["tool_count"] = len(toolNames)
+	entry["tools"] = toolNames
+	return entry, true
+}
+
+func listBridgeTools(ctx context.Context, cmd string, args []string) (map[string]*mcp.Tool, error) {
+	client := mcp.NewClient(&mcp.Implementation{Name: "conductor-bridge-probe", Version: Version}, nil)
+	command := exec.Command(cmd, args...)
+	command.Env = append(os.Environ(), "CI=1", "NO_COLOR=1")
+	command.Stdin = strings.NewReader("")
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	transport := &mcp.CommandTransport{Command: command}
+
+	session, err := client.Connect(ctx, transport, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+
+	all := make(map[string]*mcp.Tool)
+	cursor := ""
+	for {
+		res, err := session.ListTools(ctx, &mcp.ListToolsParams{Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		for _, tool := range res.Tools {
+			if tool == nil || tool.Name == "" {
+				continue
+			}
+			all[tool.Name] = tool
+		}
+		if res.NextCursor == "" {
+			break
+		}
+		cursor = res.NextCursor
+	}
+	return all, nil
 }
 
 func bridgeDecodeArgs(req *mcp.CallToolRequest) (map[string]any, error) {

@@ -92,6 +92,31 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 		sb.WriteString(line + "\n")
 	}
 
+	// MCP Bridges section
+	bridges, _ := payload["bridges"].([]map[string]interface{})
+	if len(bridges) > 0 {
+		sb.WriteString("\n")
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Render("MCP Bridges") + "\n")
+		sb.WriteString(renderDivider(50) + "\n")
+		for _, bridge := range bridges {
+			name, _ := bridge["name"].(string)
+			status, _ := bridge["status"].(string)
+			icon := renderStatusIcon(status)
+			line := fmt.Sprintf("%s %-10s", icon, name)
+			if count, ok := bridge["tool_count"].(int); ok {
+				line += fmt.Sprintf(" (%d tools)", count)
+			}
+			if errMsg, ok := bridge["error"].(string); ok && errMsg != "" {
+				line += " " + statusWarnStyle.Render(errMsg)
+			}
+			if missing, ok := bridge["missing_tools"].([]string); ok && len(missing) > 0 {
+				line += " " + statusWarnStyle.Render("missing: "+strings.Join(missing, ", "))
+			}
+			sb.WriteString(line + "\n")
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("\n")
 	if disabled {
 		summary := statusWarnStyle.Render("Conductor disabled")

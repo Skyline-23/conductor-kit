@@ -81,9 +81,14 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 		entry["status"] = status
 		roles = append(roles, entry)
 	}
+	bridges, bridgesOK := bridgeStatusPayload()
+	if !bridgesOK {
+		ok = false
+	}
 	return map[string]interface{}{
 		"count":    len(roles),
 		"roles":    roles,
+		"bridges":  bridges,
 		"config":   configPath,
 		"disabled": cfg.Disabled,
 	}, ok
