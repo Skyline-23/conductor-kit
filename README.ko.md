@@ -321,6 +321,12 @@ export PATH="$PATH:$(npm config get prefix)/bin"
    conductor status
    ```
 
+Status JSON 포함 항목:
+- `ok`: 전체 상태
+- `bridge_mode`: 활성 브리지(`codex,claude|none`)
+- `bridge_targets`: 브리지 대상 목록
+- `bridges`: 브리지별 상태
+
 ### CLI가 감지되지 않음
 
 진단 실행:

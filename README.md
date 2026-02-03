@@ -321,6 +321,12 @@ export PATH="$PATH:$(npm config get prefix)/bin"
    conductor status
    ```
 
+Status JSON includes:
+- `ok`: overall health
+- `bridge_mode`: enabled MCP bridges (`codex,claude|none`)
+- `bridge_targets`: list of bridge targets
+- `bridges`: per-bridge status payload
+
 ### CLI not detected
 
 Run diagnostics:
