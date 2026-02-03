@@ -168,7 +168,10 @@ func runMCPServer(args []string) int {
 		return 1
 	}
 	bridgeMode := mcpBridgeMode{Codex: true, Claude: true}
-	bridgeStrict := true
+	if list := strings.TrimSpace(os.Getenv("CONDUCTOR_BRIDGE")); list != "" {
+		bridgeMode = parseMCPBridgeMode(list, false, false)
+	}
+	bridgeStrict := envBool("CONDUCTOR_BRIDGE_STRICT", false)
 	useNativeCodex := !bridgeMode.Codex
 	useNativeClaude := true
 
@@ -1764,5 +1767,9 @@ func mcpHelp() string {
 
 Usage:
   conductor mcp
+
+Env:
+  CONDUCTOR_BRIDGE=codex,claude|all|none
+  CONDUCTOR_BRIDGE_STRICT=1
 `
 }

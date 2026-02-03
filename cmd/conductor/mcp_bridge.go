@@ -57,6 +57,9 @@ func parseMCPBridgeMode(list string, codexFlag, claudeFlag bool) mcpBridgeMode {
 		case "all":
 			mode.Codex = true
 			mode.Claude = true
+		case "none", "false", "0":
+			mode.Codex = false
+			mode.Claude = false
 		case "codex":
 			mode.Codex = true
 		case "claude", "claude-code", "claude_code":

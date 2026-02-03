@@ -15,6 +15,21 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
+func envBool(key string, fallback bool) bool {
+	val := strings.TrimSpace(os.Getenv(key))
+	if val == "" {
+		return fallback
+	}
+	switch strings.ToLower(val) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func resolveConfigPath(explicit string) string {
 	if explicit != "" {
 		return expandPath(explicit)
