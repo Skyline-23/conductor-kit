@@ -245,6 +245,13 @@ func validateConfig(cfg Config) []string {
 				}
 			}
 		}
+		if normalized.CLI == "gemini" {
+			if idx := indexOf(normalized.Args, "-p"); idx >= 0 {
+				if idx+1 >= len(normalized.Args) || normalized.Args[idx+1] != "{prompt}" {
+					errors = append(errors, fmt.Sprintf("roles.%s.args must place {prompt} immediately after -p", name))
+				}
+			}
+		}
 		if normalized.CLI == "claude" || normalized.CLI == "gemini" {
 			if hasArgExact(normalized.Args, "--output-format") {
 				val, ok := readFlagValue(normalized.Args, "--output-format")

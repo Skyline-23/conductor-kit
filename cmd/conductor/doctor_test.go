@@ -142,6 +142,15 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErrors: 1,
 		},
+		{
+			name: "gemini args prompt not adjacent",
+			cfg: Config{
+				Roles: map[string]RoleConfig{
+					"scout": {CLI: "gemini", Args: []string{"-p", "--model", "gemini-3-flash", "{prompt}"}},
+				},
+			},
+			wantErrors: 1,
+		},
 	}
 
 	for _, tt := range tests {
