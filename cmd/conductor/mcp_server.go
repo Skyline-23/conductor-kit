@@ -738,8 +738,15 @@ func mcpGetStatus() map[string]interface{} {
 	}
 	mcpSessionStoreMu.RUnlock()
 
+	bridgeMode := resolveBridgeMode()
+	bridges, bridgesOK := bridgeStatusPayload()
+
 	return map[string]interface{}{
-		"cli": clis,
+		"cli":            clis,
+		"bridge_mode":    bridgeModeLabel(bridgeMode),
+		"bridge_targets": bridgeModeTargets(bridgeMode),
+		"bridges":        bridges,
+		"bridges_ok":     bridgesOK,
 		"sessions": map[string]interface{}{
 			"count":  sessionCount,
 			"max":    mcpMaxSessions,
