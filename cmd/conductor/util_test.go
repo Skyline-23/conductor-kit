@@ -100,10 +100,44 @@ func TestResolveConfigPath(t *testing.T) {
 	}
 
 	// Test CONDUCTOR_CONFIG env var
-	os.Setenv("CONDUCTOR_CONFIG", "/env/config.json")
-	defer os.Unsetenv("CONDUCTOR_CONFIG")
+	t.Setenv("CONDUCTOR_CONFIG", "/env/config.json")
 	if got := resolveConfigPath(""); got != "/env/config.json" {
 		t.Errorf("expected /env/config.json, got %s", got)
+	}
+}
+
+func TestResolveConfigPathLocal(t *testing.T) {
+	t.Setenv("CONDUCTOR_CONFIG", "")
+	tmpDir := t.TempDir()
+	localConfig := filepath.Join(tmpDir, ".conductor-kit", "conductor.json")
+	if err := os.MkdirAll(filepath.Dir(localConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localConfig, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(tmpDir, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+	if err := os.Chdir(nested); err != nil {
+		t.Fatal(err)
+	}
+	got := resolveConfigPath("")
+	want := localConfig
+	if resolved, err := filepath.EvalSymlinks(localConfig); err == nil {
+		want = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(got); err == nil {
+		got = resolved
+	}
+	if got != want {
+		t.Errorf("expected %s, got %s", want, got)
 	}
 }
 

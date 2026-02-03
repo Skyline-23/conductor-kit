@@ -24,12 +24,27 @@ func resolveConfigPath(explicit string) string {
 	}
 	cwd, err := os.Getwd()
 	if err == nil {
-		local := filepath.Join(cwd, ".conductor-kit", "conductor.json")
-		if pathExists(local) {
+		if local := findLocalConfig(cwd); local != "" {
 			return local
 		}
 	}
 	return filepath.Join(os.Getenv("HOME"), ".conductor-kit", "conductor.json")
+}
+
+func findLocalConfig(startDir string) string {
+	dir := startDir
+	for {
+		local := filepath.Join(dir, ".conductor-kit", "conductor.json")
+		if pathExists(local) {
+			return local
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
 }
 
 func pathExists(p string) bool {
