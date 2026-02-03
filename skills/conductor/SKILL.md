@@ -137,9 +137,9 @@ conductor roles
 ```
 
 **Step 2: Find the MCP tool** from your available tools list:
-- `cli: "codex"` → find tool containing `codex-cli` and `prompt` (e.g., `mcp__codex-cli__codex_prompt`)
-- `cli: "gemini"` → find tool containing `gemini-cli` and `prompt` (e.g., `mcp__gemini-cli__gemini_prompt`)
-- `cli: "claude"` → find tool containing `claude-cli` and `prompt` (e.g., `mcp__claude-cli__claude_prompt`)
+- `cli: "codex"` → use the `codex` tool (bridged via `codex mcp-server`)
+- `cli: "gemini"` → use the `gemini` tool (native CLI)
+- `cli: "claude"` → use the `claude` tool (native CLI; tool servers appear as `claude__*`)
 
 **Step 3: Call with the configured `model`:**
 ```json

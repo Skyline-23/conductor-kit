@@ -219,7 +219,7 @@ Prefix commands with `/prompts:`:
 
 ## Configuration
 
-Config file: `~/.conductor-kit/conductor.json`
+Config file: `~/.conductor-kit/conductor.json` (or nearest `.conductor-kit/conductor.json` in the current/parent directories)
 
 ### Role-based Routing
 
