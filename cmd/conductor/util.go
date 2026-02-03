@@ -17,10 +17,10 @@ func getenv(key, fallback string) string {
 
 func resolveConfigPath(explicit string) string {
 	if explicit != "" {
-		return explicit
+		return expandPath(explicit)
 	}
 	if env := os.Getenv("CONDUCTOR_CONFIG"); env != "" {
-		return env
+		return expandPath(env)
 	}
 	cwd, err := os.Getwd()
 	if err == nil {

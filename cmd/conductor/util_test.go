@@ -98,11 +98,20 @@ func TestResolveConfigPath(t *testing.T) {
 	if got := resolveConfigPath("/explicit/path.json"); got != "/explicit/path.json" {
 		t.Errorf("expected /explicit/path.json, got %s", got)
 	}
+	home := os.Getenv("HOME")
+	tildePath := "~/config.json"
+	if got := resolveConfigPath(tildePath); got != filepath.Join(home, "config.json") {
+		t.Errorf("expected %s, got %s", filepath.Join(home, "config.json"), got)
+	}
 
 	// Test CONDUCTOR_CONFIG env var
 	t.Setenv("CONDUCTOR_CONFIG", "/env/config.json")
 	if got := resolveConfigPath(""); got != "/env/config.json" {
 		t.Errorf("expected /env/config.json, got %s", got)
+	}
+	t.Setenv("CONDUCTOR_CONFIG", "~/env-config.json")
+	if got := resolveConfigPath(""); got != filepath.Join(home, "env-config.json") {
+		t.Errorf("expected %s, got %s", filepath.Join(home, "env-config.json"), got)
 	}
 }
 
