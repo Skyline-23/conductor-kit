@@ -12,6 +12,7 @@ import (
 const (
 	memoryDefaultSeparator = "\n\n"
 	memoryMaxBytes         = 200000
+	memoryInjectMaxBytes   = 40000
 	memoryGlobalKey        = "shared"
 	memoryRolePrefix       = "role:"
 )
@@ -196,6 +197,13 @@ func applySharedMemory(prompt string) string {
 	value := strings.TrimSpace(entry.Value)
 	if value == "" {
 		return prompt
+	}
+	if len(value) > memoryInjectMaxBytes {
+		trimmed, _ := trimMemoryValue(value, memoryInjectMaxBytes)
+		value = strings.TrimSpace(trimmed)
+		if value == "" {
+			return prompt
+		}
 	}
 	return memoryBlock(memoryGlobalKey, value) + "\n\n" + prompt
 }

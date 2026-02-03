@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,6 +52,23 @@ func TestApplyMemoryToPromptModes(t *testing.T) {
 
 		if _, err := applyMemoryToPrompt(prompt, "missing", ""); err == nil {
 			t.Error("expected error for missing memory key")
+		}
+	})
+}
+
+func TestApplySharedMemoryLimit(t *testing.T) {
+	withIsolatedMemoryStore(t, func() {
+		value := strings.Repeat("a", memoryInjectMaxBytes+50)
+		if _, err := sharedMemory.set(memoryGlobalKey, value); err != nil {
+			t.Fatalf("set shared memory: %v", err)
+		}
+
+		prompt := "hello"
+		got := applySharedMemory(prompt)
+		trimmed, _ := trimMemoryValue(value, memoryInjectMaxBytes)
+		want := memoryBlock(memoryGlobalKey, strings.TrimSpace(trimmed)) + "\n\n" + prompt
+		if got != want {
+			t.Errorf("expected trimmed shared memory, got %q", got)
 		}
 	})
 }
