@@ -95,12 +95,13 @@ func statusPayloadWithOptions(cfg Config, configPath string, skipBridges bool) (
 		roles = append(roles, entry)
 	}
 	payload := map[string]interface{}{
-		"count":       len(roles),
-		"roles":       roles,
-		"bridges":     bridges,
-		"bridge_mode": bridgeModeLabel(bridgeMode),
-		"config":      configPath,
-		"disabled":    cfg.Disabled,
+		"count":          len(roles),
+		"roles":          roles,
+		"bridges":        bridges,
+		"bridge_mode":    bridgeModeLabel(bridgeMode),
+		"bridge_targets": bridgeModeTargets(bridgeMode),
+		"config":         configPath,
+		"disabled":       cfg.Disabled,
 	}
 	if skipBridges {
 		payload["bridges"] = []map[string]interface{}{}

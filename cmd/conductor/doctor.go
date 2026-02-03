@@ -170,6 +170,7 @@ func doctorPayload(cfg Config, configPath string, errors []string) (map[string]i
 	names := roleNames(cfg)
 	roles := make([]map[string]interface{}, 0, len(names))
 	ok := len(errors) == 0
+	bridgeMode := resolveBridgeMode()
 
 	for _, name := range names {
 		role := cfg.Roles[name]
@@ -228,11 +229,12 @@ func doctorPayload(cfg Config, configPath string, errors []string) (map[string]i
 	}
 
 	payload := map[string]interface{}{
-		"config":      configPath,
-		"bridge_mode": bridgeModeLabel(resolveBridgeMode()),
-		"errors":      errors,
-		"roles":       roles,
-		"ok":          ok,
+		"config":         configPath,
+		"bridge_mode":    bridgeModeLabel(bridgeMode),
+		"bridge_targets": bridgeModeTargets(bridgeMode),
+		"errors":         errors,
+		"roles":          roles,
+		"ok":             ok,
 	}
 	return payload, ok
 }
