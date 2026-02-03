@@ -876,10 +876,27 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 	if !ok {
 		return nil, nil, fmt.Errorf("unknown role: %s", input.Role)
 	}
+	role, err = normalizeRoleConfig(role)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	cli := role.CLI
+	prompt := input.Prompt
+	if input.MemoryKey != "" {
+		prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	prompt = applySharedMemory(prompt)
+	defaults := normalizeDefaults(cfg.Defaults)
+	idleTimeoutMs := input.IdleTimeoutMs
+	if idleTimeoutMs <= 0 {
+		idleTimeoutMs = effectiveInt(role.IdleTimeoutMs, defaults.IdleTimeoutMs)
+	}
 	if cli == "codex" {
-		result, err := mcpRunBridgeRoleSession(ctx, input, role)
+		result, err := mcpRunBridgeRoleSession(ctx, prompt, idleTimeoutMs, input.Role, role)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -890,12 +907,11 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 		return nil, nil, fmt.Errorf("unknown CLI for role %s: %s", input.Role, cli)
 	}
 
-	prompt := applySharedMemory(input.Prompt)
 	args := mcpBuildRoleArgs(cli, prompt, role.Model, role.Reasoning)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
-		IdleTimeoutMs: input.IdleTimeoutMs,
+		IdleTimeoutMs: idleTimeoutMs,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -932,42 +948,37 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 	return nil, mcpBuildResponseWithMeta(textContent, threadID, cli, input.Role, role.Model), nil
 }
 
-func mcpRunBridgeRoleSession(ctx context.Context, input MCPConductorInput, role RoleConfig) (*mcp.CallToolResult, error) {
+func mcpRunBridgeRoleSession(ctx context.Context, prompt string, idleTimeoutMs int, roleName string, role RoleConfig) (*mcp.CallToolResult, error) {
 	cli := role.CLI
 	bridge, err := mcpBridgeClientForCLI(cli)
 	if err != nil {
 		return nil, err
 	}
 
-	prompt := applySharedMemory(input.Prompt)
 	toolName := ""
 	var args any
 
 	switch cli {
 	case "codex":
 		toolName = "codex"
-		codexInput := MCPCodexInput{
-			Prompt: prompt,
-		}
-		if role.Model != "" {
-			codexInput.Model = role.Model
-		}
-		if role.Reasoning != "" {
-			codexInput.Config = map[string]interface{}{
-				"model_reasoning_effort": role.Reasoning,
-			}
-		}
-		args = codexInput
+		args = buildCodexBridgeInput(prompt, idleTimeoutMs, role)
 	case "claude":
 		if !bridgeHasTool(bridge, "claude") {
 			return nil, fmt.Errorf("Claude MCP server exposes tools only (no claude prompt tool)")
 		}
 		toolName = "claude"
-		args = MCPClaudeInput{
+		claudeInput := MCPClaudeInput{
 			Prompt:         prompt,
 			Model:          role.Model,
 			PermissionMode: "bypassPermissions",
 		}
+		if idleTimeoutMs > 0 {
+			claudeInput.IdleTimeoutMs = idleTimeoutMs
+		}
+		if role.Cwd != "" {
+			claudeInput.Cwd = role.Cwd
+		}
+		args = claudeInput
 	default:
 		return nil, fmt.Errorf("unsupported bridge CLI: %s", cli)
 	}
@@ -982,16 +993,16 @@ func mcpRunBridgeRoleSession(ctx context.Context, input MCPConductorInput, role 
 		return nil, fmt.Errorf("%s MCP bridge response missing threadId", strings.Title(cli))
 	}
 
-	mcpAugmentStructuredContent(result, threadID, cli, input.Role, role.Model)
+	mcpAugmentStructuredContent(result, threadID, cli, roleName, role.Model)
 	textContent := mcpExtractTextFromResult(result)
-	rememberSharedMemory(cli, input.Role, textContent)
+	rememberSharedMemory(cli, roleName, textContent)
 
 	now := time.Now()
 	sess := &MCPSession{
 		ID:             threadID,
 		NativeThreadID: threadID,
 		CLI:            cli,
-		Role:           input.Role,
+		Role:           roleName,
 		Model:          role.Model,
 		Config:         MCPSessionConfig{},
 		IsBridge:       true,
@@ -1266,6 +1277,121 @@ func mcpBuildRoleArgs(cli, prompt, model, reasoning string) []string {
 		return args
 	}
 	return []string{prompt}
+}
+
+func buildCodexBridgeInput(prompt string, idleTimeoutMs int, role RoleConfig) MCPCodexInput {
+	input := MCPCodexInput{
+		Prompt: prompt,
+	}
+	if idleTimeoutMs > 0 {
+		input.IdleTimeoutMs = idleTimeoutMs
+	}
+	if role.Model != "" {
+		input.Model = role.Model
+	}
+	if role.Cwd != "" {
+		input.Cwd = role.Cwd
+	}
+	if role.Reasoning != "" {
+		input.Config = map[string]interface{}{
+			"model_reasoning_effort": role.Reasoning,
+		}
+	}
+	applyCodexRoleArgs(&input, role.Args)
+	return input
+}
+
+func applyCodexRoleArgs(input *MCPCodexInput, args []string) {
+	if input == nil || len(args) == 0 {
+		return
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--approval-policy=") {
+			if input.ApprovalPolicy == "" {
+				input.ApprovalPolicy = strings.TrimPrefix(arg, "--approval-policy=")
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "--sandbox=") {
+			if input.Sandbox == "" {
+				input.Sandbox = strings.TrimPrefix(arg, "--sandbox=")
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "--cwd=") {
+			if input.Cwd == "" {
+				input.Cwd = strings.TrimPrefix(arg, "--cwd=")
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "--profile=") {
+			if input.Profile == "" {
+				input.Profile = strings.TrimPrefix(arg, "--profile=")
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-m=") {
+			if input.Model == "" {
+				input.Model = strings.TrimPrefix(arg, "-m=")
+			}
+			continue
+		}
+
+		switch arg {
+		case "--approval-policy":
+			if input.ApprovalPolicy == "" && i+1 < len(args) {
+				input.ApprovalPolicy = args[i+1]
+				i++
+			}
+		case "--sandbox":
+			if input.Sandbox == "" && i+1 < len(args) {
+				input.Sandbox = args[i+1]
+				i++
+			}
+		case "--cwd":
+			if input.Cwd == "" && i+1 < len(args) {
+				input.Cwd = args[i+1]
+				i++
+			}
+		case "-p", "--profile":
+			if input.Profile == "" && i+1 < len(args) {
+				input.Profile = args[i+1]
+				i++
+			}
+		case "-m":
+			if input.Model == "" && i+1 < len(args) {
+				input.Model = args[i+1]
+				i++
+			}
+		case "-c":
+			if i+1 < len(args) {
+				applyCodexConfig(input, args[i+1])
+				i++
+			}
+		}
+	}
+}
+
+func applyCodexConfig(input *MCPCodexInput, kv string) {
+	if input == nil {
+		return
+	}
+	parts := strings.SplitN(kv, "=", 2)
+	if len(parts) != 2 {
+		return
+	}
+	key := strings.TrimSpace(parts[0])
+	if key == "" {
+		return
+	}
+	if input.Config == nil {
+		input.Config = map[string]interface{}{}
+	}
+	if _, exists := input.Config[key]; exists {
+		return
+	}
+	input.Config[key] = strings.TrimSpace(parts[1])
 }
 
 // mcpBuildResumeArgs builds arguments for native CLI resume (no history re-transmission)

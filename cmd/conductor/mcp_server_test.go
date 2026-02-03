@@ -185,6 +185,79 @@ func TestMcpBuildResumeArgs(t *testing.T) {
 	}
 }
 
+func TestBuildCodexBridgeInputRespectsRoleArgs(t *testing.T) {
+	role := RoleConfig{
+		Model:     "gpt-5.2-codex",
+		Reasoning: "medium",
+		Cwd:       "/tmp/work",
+		Args: []string{
+			"exec",
+			"--approval-policy", "never",
+			"--sandbox", "workspace-write",
+			"-p", "profile-a",
+			"-c", "foo=bar",
+			"-c", "model_reasoning_effort=low",
+			"-m", "o4-mini",
+			"{prompt}",
+		},
+	}
+
+	input := buildCodexBridgeInput("prompt", 2500, role)
+
+	if input.Prompt != "prompt" {
+		t.Errorf("expected prompt to be preserved, got %q", input.Prompt)
+	}
+	if input.IdleTimeoutMs != 2500 {
+		t.Errorf("expected idle timeout 2500, got %d", input.IdleTimeoutMs)
+	}
+	if input.Model != "gpt-5.2-codex" {
+		t.Errorf("expected model to prefer role model, got %q", input.Model)
+	}
+	if input.Cwd != "/tmp/work" {
+		t.Errorf("expected cwd to prefer role cwd, got %q", input.Cwd)
+	}
+	if input.ApprovalPolicy != "never" {
+		t.Errorf("expected approval policy 'never', got %q", input.ApprovalPolicy)
+	}
+	if input.Sandbox != "workspace-write" {
+		t.Errorf("expected sandbox 'workspace-write', got %q", input.Sandbox)
+	}
+	if input.Profile != "profile-a" {
+		t.Errorf("expected profile 'profile-a', got %q", input.Profile)
+	}
+	if input.Config == nil {
+		t.Fatal("expected config map to be populated")
+	}
+	if val, ok := input.Config["foo"]; !ok || val != "bar" {
+		t.Errorf("expected config foo=bar, got %v", input.Config["foo"])
+	}
+	if val, ok := input.Config["model_reasoning_effort"]; !ok || val != "medium" {
+		t.Errorf("expected reasoning effort to prefer role value, got %v", input.Config["model_reasoning_effort"])
+	}
+}
+
+func TestApplyCodexRoleArgsSetsModelWhenMissing(t *testing.T) {
+	input := MCPCodexInput{Prompt: "prompt"}
+	applyCodexRoleArgs(&input, []string{
+		"-m", "o4-mini",
+		"--approval-policy=never",
+		"-c", "foo=bar",
+	})
+
+	if input.Model != "o4-mini" {
+		t.Errorf("expected model from args, got %q", input.Model)
+	}
+	if input.ApprovalPolicy != "never" {
+		t.Errorf("expected approval policy from equals flag, got %q", input.ApprovalPolicy)
+	}
+	if input.Config == nil {
+		t.Fatal("expected config map to be populated")
+	}
+	if val, ok := input.Config["foo"]; !ok || val != "bar" {
+		t.Errorf("expected config foo=bar, got %v", input.Config["foo"])
+	}
+}
+
 func TestMcpBuildResponseWithMeta(t *testing.T) {
 	result := mcpBuildResponseWithMeta("output text", "thread-123", "codex", "oracle", "gpt-4")
 
