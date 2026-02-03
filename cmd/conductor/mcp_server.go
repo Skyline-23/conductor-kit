@@ -914,7 +914,7 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 	}
 
 	args := buildRoleArgs(role, prompt, role.Model, role.Reasoning)
-	args = ensureMCPRoleArgs(cli, args)
+	args = ensureMCPRoleArgs(cli, args, prompt)
 
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
@@ -1291,35 +1291,37 @@ func mcpBuildRoleArgs(cli, prompt, model, reasoning string) []string {
 	return []string{prompt}
 }
 
-func ensureMCPRoleArgs(cli string, args []string) []string {
+func ensureMCPRoleArgs(cli string, args []string, prompt string) []string {
 	switch cli {
 	case "claude":
-		return ensureClaudeMCPArgs(args)
+		return ensureClaudeMCPArgs(args, prompt)
 	case "gemini":
-		return ensureGeminiMCPArgs(args)
+		return ensureGeminiMCPArgs(args, prompt)
 	default:
 		return args
 	}
 }
 
-func ensureClaudeMCPArgs(args []string) []string {
+func ensureClaudeMCPArgs(args []string, prompt string) []string {
+	extra := []string{}
 	if !hasArgFlag(args, "--output-format") {
-		args = append(args, "--output-format", "stream-json")
+		extra = append(extra, "--output-format", "stream-json")
 	}
 	if !hasArgFlag(args, "--permission-mode") {
-		args = append(args, "--permission-mode", "bypassPermissions")
+		extra = append(extra, "--permission-mode", "bypassPermissions")
 	}
 	if !hasArgFlag(args, "--verbose") {
-		args = append(args, "--verbose")
+		extra = append(extra, "--verbose")
 	}
-	return args
+	return insertArgsBeforePrompt(args, prompt, extra)
 }
 
-func ensureGeminiMCPArgs(args []string) []string {
+func ensureGeminiMCPArgs(args []string, prompt string) []string {
+	extra := []string{}
 	if !hasArgFlag(args, "--output-format") {
-		args = append(args, "--output-format", "stream-json")
+		extra = append(extra, "--output-format", "stream-json")
 	}
-	return args
+	return insertArgsBeforePrompt(args, prompt, extra)
 }
 
 func hasArgFlag(args []string, flag string) bool {
@@ -1330,6 +1332,20 @@ func hasArgFlag(args []string, flag string) bool {
 		}
 	}
 	return false
+}
+
+func insertArgsBeforePrompt(args []string, prompt string, extra []string) []string {
+	if len(extra) == 0 {
+		return args
+	}
+	idx := indexOf(args, prompt)
+	if idx < 0 {
+		return append(args, extra...)
+	}
+	out := append([]string{}, args[:idx]...)
+	out = append(out, extra...)
+	out = append(out, args[idx:]...)
+	return out
 }
 
 func buildCodexBridgeInput(prompt string, idleTimeoutMs int, role RoleConfig) MCPCodexInput {

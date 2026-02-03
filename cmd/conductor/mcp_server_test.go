@@ -187,7 +187,7 @@ func TestMcpBuildResumeArgs(t *testing.T) {
 
 func TestEnsureMCPRoleArgsClaudeAddsDefaults(t *testing.T) {
 	args := []string{"-p", "prompt"}
-	out := ensureMCPRoleArgs("claude", args)
+	out := ensureMCPRoleArgs("claude", args, "prompt")
 	if !hasArgFlag(out, "--output-format") {
 		t.Errorf("expected --output-format in args, got %v", out)
 	}
@@ -197,11 +197,19 @@ func TestEnsureMCPRoleArgsClaudeAddsDefaults(t *testing.T) {
 	if !hasArgFlag(out, "--verbose") {
 		t.Errorf("expected --verbose in args, got %v", out)
 	}
+	promptIndex := indexOf(out, "prompt")
+	if promptIndex < 0 {
+		t.Fatalf("expected prompt to be present, got %v", out)
+	}
+	formatIndex := indexOf(out, "--output-format")
+	if formatIndex > -1 && formatIndex > promptIndex {
+		t.Errorf("expected --output-format before prompt, got %v", out)
+	}
 }
 
 func TestEnsureMCPRoleArgsGeminiAddsDefaults(t *testing.T) {
 	args := []string{"-p", "prompt"}
-	out := ensureMCPRoleArgs("gemini", args)
+	out := ensureMCPRoleArgs("gemini", args, "prompt")
 	if !hasArgFlag(out, "--output-format") {
 		t.Errorf("expected --output-format in args, got %v", out)
 	}
@@ -209,7 +217,7 @@ func TestEnsureMCPRoleArgsGeminiAddsDefaults(t *testing.T) {
 
 func TestEnsureMCPRoleArgsRespectsExistingFlags(t *testing.T) {
 	args := []string{"-p", "prompt", "--output-format", "text", "--permission-mode", "dontAsk", "--verbose"}
-	out := ensureMCPRoleArgs("claude", args)
+	out := ensureMCPRoleArgs("claude", args, "prompt")
 	if countArgFlag(out, "--output-format") != 1 {
 		t.Errorf("expected single --output-format flag, got %v", out)
 	}
