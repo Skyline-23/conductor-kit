@@ -87,7 +87,7 @@ func renderStatusIcon(status string) string {
 		return iconOK
 	case "warn", "warning":
 		return iconWarn
-	case "error", "not_ready":
+	case "error", "not_ready", "invalid", "missing_cli", "bridge_error":
 		return iconError
 	case "missing":
 		return iconMissing

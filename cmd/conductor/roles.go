@@ -44,6 +44,16 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 	names := roleNames(cfg)
 	roles := make([]map[string]interface{}, 0, len(names))
 	ok := true
+	bridges, bridgesOK := bridgeStatusPayload()
+	if !bridgesOK {
+		ok = false
+	}
+	bridgeIndex := map[string]map[string]interface{}{}
+	for _, bridge := range bridges {
+		if name, okName := bridge["name"].(string); okName && name != "" {
+			bridgeIndex[name] = bridge
+		}
+	}
 	for _, name := range names {
 		roleCfg := cfg.Roles[name]
 		entry := map[string]interface{}{
@@ -59,6 +69,24 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 			entry["reasoning"] = roleCfg.Reasoning
 		}
 		status := "unknown"
+		if roleCfg.CLI == "codex" {
+			if bridge, okBridge := bridgeIndex["codex"]; okBridge {
+				if bridgeStatus, okStatus := bridge["status"].(string); okStatus && bridgeStatus != "" && bridgeStatus != "ready" {
+					status = "bridge_error"
+					if errMsg, okErr := bridge["error"].(string); okErr && errMsg != "" {
+						entry["error"] = "codex bridge: " + errMsg
+					} else if missing, okMissing := bridge["missing_tools"].([]string); okMissing && len(missing) > 0 {
+						entry["error"] = "codex bridge missing tools: " + strings.Join(missing, ", ")
+					} else {
+						entry["error"] = "codex bridge not ready"
+					}
+					entry["status"] = status
+					ok = false
+					roles = append(roles, entry)
+					continue
+				}
+			}
+		}
 		if roleCfg.CLI == "" {
 			status = "invalid"
 			entry["error"] = "missing cli"
@@ -80,10 +108,6 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 		}
 		entry["status"] = status
 		roles = append(roles, entry)
-	}
-	bridges, bridgesOK := bridgeStatusPayload()
-	if !bridgesOK {
-		ok = false
 	}
 	return map[string]interface{}{
 		"count":    len(roles),
