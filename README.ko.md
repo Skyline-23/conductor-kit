@@ -325,6 +325,7 @@ Status JSON 포함 항목:
 - `ok`: 전체 상태
 - `bridge_mode`: 활성 브리지(`codex,claude|none`)
 - `bridge_targets`: 브리지 대상 목록
+- `bridges_ok`: 브리지 프로브 종합 결과
 - `bridges`: 브리지별 상태
 
 ### CLI가 감지되지 않음

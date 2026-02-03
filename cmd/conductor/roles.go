@@ -102,6 +102,7 @@ func statusPayloadWithOptions(cfg Config, configPath string, skipBridges bool) (
 		"bridge_targets": bridgeModeTargets(bridgeMode),
 		"config":         configPath,
 		"disabled":       cfg.Disabled,
+		"bridges_ok":     bridgesOK,
 		"ok":             ok,
 	}
 	if skipBridges {

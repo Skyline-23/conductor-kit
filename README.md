@@ -325,6 +325,7 @@ Status JSON includes:
 - `ok`: overall health
 - `bridge_mode`: enabled MCP bridges (`codex,claude|none`)
 - `bridge_targets`: list of bridge targets
+- `bridges_ok`: aggregate bridge probe result
 - `bridges`: per-bridge status payload
 
 ### CLI not detected
