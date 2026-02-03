@@ -255,23 +255,43 @@ func ensureDir(dir string, dryRun bool) error {
 }
 
 func doLinkOrCopy(src, dest, mode string, force, dryRun bool) error {
-	if pathExists(dest) {
+	info, err := os.Lstat(dest)
+	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		fmt.Printf("Warning: failed to stat %s: %v\n", dest, err)
+		return err
+	}
+	isLink := exists && info.Mode()&os.ModeSymlink != 0
+	if exists {
 		if mode == "link" && !force {
-			if linkMatches(dest, src) {
+			if isLink && linkMatches(dest, src) {
 				fmt.Printf("Skip (linked): %s\n", dest)
 				return nil
+			}
+			if !isLink {
+				fmt.Printf("Skip (exists): %s\n", dest)
+				return nil
+			}
+			if dryRun {
+				fmt.Printf("Remove: %s\n", dest)
+				return nil
+			}
+			if err := os.Remove(dest); err != nil {
+				fmt.Printf("Warning: failed to remove %s: %v\n", dest, err)
+				return err
 			}
 		} else if !force {
 			fmt.Printf("Skip (exists): %s\n", dest)
 			return nil
-		}
-		if dryRun {
-			fmt.Printf("Remove: %s\n", dest)
-			return nil
-		}
-		if err := os.RemoveAll(dest); err != nil {
-			fmt.Printf("Warning: failed to remove %s: %v\n", dest, err)
-			return err
+		} else {
+			if dryRun {
+				fmt.Printf("Remove: %s\n", dest)
+				return nil
+			}
+			if err := os.RemoveAll(dest); err != nil {
+				fmt.Printf("Warning: failed to remove %s: %v\n", dest, err)
+				return err
+			}
 		}
 	}
 	if dryRun {
@@ -285,7 +305,7 @@ func doLinkOrCopy(src, dest, mode string, force, dryRun bool) error {
 		}
 		return nil
 	}
-	info, err := os.Stat(src)
+	info, err = os.Stat(src)
 	if err != nil {
 		fmt.Printf("Warning: failed to stat %s: %v\n", src, err)
 		return err
