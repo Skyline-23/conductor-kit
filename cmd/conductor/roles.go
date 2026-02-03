@@ -44,10 +44,7 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 	names := roleNames(cfg)
 	roles := make([]map[string]interface{}, 0, len(names))
 	ok := true
-	bridges, bridgesOK := bridgeStatusPayload()
-	if !bridgesOK {
-		ok = false
-	}
+	bridges, _ := bridgeStatusPayload()
 	bridgeIndex := map[string]map[string]interface{}{}
 	for _, bridge := range bridges {
 		if name, okName := bridge["name"].(string); okName && name != "" {
