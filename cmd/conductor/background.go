@@ -281,7 +281,7 @@ func (w *cappedFileWriter) truncateIfNeeded() {
 	if err != nil {
 		return
 	}
-	if info.Size() <= w.maxBytes {
+	if info.Size() <= w.maxBytes+int64(asyncLogTrimSlackBytes) {
 		return
 	}
 	f, err := os.Open(w.path)
@@ -585,6 +585,7 @@ func runCommand(spec CmdSpec) (map[string]interface{}, error) {
 
 const defaultReadyTimeoutMs = 5000
 const outputTailMaxBytes = 40000
+const asyncLogTrimSlackBytes = 16 * 1024
 
 func asyncLogMaxBytes() int {
 	if val := strings.TrimSpace(os.Getenv("CONDUCTOR_ASYNC_LOG_MAX_BYTES")); val != "" {

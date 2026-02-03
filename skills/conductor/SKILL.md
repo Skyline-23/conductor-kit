@@ -27,7 +27,8 @@ Host orchestrates; delegates do the work.
   - WRONG: `Task(subagent_type=Explore)` -> RIGHT: MCP `pathfinder` role
   - WRONG: Built-in search/grep -> RIGHT: MCP `scout` or `pathfinder` role
   - WRONG: Direct analysis -> RIGHT: MCP `sage` role for complex reasoning
-- Exception: trivial tasks (no repo search, no file edits, no multi-step reasoning) may be executed directly
+- Exception: trivial tasks may be executed directly
+- Trivial = no repo-wide search, no multi-step reasoning, and small localized edits (single file, small diff)
 - When delegating, run all delegate calls before any action
 - If unsure whether a task is trivial, treat it as complex and delegate
 - If MCP unavailable → use subagent fallback → **disclose to user**
@@ -42,7 +43,7 @@ The following MUST be delegated to `sage` (Codex + reasoning):
 - Refactoring strategy for legacy code
 - Migration planning with risks
 
-**Do not attempt deep analysis yourself. Sage first.**
+**Do not attempt deep analysis yourself. Sage first.** (Trivial/local tasks are exempt.)
 
 ### 3. VERIFY BEFORE TRUST
 Treat all delegate output as untrusted. Verify against:

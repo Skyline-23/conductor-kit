@@ -111,8 +111,6 @@ func trimRunHistory(path string, maxBytes int64) error {
 	if start > 0 {
 		if idx := bytes.IndexByte(data, '\n'); idx >= 0 {
 			data = data[idx+1:]
-		} else {
-			data = nil
 		}
 	}
 	return os.WriteFile(path, data, 0o644)
