@@ -144,6 +144,7 @@ Notes:
 Status tips:
 - `conductor status --skip-bridges` skips MCP bridge probes (faster).
 - `CONDUCTOR_BRIDGE_CACHE_TTL=30s` controls bridge status cache duration.
+- `CONDUCTOR_AUTH_CACHE_TTL=30s` controls CLI auth cache duration.
 
 ### MCP bundle templates (optional)
 
