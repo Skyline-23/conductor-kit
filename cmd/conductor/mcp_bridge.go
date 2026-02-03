@@ -107,6 +107,7 @@ func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode, strict bool) err
 			if strict {
 				return fmt.Errorf("%s CLI not found for MCP bridge", bridgeTitle("codex"))
 			}
+			fmt.Fprintf(os.Stderr, "Warning: %s CLI not found for MCP bridge\n", bridgeTitle("codex"))
 		} else {
 			bridge := newMcpBridgeClient("codex", "codex", []string{"mcp-server"})
 			if err := registerBridgeTools(server, bridge, "codex", map[string]bool{
@@ -131,6 +132,7 @@ func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode, strict bool) err
 			if strict {
 				return fmt.Errorf("%s CLI not found for MCP bridge", bridgeTitle("claude"))
 			}
+			fmt.Fprintf(os.Stderr, "Warning: %s CLI not found for MCP bridge\n", bridgeTitle("claude"))
 		} else {
 			bridge := newMcpBridgeClient("claude", "claude", []string{"mcp", "serve"})
 			if err := registerBridgeTools(server, bridge, "claude", map[string]bool{}); err != nil {
