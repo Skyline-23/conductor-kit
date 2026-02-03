@@ -151,8 +151,11 @@ func runInstall(args []string) int {
 	}
 
 	if len(targets) == 0 {
-		fmt.Println("No CLIs selected. Nothing to install.")
-		return 0
+		if !installConfig && !selectedMCPs["mcp"] {
+			fmt.Println("No CLIs selected. Nothing to install.")
+			return 0
+		}
+		fmt.Println("No CLIs selected. Skipping skill/command install.")
 	}
 
 	for _, t := range targets {
@@ -205,23 +208,29 @@ func runInstall(args []string) int {
 		}
 	}
 
-	if installConfig {
+	if selectedMCPs["mcp"] {
 		projectRoot := ""
 		if *project {
 			cwd, _ := os.Getwd()
 			projectRoot = cwd
 		}
 		configPath := openCodeConfigPath(*opencodeHome, projectRoot)
-		if selectedMCPs["mcp"] {
-			if err := ensureOpenCodeMCP(configPath, *dryRun); err != nil {
-				fmt.Printf("OpenCode MCP registration failed: %v\n", err)
-				return 1
-			}
-			if err := ensureClaudeMCP(bundlesDest, *claudeHome, *dryRun); err != nil {
+		if err := ensureOpenCodeMCP(configPath, *dryRun); err != nil {
+			fmt.Printf("OpenCode MCP registration failed: %v\n", err)
+			return 1
+		}
+		bundlesPath := bundlesDest
+		if !pathExists(bundlesPath) && pathExists(bundlesSource) {
+			bundlesPath = bundlesSource
+		}
+		if !pathExists(bundlesPath) {
+			fmt.Println("MCP bundle config not found; skipping Claude/Codex MCP registration.")
+		} else {
+			if err := ensureClaudeMCP(bundlesPath, *claudeHome, *dryRun); err != nil {
 				fmt.Printf("Claude MCP registration failed: %v\n", err)
 				return 1
 			}
-			if err := ensureCodexMCP(bundlesDest, *dryRun); err != nil {
+			if err := ensureCodexMCP(bundlesPath, *dryRun); err != nil {
 				fmt.Printf("Codex MCP registration failed: %v\n", err)
 				return 1
 			}
