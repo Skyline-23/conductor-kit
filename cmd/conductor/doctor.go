@@ -233,8 +233,17 @@ func validateConfig(cfg Config) []string {
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("roles.%s.%s", name, err.Error()))
 		}
-		if normalized.CLI == "claude" && (hasArgExact(normalized.Args, "-p") || hasArgExact(normalized.Args, "--print")) && !hasArgExact(normalized.Args, "{prompt}") {
-			errors = append(errors, fmt.Sprintf("roles.%s.args missing {prompt} placeholder for -p/--print", name))
+		if normalized.CLI == "claude" {
+			if idx := indexOf(normalized.Args, "-p"); idx >= 0 {
+				if idx+1 >= len(normalized.Args) || normalized.Args[idx+1] != "{prompt}" {
+					errors = append(errors, fmt.Sprintf("roles.%s.args must place {prompt} immediately after -p", name))
+				}
+			}
+			if idx := indexOf(normalized.Args, "--print"); idx >= 0 {
+				if idx+1 >= len(normalized.Args) || normalized.Args[idx+1] != "{prompt}" {
+					errors = append(errors, fmt.Sprintf("roles.%s.args must place {prompt} immediately after --print", name))
+				}
+			}
 		}
 		if role.MaxParallel < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.max_parallel must be >= 0", name))

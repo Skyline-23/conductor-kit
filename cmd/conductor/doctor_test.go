@@ -115,6 +115,15 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErrors: 1,
 		},
+		{
+			name: "claude args prompt not adjacent",
+			cfg: Config{
+				Roles: map[string]RoleConfig{
+					"writer": {CLI: "claude", Args: []string{"-p", "--model", "sonnet", "{prompt}"}},
+				},
+			},
+			wantErrors: 1,
+		},
 	}
 
 	for _, tt := range tests {
