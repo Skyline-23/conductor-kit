@@ -75,6 +75,7 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 		cli, _ := role["cli"].(string)
 		model, _ := role["model"].(string)
 		reasoning, _ := role["reasoning"].(string)
+		errMsg, _ := role["error"].(string)
 
 		icon := renderStatusIcon(status)
 
@@ -87,6 +88,9 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 
 		if reasoning != "" {
 			line += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render("["+reasoning+"]")
+		}
+		if errMsg != "" {
+			line += " " + statusWarnStyle.Render(errMsg)
 		}
 
 		sb.WriteString(line + "\n")
