@@ -151,6 +151,22 @@ Status tips:
 - `CONDUCTOR_RUN_HISTORY_MAX_BYTES=10485760` caps run history size.
 - `CONDUCTOR_QUEUE_SNAPSHOT_MAX=200` caps runtime queue snapshot size.
 
+### Diagnostics
+
+`conductor status --json` includes:
+- `ok`: overall health
+- `bridge_mode`: enabled MCP bridges (`codex,claude|none`)
+- `bridge_targets`: list of bridge targets
+- `bridges_ok`: aggregate bridge probe result
+- `bridges`: per-bridge status payload
+
+`conductor doctor --json` includes:
+- `ok`: overall config + CLI/model checks
+- `bridge_mode`: enabled MCP bridges (`codex,claude|none`)
+- `bridge_targets`: list of bridge targets
+- `errors`: config validation errors
+- `roles`: per-role diagnostics
+
 ### MCP bundle templates (optional)
 
 `config/mcp-bundles.json` includes optional templates. `conductor` renders a ready-to-register Conductor server, and `extended` is a scaffold for extra MCP servers.
@@ -321,13 +337,6 @@ export PATH="$PATH:$(npm config get prefix)/bin"
    conductor status
    ```
 
-Status JSON includes:
-- `ok`: overall health
-- `bridge_mode`: enabled MCP bridges (`codex,claude|none`)
-- `bridge_targets`: list of bridge targets
-- `bridges_ok`: aggregate bridge probe result
-- `bridges`: per-bridge status payload
-
 ### CLI not detected
 
 Run diagnostics:
@@ -336,13 +345,6 @@ conductor doctor
 ```
 
 This shows which CLIs are installed and authenticated.
-
-Doctor JSON includes:
-- `ok`: overall config + CLI/model checks
-- `bridge_mode`: enabled MCP bridges (`codex,claude|none`)
-- `bridge_targets`: list of bridge targets
-- `errors`: config validation errors
-- `roles`: per-role diagnostics
 
 ---
 

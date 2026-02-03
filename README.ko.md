@@ -151,6 +151,22 @@ Status 팁:
 - `CONDUCTOR_RUN_HISTORY_MAX_BYTES=10485760`로 run history 파일 크기를 제한할 수 있습니다.
 - `CONDUCTOR_QUEUE_SNAPSHOT_MAX=200`으로 런타임 큐 스냅샷 크기를 제한할 수 있습니다.
 
+### 진단
+
+`conductor status --json` 포함 항목:
+- `ok`: 전체 상태
+- `bridge_mode`: 활성 브리지(`codex,claude|none`)
+- `bridge_targets`: 브리지 대상 목록
+- `bridges_ok`: 브리지 프로브 종합 결과
+- `bridges`: 브리지별 상태
+
+`conductor doctor --json` 포함 항목:
+- `ok`: 설정 + CLI/모델 체크 종합 상태
+- `bridge_mode`: 활성 브리지(`codex,claude|none`)
+- `bridge_targets`: 브리지 대상 목록
+- `errors`: 설정 검증 에러
+- `roles`: 역할별 진단
+
 ### MCP 번들 템플릿(선택)
 
 `config/mcp-bundles.json`에 선택형 템플릿이 포함되어 있습니다. `conductor`는 바로 등록 가능한 Conductor 서버를 렌더링하고, `extended`는 추가 MCP 서버를 넣는 스캐폴드입니다.
@@ -321,13 +337,6 @@ export PATH="$PATH:$(npm config get prefix)/bin"
    conductor status
    ```
 
-Status JSON 포함 항목:
-- `ok`: 전체 상태
-- `bridge_mode`: 활성 브리지(`codex,claude|none`)
-- `bridge_targets`: 브리지 대상 목록
-- `bridges_ok`: 브리지 프로브 종합 결과
-- `bridges`: 브리지별 상태
-
 ### CLI가 감지되지 않음
 
 진단 실행:
@@ -336,13 +345,6 @@ conductor doctor
 ```
 
 어떤 CLI가 설치되고 인증되었는지 표시됩니다.
-
-Doctor JSON 포함 항목:
-- `ok`: 설정 + CLI/모델 체크 종합 상태
-- `bridge_mode`: 활성 브리지(`codex,claude|none`)
-- `bridge_targets`: 브리지 대상 목록
-- `errors`: 설정 검증 에러
-- `roles`: 역할별 진단
 
 ---
 
