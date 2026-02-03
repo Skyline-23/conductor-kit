@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -62,17 +63,21 @@ func appendRunRecord(record RunRecord, logPrompt bool) error {
 }
 
 func readRunHistory(limit int, status, role, agent string) ([]RunRecord, error) {
-	data, err := os.ReadFile(runLogPath())
+	path := runLogPath()
+	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []RunRecord{}, nil
 		}
 		return nil, err
 	}
-	lines := strings.Split(string(data), "\n")
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	records := []RunRecord{}
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
@@ -90,11 +95,14 @@ func readRunHistory(limit int, status, role, agent string) ([]RunRecord, error) 
 			continue
 		}
 		records = append(records, rec)
+		if limit > 0 && len(records) > limit {
+			records = records[len(records)-limit:]
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 
-	if limit > 0 && len(records) > limit {
-		records = records[len(records)-limit:]
-	}
 	reverseRecords(records)
 	return records, nil
 }
