@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,7 +158,16 @@ type MCPMemoryInput struct {
 }
 
 func runMCPServer(args []string) int {
-	_ = args
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	bridge := fs.String("bridge", "", "comma-separated MCP bridges (codex,claude,all)")
+	bridgeCodex := fs.Bool("bridge-codex", false, "bridge Codex MCP server mode")
+	bridgeClaude := fs.Bool("bridge-claude", false, "bridge Claude MCP server mode")
+	if err := fs.Parse(args); err != nil {
+		fmt.Println("Invalid flags.")
+		return 1
+	}
+	bridgeMode := parseMCPBridgeMode(*bridge, *bridgeCodex, *bridgeClaude)
 
 	// Start session cleanup goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -437,6 +448,11 @@ Returns:
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, map[string]interface{}, error) {
 		return nil, mcpGetStatus(), nil
 	})
+
+	if err := registerMCPBridges(server, bridgeMode); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
 
 	transport := mcp.NewStdioTransport()
 	session, err := server.Connect(context.Background(), transport, nil)
