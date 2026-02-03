@@ -1248,6 +1248,9 @@ func ensureGeminiMCPArgs(args []string, prompt string) []string {
 	if !hasArgFlag(args, "--output-format") {
 		extra = append(extra, "--output-format", "stream-json")
 	}
+	if hasArgExact(args, "-p") {
+		return insertArgsBeforeFlag(args, "-p", extra)
+	}
 	return insertArgsBeforePrompt(args, prompt, extra)
 }
 

@@ -220,6 +220,14 @@ func TestEnsureMCPRoleArgsGeminiAddsDefaults(t *testing.T) {
 	if !hasArgFlag(out, "--output-format") {
 		t.Errorf("expected --output-format in args, got %v", out)
 	}
+	pIndex := indexOf(out, "-p")
+	if pIndex < 0 {
+		t.Fatalf("expected -p to be present, got %v", out)
+	}
+	promptIndex := indexOf(out, "prompt")
+	if promptIndex != pIndex+1 {
+		t.Errorf("expected prompt immediately after -p, got %v", out)
+	}
 }
 
 func TestEnsureMCPRoleArgsRespectsExistingFlags(t *testing.T) {
