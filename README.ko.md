@@ -131,26 +131,24 @@ opencode mcp add conductor -- conductor mcp
 - Codex 설정 파일: `~/.codex/config.toml` (또는 프로젝트 `.codex/config.toml`).
 - OpenCode 설정 파일: `~/.config/opencode/opencode.json` (또는 프로젝트 `opencode.json`).
 
-### 헤드리스 + 브리지 모드
+### 브리지 모드
 
 - `conductor mcp`는 어떤 MCP 클라이언트에도 연결 가능한 stdio MCP 서버입니다.
 - `conductor mcp`는 Codex(`codex mcp-server`)와 Claude 도구(`claude mcp serve`)를 브리지하고, Claude 프롬프트는 네이티브 CLI로 실행합니다.
 - Claude Code MCP 서버는 View/Edit/LS 같은 도구를 노출하며, MCP 클라이언트가 승인 흐름을 책임집니다.
 - Codex `mcp-server`는 전역 설정 오버라이드를 상속하므로, 필요 시 Codex 설정에서 승인/샌드박스를 지정하세요.
-- Claude Code는 `claude mcp serve`로 헤드리스 MCP 서버로 실행할 수 있습니다(stdio).
-- Codex CLI는 `codex mcp-server`로 MCP 서버로 실행할 수 있습니다(stdio).
 - Codex `app-server`는 MCP가 아닌 별도 JSON-RPC 프로토콜입니다.
 - `conductor mcp`는 상위 MCP 서버를 시작/연결하지 못하면 즉시 실패합니다.
 - OpenCode는 MCP 클라이언트이므로 `opencode mcp add`로 로컬/원격 서버에 연결하세요.
 
 ### MCP 번들 템플릿(선택)
 
-`config/mcp-bundles.json`에 선택형 템플릿이 포함되어 있습니다. `cli-headless`에는 Codex CLI + Claude Code의 MCP 서버 모드가 들어 있으며 기본은 비활성화입니다.
+`config/mcp-bundles.json`에 선택형 템플릿이 포함되어 있습니다. `conductor`는 바로 등록 가능한 Conductor 서버를 렌더링하고, `extended`는 추가 MCP 서버를 넣는 스캐폴드입니다.
 
 `~/.conductor-kit/mcp-bundles.json`에서 원하는 서버를 활성화한 뒤, 호스트별로 렌더링하세요:
 ```bash
-conductor mcp-bundle --host claude --bundle cli-headless
-conductor mcp-bundle --host codex --bundle cli-headless
+conductor mcp-bundle --host claude --bundle conductor
+conductor mcp-bundle --host codex --bundle conductor
 ```
 
 ### 2단계: 프롬프트에서 cross-CLI 도구 사용

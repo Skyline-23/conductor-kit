@@ -26,25 +26,6 @@
       ]
     },
 
-    "cli-headless": {
-      "servers": [
-        {
-          "name": "codex-cli",
-          "command": "codex",
-          "args": ["mcp-server"],
-          "enabled": false,
-          "note": "Codex CLI in MCP server mode (stdio)."
-        },
-        {
-          "name": "claude-code",
-          "command": "claude",
-          "args": ["mcp", "serve"],
-          "enabled": false,
-          "note": "Claude Code in MCP server mode (stdio)."
-        }
-      ]
-    },
-
     "conductor": {
       "servers": [
         {

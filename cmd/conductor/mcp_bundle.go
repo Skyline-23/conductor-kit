@@ -31,7 +31,7 @@ func runMCPBundle(args []string) int {
 	fs := flag.NewFlagSet("mcp-bundle", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	host := fs.String("host", "claude", "claude|codex")
-	bundleName := fs.String("bundle", "core", "bundle name")
+	bundleName := fs.String("bundle", "conductor", "bundle name")
 	configPath := fs.String("config", "", "bundle config path (default: repo/config/mcp-bundles.json)")
 	repoRoot := fs.String("repo", "", "repo root (default: cwd)")
 	outPath := fs.String("out", "", "write output to file instead of stdout")

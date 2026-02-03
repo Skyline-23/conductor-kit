@@ -131,26 +131,24 @@ Notes:
 - Codex config lives in `~/.codex/config.toml` (or project `.codex/config.toml`).
 - OpenCode config lives in `~/.config/opencode/opencode.json` (or project `opencode.json`).
 
-### Headless + bridge modes
+### Bridge mode
 
 - `conductor mcp` runs the unified MCP server in stdio mode for any MCP client.
 - `conductor mcp` bridges Codex (`codex mcp-server`) and Claude tools (`claude mcp serve`), while Claude prompts run via native CLI.
 - Claude Code MCP server exposes tools like View/Edit/LS; the MCP client is responsible for any tool approval flow.
 - Codex `mcp-server` inherits global config overrides, so approvals/sandboxing should be set in Codex config when needed.
-- Claude Code can run as a headless MCP server via `claude mcp serve` (stdio).
-- Codex CLI can run as an MCP server via `codex mcp-server` (stdio).
 - Codex `app-server` is a separate JSON-RPC protocol (not MCP).
 - `conductor mcp` fails fast if it cannot start or connect to the upstream MCP servers.
 - OpenCode is an MCP client; connect it to local or remote servers via `opencode mcp add`.
 
 ### MCP bundle templates (optional)
 
-`config/mcp-bundles.json` includes optional templates. `cli-headless` contains Codex CLI + Claude Code in MCP server mode (disabled by default).
+`config/mcp-bundles.json` includes optional templates. `conductor` renders a ready-to-register Conductor server, and `extended` is a scaffold for extra MCP servers.
 
 Enable the servers you want in `~/.conductor-kit/mcp-bundles.json`, then render per host:
 ```bash
-conductor mcp-bundle --host claude --bundle cli-headless
-conductor mcp-bundle --host codex --bundle cli-headless
+conductor mcp-bundle --host claude --bundle conductor
+conductor mcp-bundle --host codex --bundle conductor
 ```
 
 ### Step 2: Use cross-CLI tools in your prompts
