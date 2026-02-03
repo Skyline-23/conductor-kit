@@ -34,6 +34,7 @@ var (
 		expires  time.Time
 		statuses []map[string]interface{}
 		ok       bool
+		modeKey  string
 	}{}
 )
 
@@ -295,9 +296,15 @@ func bridgeHasTool(bridge *mcpBridgeClient, name string) bool {
 }
 
 func bridgeStatusPayload() ([]map[string]interface{}, bool) {
+	mode := mcpBridgeMode{Codex: true, Claude: true}
+	if list := strings.TrimSpace(os.Getenv("CONDUCTOR_BRIDGE")); list != "" {
+		mode = parseMCPBridgeMode(list, false, false)
+	}
+	modeKey := fmt.Sprintf("codex=%t;claude=%t", mode.Codex, mode.Claude)
+
 	now := time.Now()
 	mcpBridgeStatusCache.mu.Lock()
-	if len(mcpBridgeStatusCache.statuses) > 0 && now.Before(mcpBridgeStatusCache.expires) {
+	if len(mcpBridgeStatusCache.statuses) > 0 && now.Before(mcpBridgeStatusCache.expires) && mcpBridgeStatusCache.modeKey == modeKey {
 		cached := cloneBridgeStatuses(mcpBridgeStatusCache.statuses)
 		ok := mcpBridgeStatusCache.ok
 		mcpBridgeStatusCache.mu.Unlock()
@@ -308,21 +315,26 @@ func bridgeStatusPayload() ([]map[string]interface{}, bool) {
 	statuses := []map[string]interface{}{}
 	ok := true
 
-	codexStatus, codexOK := probeMCPBridge("codex", "codex", []string{"mcp-server"}, []string{"codex", "codex-reply"})
-	statuses = append(statuses, codexStatus)
-	if !codexOK {
-		ok = false
+	if mode.Codex {
+		codexStatus, codexOK := probeMCPBridge("codex", "codex", []string{"mcp-server"}, []string{"codex", "codex-reply"})
+		statuses = append(statuses, codexStatus)
+		if !codexOK {
+			ok = false
+		}
 	}
 
-	claudeStatus, claudeOK := probeMCPBridge("claude", "claude", []string{"mcp", "serve"}, nil)
-	statuses = append(statuses, claudeStatus)
-	if !claudeOK {
-		ok = false
+	if mode.Claude {
+		claudeStatus, claudeOK := probeMCPBridge("claude", "claude", []string{"mcp", "serve"}, nil)
+		statuses = append(statuses, claudeStatus)
+		if !claudeOK {
+			ok = false
+		}
 	}
 
 	mcpBridgeStatusCache.mu.Lock()
 	mcpBridgeStatusCache.statuses = cloneBridgeStatuses(statuses)
 	mcpBridgeStatusCache.ok = ok
+	mcpBridgeStatusCache.modeKey = modeKey
 	mcpBridgeStatusCache.expires = time.Now().Add(bridgeCacheTTL())
 	mcpBridgeStatusCache.mu.Unlock()
 
