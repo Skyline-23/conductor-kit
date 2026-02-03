@@ -258,6 +258,10 @@ conductor 도구를 "sage" 역할로 사용해서 이 복잡한 문제를 해결
 }
 ```
 
+커스텀 role args 주의사항:
+- Claude: `-p {prompt}`(또는 `--print {prompt}`)를 붙여서 사용
+- Claude/Gemini: `--output-format stream-json` 유지 (세션 ID 파싱용)
+
 ### 대화형 설정
 
 ```bash
