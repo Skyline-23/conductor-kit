@@ -51,8 +51,13 @@ func runDoctor(args []string) int {
 	}
 	errors := validateConfig(cfg)
 
+	payload, ok := doctorPayload(cfg, *configPath, errors)
 	if *jsonOut || !isTerminal(os.Stdout) {
-		return runDoctorPlain(cfg, errors)
+		printJSON(payload)
+		if ok {
+			return 0
+		}
+		return 1
 	}
 
 	return runDoctorPretty(cfg, *configPath, errors)
@@ -72,55 +77,6 @@ func doctorHelp() string {
 Usage:
   conductor doctor [--config PATH] [--json]
 `
-}
-
-func runDoctorPlain(cfg Config, errors []string) int {
-	if len(errors) > 0 {
-		for _, msg := range errors {
-			fmt.Println("Error:", msg)
-		}
-		return 1
-	}
-
-	fmt.Println("Config: OK")
-	fmt.Printf("Bridge mode: %s\n", bridgeModeLabel(resolveBridgeMode()))
-	missing := false
-	for name, role := range cfg.Roles {
-		if role.CLI == "" {
-			fmt.Printf("Role %s: missing cli\n", name)
-			missing = true
-			continue
-		}
-		if isCommandAvailable(role.CLI) {
-			fmt.Printf("Role %s: %s (ok)\n", name, role.CLI)
-		} else {
-			fmt.Printf("Role %s: %s (missing)\n", name, role.CLI)
-			missing = true
-		}
-		modelIssues := append([]ModelEntry{}, role.Models...)
-		if role.Model != "" {
-			modelIssues = append(modelIssues, ModelEntry{Name: role.Model, ReasoningEffort: role.Reasoning})
-		}
-		for _, entry := range modelIssues {
-			if entry.Name == "" {
-				continue
-			}
-			check := checkModelForCLI(role.CLI, entry.Name)
-			switch check.level {
-			case "ok":
-				fmt.Printf("Role %s: model %s (ok)\n", name, entry.Name)
-			case "warn":
-				fmt.Printf("Role %s: model %s (%s)\n", name, entry.Name, check.message)
-			case "error":
-				fmt.Printf("Role %s: model %s (%s)\n", name, entry.Name, check.message)
-				missing = true
-			}
-		}
-	}
-	if missing {
-		return 1
-	}
-	return 0
 }
 
 func runDoctorPretty(cfg Config, configPath string, errors []string) int {
@@ -208,6 +164,77 @@ func runDoctorPretty(cfg Config, configPath string, errors []string) int {
 	sb.WriteString(summary + "\n")
 	fmt.Print(sb.String())
 	return 0
+}
+
+func doctorPayload(cfg Config, configPath string, errors []string) (map[string]interface{}, bool) {
+	names := roleNames(cfg)
+	roles := make([]map[string]interface{}, 0, len(names))
+	ok := len(errors) == 0
+
+	for _, name := range names {
+		role := cfg.Roles[name]
+		entry := map[string]interface{}{
+			"role": name,
+		}
+		if role.CLI != "" {
+			entry["cli"] = role.CLI
+		}
+
+		if role.CLI == "" {
+			entry["cli_status"] = "missing"
+			ok = false
+			roles = append(roles, entry)
+			continue
+		}
+
+		if isCommandAvailable(role.CLI) {
+			entry["cli_status"] = "ok"
+			entry["cli_available"] = true
+		} else {
+			entry["cli_status"] = "missing"
+			entry["cli_available"] = false
+			ok = false
+		}
+
+		modelEntries := append([]ModelEntry{}, role.Models...)
+		if role.Model != "" {
+			modelEntries = append(modelEntries, ModelEntry{Name: role.Model, ReasoningEffort: role.Reasoning})
+		}
+
+		if len(modelEntries) > 0 {
+			models := make([]map[string]interface{}, 0, len(modelEntries))
+			for _, entryModel := range modelEntries {
+				if entryModel.Name == "" {
+					continue
+				}
+				check := checkModelForCLI(role.CLI, entryModel.Name)
+				model := map[string]interface{}{
+					"name":    entryModel.Name,
+					"level":   check.level,
+					"message": check.message,
+				}
+				if entryModel.ReasoningEffort != "" {
+					model["reasoning"] = entryModel.ReasoningEffort
+				}
+				models = append(models, model)
+				if check.level == "error" {
+					ok = false
+				}
+			}
+			entry["models"] = models
+		}
+
+		roles = append(roles, entry)
+	}
+
+	payload := map[string]interface{}{
+		"config":      configPath,
+		"bridge_mode": bridgeModeLabel(resolveBridgeMode()),
+		"errors":      errors,
+		"roles":       roles,
+		"ok":          ok,
+	}
+	return payload, ok
 }
 
 func validateConfig(cfg Config) []string {
