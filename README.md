@@ -336,6 +336,13 @@ conductor doctor
 
 This shows which CLIs are installed and authenticated.
 
+Doctor JSON includes:
+- `ok`: overall config + CLI/model checks
+- `bridge_mode`: enabled MCP bridges (`codex,claude|none`)
+- `bridge_targets`: list of bridge targets
+- `errors`: config validation errors
+- `roles`: per-role diagnostics
+
 ---
 
 ## Uninstall

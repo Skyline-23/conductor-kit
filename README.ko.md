@@ -336,6 +336,13 @@ conductor doctor
 
 어떤 CLI가 설치되고 인증되었는지 표시됩니다.
 
+Doctor JSON 포함 항목:
+- `ok`: 설정 + CLI/모델 체크 종합 상태
+- `bridge_mode`: 활성 브리지(`codex,claude|none`)
+- `bridge_targets`: 브리지 대상 목록
+- `errors`: 설정 검증 에러
+- `roles`: 역할별 진단
+
 ---
 
 ## 제거
