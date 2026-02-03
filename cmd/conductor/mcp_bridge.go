@@ -18,7 +18,7 @@ import (
 
 const (
 	mcpBridgeConnectTimeout = 15 * time.Second
-	mcpBridgeStatusCacheTTL = 30 * time.Second
+	defaultBridgeCacheTTL   = 30 * time.Second
 )
 
 type mcpBridgeMode struct {
@@ -36,6 +36,15 @@ var (
 		ok       bool
 	}{}
 )
+
+func bridgeCacheTTL() time.Duration {
+	if val := strings.TrimSpace(os.Getenv("CONDUCTOR_BRIDGE_CACHE_TTL")); val != "" {
+		if parsed, err := time.ParseDuration(val); err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return defaultBridgeCacheTTL
+}
 
 func parseMCPBridgeMode(list string, codexFlag, claudeFlag bool) mcpBridgeMode {
 	mode := mcpBridgeMode{Codex: codexFlag, Claude: claudeFlag}
@@ -311,7 +320,7 @@ func bridgeStatusPayload() ([]map[string]interface{}, bool) {
 	mcpBridgeStatusCache.mu.Lock()
 	mcpBridgeStatusCache.statuses = cloneBridgeStatuses(statuses)
 	mcpBridgeStatusCache.ok = ok
-	mcpBridgeStatusCache.expires = time.Now().Add(mcpBridgeStatusCacheTTL)
+	mcpBridgeStatusCache.expires = time.Now().Add(bridgeCacheTTL())
 	mcpBridgeStatusCache.mu.Unlock()
 
 	return statuses, ok

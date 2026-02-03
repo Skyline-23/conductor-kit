@@ -15,6 +15,7 @@ func runStatus(args []string) int {
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", resolveConfigPath(""), "config path")
 	jsonOut := fs.Bool("json", false, "output JSON")
+	skipBridges := fs.Bool("skip-bridges", false, "skip MCP bridge checks")
 	if err := fs.Parse(args); err != nil {
 		fmt.Println("Invalid flags.")
 		return 1
@@ -26,7 +27,7 @@ func runStatus(args []string) int {
 		return 1
 	}
 
-	payload, ok := statusPayload(cfg, *configPath)
+	payload, ok := statusPayloadWithOptions(cfg, *configPath, *skipBridges)
 	if *jsonOut || !isTerminal(os.Stdout) {
 		printJSON(payload)
 		if ok {

@@ -41,10 +41,17 @@ func listRolesPayload(cfg Config, configPath string) map[string]interface{} {
 }
 
 func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool) {
+	return statusPayloadWithOptions(cfg, configPath, false)
+}
+
+func statusPayloadWithOptions(cfg Config, configPath string, skipBridges bool) (map[string]interface{}, bool) {
 	names := roleNames(cfg)
 	roles := make([]map[string]interface{}, 0, len(names))
 	ok := true
-	bridges, _ := bridgeStatusPayload()
+	var bridges []map[string]interface{}
+	if !skipBridges {
+		bridges, _ = bridgeStatusPayload()
+	}
 	bridgeIndex := map[string]map[string]interface{}{}
 	for _, bridge := range bridges {
 		if name, okName := bridge["name"].(string); okName && name != "" {
@@ -106,13 +113,18 @@ func statusPayload(cfg Config, configPath string) (map[string]interface{}, bool)
 		entry["status"] = status
 		roles = append(roles, entry)
 	}
-	return map[string]interface{}{
+	payload := map[string]interface{}{
 		"count":    len(roles),
 		"roles":    roles,
 		"bridges":  bridges,
 		"config":   configPath,
 		"disabled": cfg.Disabled,
-	}, ok
+	}
+	if skipBridges {
+		payload["bridges"] = []map[string]interface{}{}
+		payload["bridges_skipped"] = true
+	}
+	return payload, ok
 }
 
 func unknownRolePayload(cfg Config, role, configPath string) map[string]interface{} {

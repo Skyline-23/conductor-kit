@@ -141,6 +141,10 @@ opencode mcp add conductor -- conductor mcp
 - `conductor mcp`는 상위 MCP 서버를 시작/연결하지 못하면 즉시 실패합니다.
 - OpenCode는 MCP 클라이언트이므로 `opencode mcp add`로 로컬/원격 서버에 연결하세요.
 
+Status 팁:
+- `conductor status --skip-bridges`로 MCP 브리지 체크를 생략할 수 있습니다(더 빠름).
+- `CONDUCTOR_BRIDGE_CACHE_TTL=30s`로 브리지 상태 캐시 시간을 조절할 수 있습니다.
+
 ### MCP 번들 템플릿(선택)
 
 `config/mcp-bundles.json`에 선택형 템플릿이 포함되어 있습니다. `conductor`는 바로 등록 가능한 Conductor 서버를 렌더링하고, `extended`는 추가 MCP 서버를 넣는 스캐폴드입니다.

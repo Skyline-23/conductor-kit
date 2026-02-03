@@ -141,6 +141,10 @@ Notes:
 - `conductor mcp` fails fast if it cannot start or connect to the upstream MCP servers.
 - OpenCode is an MCP client; connect it to local or remote servers via `opencode mcp add`.
 
+Status tips:
+- `conductor status --skip-bridges` skips MCP bridge probes (faster).
+- `CONDUCTOR_BRIDGE_CACHE_TTL=30s` controls bridge status cache duration.
+
 ### MCP bundle templates (optional)
 
 `config/mcp-bundles.json` includes optional templates. `conductor` renders a ready-to-register Conductor server, and `extended` is a scaffold for extra MCP servers.

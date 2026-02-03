@@ -203,7 +203,7 @@ func runMCP(args []string) int {
 		if err != nil {
 			return nil, nil, err
 		}
-		payload, _ := statusPayload(cfg, configPath)
+		payload, _ := statusPayloadWithOptions(cfg, configPath, false)
 		return nil, payload, nil
 	})
 
@@ -477,10 +477,7 @@ func runAsyncTool(input RunInput, report progressReporter) (map[string]interface
 }
 
 func runStatusTool(input StatusInput) (map[string]interface{}, error) {
-	tail := input.Tail
-	if tail <= 0 {
-		tail = 4000
-	}
+	tail := normalizeTailBytes(input.Tail)
 	if runtime := mcpRuntimeSnapshot(); runtime != nil {
 		return mcpRuntimeRunStatus(runtime, input.RunID, tail)
 	}
@@ -488,10 +485,7 @@ func runStatusTool(input StatusInput) (map[string]interface{}, error) {
 }
 
 func runWaitTool(input WaitInput) (map[string]interface{}, error) {
-	tail := input.Tail
-	if tail <= 0 {
-		tail = 4000
-	}
+	tail := normalizeTailBytes(input.Tail)
 	timeout := time.Duration(input.TimeoutMs) * time.Millisecond
 	if timeout <= 0 {
 		timeout = time.Duration(defaultWaitTimeoutMs) * time.Millisecond
@@ -500,6 +494,16 @@ func runWaitTool(input WaitInput) (map[string]interface{}, error) {
 		return mcpRuntimeWait(runtime, input.RunID, timeout, tail)
 	}
 	return waitRun(input.RunID, timeout, tail)
+}
+
+func normalizeTailBytes(tail int) int {
+	if tail <= 0 {
+		tail = 4000
+	}
+	if tail > outputTailMaxBytes {
+		return outputTailMaxBytes
+	}
+	return tail
 }
 
 func runCancelTool(input CancelInput) (map[string]interface{}, error) {
