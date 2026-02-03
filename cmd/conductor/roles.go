@@ -102,6 +102,7 @@ func statusPayloadWithOptions(cfg Config, configPath string, skipBridges bool) (
 		"bridge_targets": bridgeModeTargets(bridgeMode),
 		"config":         configPath,
 		"disabled":       cfg.Disabled,
+		"ok":             ok,
 	}
 	if skipBridges {
 		payload["bridges"] = []map[string]interface{}{}
