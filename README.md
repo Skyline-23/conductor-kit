@@ -147,6 +147,7 @@ Status tips:
 - `CONDUCTOR_AUTH_CACHE_TTL=30s` controls CLI auth cache duration.
 - `CONDUCTOR_ASYNC_LOG_MAX_BYTES=40000` caps async stdout/stderr log size.
 - `CONDUCTOR_RUN_HISTORY_MAX_BYTES=10485760` caps run history size.
+- `CONDUCTOR_QUEUE_SNAPSHOT_MAX=200` caps runtime queue snapshot size.
 
 ### MCP bundle templates (optional)
 

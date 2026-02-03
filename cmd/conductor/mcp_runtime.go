@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,8 @@ const (
 	maxCompletedRuns        = 200
 	runtimeQueueResourceURI = "conductor://runtime/queue"
 )
+
+const defaultQueueSnapshotLimit = 200
 
 var (
 	mcpRuntimeMu         sync.Mutex
@@ -60,6 +63,13 @@ func runtimeQueueSnapshot(runtime *Runtime) map[string]interface{} {
 	maxParallel := runtime.cfg.MaxParallel
 	runtime.mu.Unlock()
 
+	queueTotal := len(queued)
+	queueLimit := queueSnapshotLimit()
+	queueTruncated := false
+	if queueLimit > 0 && len(queued) > queueLimit {
+		queued = queued[:queueLimit]
+		queueTruncated = true
+	}
 	queueViews := make([]map[string]interface{}, 0, len(queued))
 	for _, item := range queued {
 		queueViews = append(queueViews, item.view())
@@ -77,14 +87,25 @@ func runtimeQueueSnapshot(runtime *Runtime) map[string]interface{} {
 		"status":          "ok",
 		"mode_hash":       modeHash,
 		"max_parallel":    maxParallel,
-		"queued":          len(queueViews),
+		"queued":          queueTotal,
 		"running":         len(runningViews),
 		"completed":       len(completedViews),
 		"queue":           queueViews,
 		"running_items":   runningViews,
 		"completed_items": completedViews,
 		"updated_at":      time.Now().UTC().Format(time.RFC3339),
+		"queue_truncated": queueTruncated,
+		"queue_returned":  len(queueViews),
 	}
+}
+
+func queueSnapshotLimit() int {
+	if val := strings.TrimSpace(os.Getenv("CONDUCTOR_QUEUE_SNAPSHOT_MAX")); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			return parsed
+		}
+	}
+	return defaultQueueSnapshotLimit
 }
 
 func runtimeQueueResourceHandler(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {

@@ -147,6 +147,7 @@ Status 팁:
 - `CONDUCTOR_AUTH_CACHE_TTL=30s`로 CLI 인증 캐시 시간을 조절할 수 있습니다.
 - `CONDUCTOR_ASYNC_LOG_MAX_BYTES=40000`로 async stdout/stderr 로그 크기를 제한할 수 있습니다.
 - `CONDUCTOR_RUN_HISTORY_MAX_BYTES=10485760`로 run history 파일 크기를 제한할 수 있습니다.
+- `CONDUCTOR_QUEUE_SNAPSHOT_MAX=200`으로 런타임 큐 스냅샷 크기를 제한할 수 있습니다.
 
 ### MCP 번들 템플릿(선택)
 
