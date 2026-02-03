@@ -15,9 +15,8 @@ func runRoles(args []string) int {
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", resolveConfigPath(""), "config path")
 	jsonOut := fs.Bool("json", false, "output JSON")
-	if err := fs.Parse(args); err != nil {
-		fmt.Println("Invalid flags.")
-		return 1
+	if ok, code := parseFlags(fs, args, rolesHelp); !ok {
+		return code
 	}
 
 	cfg, err := loadConfig(*configPath)
@@ -75,4 +74,12 @@ func renderRolesPretty(payload map[string]interface{}) {
 	}
 
 	fmt.Print(sb.String())
+}
+
+func rolesHelp() string {
+	return `conductor roles
+
+Usage:
+  conductor roles [--config PATH] [--json]
+`
 }

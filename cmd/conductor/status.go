@@ -16,9 +16,8 @@ func runStatus(args []string) int {
 	configPath := fs.String("config", resolveConfigPath(""), "config path")
 	jsonOut := fs.Bool("json", false, "output JSON")
 	skipBridges := fs.Bool("skip-bridges", false, "skip MCP bridge checks")
-	if err := fs.Parse(args); err != nil {
-		fmt.Println("Invalid flags.")
-		return 1
+	if ok, code := parseFlags(fs, args, statusHelp); !ok {
+		return code
 	}
 
 	cfg, err := loadConfig(*configPath)
@@ -169,4 +168,12 @@ func renderCLIAuthStatus(sb *strings.Builder) {
 		line := fmt.Sprintf("%s %-10s %s", icon, cli.name, statusText)
 		sb.WriteString(line + "\n")
 	}
+}
+
+func statusHelp() string {
+	return `conductor status
+
+Usage:
+  conductor status [--config PATH] [--skip-bridges] [--json]
+`
 }

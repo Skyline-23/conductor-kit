@@ -15,9 +15,8 @@ func runConfigValidate(args []string) int {
 	fs := flag.NewFlagSet("config-validate", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", resolveConfigPath(""), "config path")
-	if err := fs.Parse(args); err != nil {
-		fmt.Println("Invalid flags.")
-		return 1
+	if ok, code := parseFlags(fs, args, configValidateHelp); !ok {
+		return code
 	}
 
 	cfg, err := loadConfig(*configPath)
@@ -41,9 +40,8 @@ func runDoctor(args []string) int {
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config", resolveConfigPath(""), "config path")
 	jsonOut := fs.Bool("json", false, "output JSON")
-	if err := fs.Parse(args); err != nil {
-		fmt.Println("Invalid flags.")
-		return 1
+	if ok, code := parseFlags(fs, args, doctorHelp); !ok {
+		return code
 	}
 
 	cfg, err := loadConfig(*configPath)
@@ -58,6 +56,22 @@ func runDoctor(args []string) int {
 	}
 
 	return runDoctorPretty(cfg, *configPath, errors)
+}
+
+func configValidateHelp() string {
+	return `conductor config-validate
+
+Usage:
+  conductor config-validate [--config PATH]
+`
+}
+
+func doctorHelp() string {
+	return `conductor doctor
+
+Usage:
+  conductor doctor [--config PATH] [--json]
+`
 }
 
 func runDoctorPlain(cfg Config, errors []string) int {

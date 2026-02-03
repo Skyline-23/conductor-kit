@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func runDisable(args []string) int {
@@ -38,9 +39,8 @@ func runToggleDisabled(args []string, disabled bool) int {
 	mode := fs.String("mode", "link", "link|copy (enable only)")
 	repoRoot := fs.String("repo", "", "repo root (enable only)")
 	force := fs.Bool("force", false, "overwrite existing files (enable only)")
-	if err := fs.Parse(args); err != nil {
-		fmt.Println("Invalid flags.")
-		return 1
+	if ok, code := parseFlags(fs, args, func() string { return toggleHelp(name) }); !ok {
+		return code
 	}
 	if !disabled && *mode != "link" && *mode != "copy" {
 		fmt.Println("Invalid --mode (expected link or copy).")
@@ -159,6 +159,27 @@ func runToggleDisabled(args []string, disabled bool) int {
 	}
 	fmt.Printf("%sConductor %s (skills restored, MCP registered): %s\n", prefix, state, *configPath)
 	return 0
+}
+
+func toggleHelp(name string) string {
+	verb := "disable"
+	note := "[--mode link|copy] [--repo PATH] [--force]"
+	if name == "enable" {
+		verb = "enable"
+	} else {
+		note = ""
+	}
+	lines := []string{
+		"conductor " + verb,
+		"",
+		"Usage:",
+		"  conductor " + verb + " [--config PATH] [--project]",
+		"                      [--codex-home PATH] [--claude-home PATH] [--opencode-home PATH]",
+		"                      [--cli codex,claude,opencode] [--mcp mcp]",
+		"                      [--dry-run] [--json] " + note,
+		"",
+	}
+	return strings.Join(lines, "\n")
 }
 
 type toggleTarget struct {

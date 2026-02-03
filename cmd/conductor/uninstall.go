@@ -24,9 +24,8 @@ func runUninstall(args []string) int {
 	force := fs.Bool("force", false, "remove bin copies as well as symlinks")
 	dryRun := fs.Bool("dry-run", false, "print actions only")
 
-	if err := fs.Parse(args); err != nil {
-		fmt.Println(uninstallHelp())
-		return 1
+	if ok, code := parseFlags(fs, args, uninstallHelp); !ok {
+		return code
 	}
 	if *skillsOnly && *commandsOnly {
 		fmt.Println("--skills-only and --commands-only are mutually exclusive.")

@@ -29,9 +29,8 @@ func runInstall(args []string) int {
 	cliFlag := fs.String("cli", "", "comma-separated CLIs to install (codex,claude,opencode)")
 	mcpFlag := fs.String("mcp", "", "register conductor MCP server")
 
-	if err := fs.Parse(args); err != nil {
-		fmt.Println(installHelp())
-		return 1
+	if ok, code := parseFlags(fs, args, installHelp); !ok {
+		return code
 	}
 
 	if *mode != "link" && *mode != "copy" {

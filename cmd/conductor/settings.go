@@ -32,9 +32,8 @@ func runSettings(args []string) int {
 	deleteRole := fs.Bool("delete-role", false, "delete a role")
 	interactive := fs.Bool("interactive", false, "run interactive wizard")
 	noTui := fs.Bool("no-tui", false, "disable TUI")
-	if err := fs.Parse(args); err != nil {
-		fmt.Println(settingsHelp())
-		return 1
+	if ok, code := parseFlags(fs, args, settingsHelp); !ok {
+		return code
 	}
 
 	if *list && *listModels {

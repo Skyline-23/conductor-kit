@@ -35,9 +35,8 @@ func runMCPBundle(args []string) int {
 	configPath := fs.String("config", "", "bundle config path (default: repo/config/mcp-bundles.json)")
 	repoRoot := fs.String("repo", "", "repo root (default: cwd)")
 	outPath := fs.String("out", "", "write output to file instead of stdout")
-	if err := fs.Parse(args); err != nil {
-		fmt.Println(mcpBundleHelp())
-		return 1
+	if ok, code := parseFlags(fs, args, mcpBundleHelp); !ok {
+		return code
 	}
 
 	if *repoRoot == "" {

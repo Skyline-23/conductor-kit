@@ -18,6 +18,14 @@ func main() {
 			fmt.Printf("conductor %s\n", Version)
 			os.Exit(0)
 		}
+		if arg == "--help" || arg == "-h" {
+			printHelp()
+			os.Exit(0)
+		}
+		if arg == "help" && len(os.Args) == 2 {
+			printHelp()
+			os.Exit(0)
+		}
 	}
 
 	cmd, rest := resolveCommand(os.Args[1:])
@@ -44,6 +52,8 @@ func main() {
 		os.Exit(runMCPBundle(rest))
 	case "mcp":
 		os.Exit(runMCPServer(rest))
+	case "help":
+		os.Exit(runHelp(rest))
 
 	default:
 		printHelp()
@@ -64,6 +74,7 @@ func resolveCommand(args []string) (string, []string) {
 		"doctor":          true,
 		"mcp-bundle":      true,
 		"mcp":             true,
+		"help":            true,
 	}
 
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -115,23 +126,24 @@ Usage:
   conductor <command> [options]
 
 Commands:
-	  install              Install skills, commands, bins, and config
-	  uninstall            Remove skills, commands, bins, and config
-	  disable              Disable conductor (remove skills/commands + MCP)
-	  enable               Enable conductor (restore skills/commands + MCP)
-	  settings             Update role CLI/model settings
+  install              Install skills, commands, bins, and config
+  uninstall            Remove skills, commands, bins, and config
+  disable              Disable conductor (remove skills/commands + MCP)
+  enable               Enable conductor (restore skills/commands + MCP)
+  settings             Update role CLI/model settings
   status               Check CLI availability and readiness
   roles                List role -> CLI/model mappings
   config-validate      Validate conductor config JSON
   doctor               Check config and CLI availability
   mcp-bundle           Render MCP bundle templates for hosts
   mcp                  Run MCP bridge server (codex/claude tools + conductor/gemini)
+  help                 Show help for a command
   version              Show version information
 
-	Aliases:
-	  conductor-kit, conductor-kit-install
-	  conductor-disable, conductor-enable, conductor-uninstall
-	  conductor-settings, conductor-status
+Aliases:
+  conductor-kit, conductor-kit-install
+  conductor-disable, conductor-enable, conductor-uninstall
+  conductor-settings, conductor-status
   conductor-config-validate, conductor-doctor
   conductor-mcp-bundle, conductor-mcp
 `, Version)

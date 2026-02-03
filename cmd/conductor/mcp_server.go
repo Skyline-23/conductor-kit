@@ -158,8 +158,13 @@ type MCPMemoryInput struct {
 }
 
 func runMCPServer(args []string) int {
+	if wantsHelp(args) {
+		fmt.Println(mcpHelp())
+		return 0
+	}
 	if len(args) > 0 {
 		fmt.Println("Invalid flags.")
+		fmt.Println(mcpHelp())
 		return 1
 	}
 	bridgeMode := mcpBridgeMode{Codex: true, Claude: true}
@@ -1752,4 +1757,12 @@ func mcpExtractText(output string) string {
 		return strings.Join(texts, "\n")
 	}
 	return output
+}
+
+func mcpHelp() string {
+	return `conductor mcp
+
+Usage:
+  conductor mcp
+`
 }
