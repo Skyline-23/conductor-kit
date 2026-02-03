@@ -82,6 +82,39 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErrors: 1,
 		},
+		{
+			name: "runtime on_mode_change invalid",
+			cfg: Config{
+				Runtime: RuntimeConfig{
+					Queue: RuntimeQueueConfig{OnModeChange: "oops"},
+				},
+				Roles: map[string]RoleConfig{
+					"oracle": {CLI: "codex"},
+				},
+			},
+			wantErrors: 1,
+		},
+		{
+			name: "runtime approval unknown role",
+			cfg: Config{
+				Runtime: RuntimeConfig{
+					Approval: RuntimeApprovalConfig{Roles: []string{"missing"}},
+				},
+				Roles: map[string]RoleConfig{
+					"oracle": {CLI: "codex"},
+				},
+			},
+			wantErrors: 1,
+		},
+		{
+			name: "claude args missing prompt placeholder",
+			cfg: Config{
+				Roles: map[string]RoleConfig{
+					"writer": {CLI: "claude", Args: []string{"-p", "--model", "sonnet"}},
+				},
+			},
+			wantErrors: 1,
+		},
 	}
 
 	for _, tt := range tests {

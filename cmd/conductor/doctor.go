@@ -199,6 +199,23 @@ func validateConfig(cfg Config) []string {
 	if len(cfg.Roles) == 0 {
 		errors = append(errors, "roles is empty")
 	}
+	if cfg.Runtime.MaxParallel < 0 {
+		errors = append(errors, "runtime.max_parallel must be >= 0")
+	}
+	switch cfg.Runtime.Queue.OnModeChange {
+	case "", "none", "cancel_pending", "cancel_running":
+		// ok
+	default:
+		errors = append(errors, "runtime.queue.on_mode_change must be one of: none, cancel_pending, cancel_running")
+	}
+	for _, role := range cfg.Runtime.Approval.Roles {
+		if role == "" {
+			continue
+		}
+		if _, ok := cfg.Roles[role]; !ok {
+			errors = append(errors, fmt.Sprintf("runtime.approval.roles unknown: %s", role))
+		}
+	}
 	if cfg.Defaults.MaxParallel < 0 {
 		errors = append(errors, "defaults.max_parallel must be >= 0")
 	}
@@ -212,8 +229,12 @@ func validateConfig(cfg Config) []string {
 		errors = append(errors, "defaults.retry_backoff_ms must be >= 0")
 	}
 	for name, role := range cfg.Roles {
-		if _, err := normalizeRoleConfig(role); err != nil {
+		normalized, err := normalizeRoleConfig(role)
+		if err != nil {
 			errors = append(errors, fmt.Sprintf("roles.%s.%s", name, err.Error()))
+		}
+		if normalized.CLI == "claude" && (hasArgExact(normalized.Args, "-p") || hasArgExact(normalized.Args, "--print")) && !hasArgExact(normalized.Args, "{prompt}") {
+			errors = append(errors, fmt.Sprintf("roles.%s.args missing {prompt} placeholder for -p/--print", name))
 		}
 		if role.MaxParallel < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.max_parallel must be >= 0", name))
@@ -229,6 +250,15 @@ func validateConfig(cfg Config) []string {
 		}
 	}
 	return errors
+}
+
+func hasArgExact(args []string, target string) bool {
+	for _, arg := range args {
+		if arg == target {
+			return true
+		}
+	}
+	return false
 }
 
 type modelCheck struct {
