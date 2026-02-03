@@ -49,13 +49,12 @@ func statusPayloadWithOptions(cfg Config, configPath string, skipBridges bool) (
 	roles := make([]map[string]interface{}, 0, len(names))
 	ok := true
 	var bridges []map[string]interface{}
+	bridgesOK := true
+	bridgeMode := resolveBridgeMode()
 	if !skipBridges {
-		bridges, _ = bridgeStatusPayload()
-	}
-	bridgeIndex := map[string]map[string]interface{}{}
-	for _, bridge := range bridges {
-		if name, okName := bridge["name"].(string); okName && name != "" {
-			bridgeIndex[name] = bridge
+		bridges, bridgesOK = bridgeStatusPayload()
+		if !bridgesOK {
+			ok = false
 		}
 	}
 	for _, name := range names {
@@ -73,24 +72,6 @@ func statusPayloadWithOptions(cfg Config, configPath string, skipBridges bool) (
 			entry["reasoning"] = roleCfg.Reasoning
 		}
 		status := "unknown"
-		if roleCfg.CLI == "codex" {
-			if bridge, okBridge := bridgeIndex["codex"]; okBridge {
-				if bridgeStatus, okStatus := bridge["status"].(string); okStatus && bridgeStatus != "" && bridgeStatus != "ready" {
-					status = "bridge_error"
-					if errMsg, okErr := bridge["error"].(string); okErr && errMsg != "" {
-						entry["error"] = "codex bridge: " + errMsg
-					} else if missing, okMissing := bridge["missing_tools"].([]string); okMissing && len(missing) > 0 {
-						entry["error"] = "codex bridge missing tools: " + strings.Join(missing, ", ")
-					} else {
-						entry["error"] = "codex bridge not ready"
-					}
-					entry["status"] = status
-					ok = false
-					roles = append(roles, entry)
-					continue
-				}
-			}
-		}
 		if roleCfg.CLI == "" {
 			status = "invalid"
 			entry["error"] = "missing cli"
@@ -114,11 +95,12 @@ func statusPayloadWithOptions(cfg Config, configPath string, skipBridges bool) (
 		roles = append(roles, entry)
 	}
 	payload := map[string]interface{}{
-		"count":    len(roles),
-		"roles":    roles,
-		"bridges":  bridges,
-		"config":   configPath,
-		"disabled": cfg.Disabled,
+		"count":       len(roles),
+		"roles":       roles,
+		"bridges":     bridges,
+		"bridge_mode": bridgeModeLabel(bridgeMode),
+		"config":      configPath,
+		"disabled":    cfg.Disabled,
 	}
 	if skipBridges {
 		payload["bridges"] = []map[string]interface{}{}

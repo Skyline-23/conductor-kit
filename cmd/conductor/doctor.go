@@ -83,6 +83,7 @@ func runDoctorPlain(cfg Config, errors []string) int {
 	}
 
 	fmt.Println("Config: OK")
+	fmt.Printf("Bridge mode: %s\n", bridgeModeLabel(resolveBridgeMode()))
 	missing := false
 	for name, role := range cfg.Roles {
 		if role.CLI == "" {
@@ -129,6 +130,7 @@ func runDoctorPretty(cfg Config, configPath string, errors []string) int {
 	sb.WriteString(title + "\n\n")
 
 	sb.WriteString(labelStyle.Render("Config: ") + pathStyle.Render(configPath) + "\n")
+	sb.WriteString(labelStyle.Render("Bridges: ") + valueStyle.Render(bridgeModeLabel(resolveBridgeMode())) + "\n")
 	sb.WriteString(renderDivider(50) + "\n\n")
 
 	if len(errors) > 0 {
@@ -301,6 +303,14 @@ func validateConfig(cfg Config) []string {
 					errors = append(errors, fmt.Sprintf("roles.%s.args invalid --sandbox: %s", name, val))
 				}
 			}
+			if role.Reasoning != "" && !isAllowedReasoningEffort(role.Reasoning) {
+				errors = append(errors, fmt.Sprintf("roles.%s.reasoning invalid: %s", name, role.Reasoning))
+			}
+			for _, entry := range role.Models {
+				if entry.ReasoningEffort != "" && !isAllowedReasoningEffort(entry.ReasoningEffort) {
+					errors = append(errors, fmt.Sprintf("roles.%s.models reasoning invalid: %s", name, entry.ReasoningEffort))
+				}
+			}
 		}
 		if role.MaxParallel < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.max_parallel must be >= 0", name))
@@ -340,6 +350,15 @@ func isAllowedApprovalPolicy(val string) bool {
 func isAllowedSandbox(val string) bool {
 	switch val {
 	case "read-only", "workspace-write", "danger-full-access":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedReasoningEffort(val string) bool {
+	switch val {
+	case "low", "medium", "high", "xhigh":
 		return true
 	default:
 		return false

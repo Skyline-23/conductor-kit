@@ -51,6 +51,11 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 	configPath, _ := payload["config"].(string)
 	sb.WriteString(labelStyle.Render("Config: ") + pathStyle.Render(configPath) + "\n\n")
 
+	bridgeMode, _ := payload["bridge_mode"].(string)
+	if bridgeMode != "" {
+		sb.WriteString(labelStyle.Render("Bridges: ") + valueStyle.Render(bridgeMode) + "\n\n")
+	}
+
 	disabled, _ := payload["disabled"].(bool)
 	if disabled {
 		sb.WriteString(statusWarnStyle.Render("Conductor disabled") + "\n")

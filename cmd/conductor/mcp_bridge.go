@@ -47,6 +47,33 @@ func bridgeCacheTTL() time.Duration {
 	return defaultBridgeCacheTTL
 }
 
+func resolveBridgeMode() mcpBridgeMode {
+	mode := mcpBridgeMode{Codex: true, Claude: true}
+	if list := strings.TrimSpace(os.Getenv("CONDUCTOR_BRIDGE")); list != "" {
+		mode = parseMCPBridgeMode(list, false, false)
+	}
+	return mode
+}
+
+func bridgeModeTargets(mode mcpBridgeMode) []string {
+	targets := []string{}
+	if mode.Codex {
+		targets = append(targets, "codex")
+	}
+	if mode.Claude {
+		targets = append(targets, "claude")
+	}
+	return targets
+}
+
+func bridgeModeLabel(mode mcpBridgeMode) string {
+	targets := bridgeModeTargets(mode)
+	if len(targets) == 0 {
+		return "none"
+	}
+	return strings.Join(targets, ",")
+}
+
 func parseMCPBridgeMode(list string, codexFlag, claudeFlag bool) mcpBridgeMode {
 	mode := mcpBridgeMode{Codex: codexFlag, Claude: claudeFlag}
 	if strings.TrimSpace(list) == "" {
@@ -296,10 +323,7 @@ func bridgeHasTool(bridge *mcpBridgeClient, name string) bool {
 }
 
 func bridgeStatusPayload() ([]map[string]interface{}, bool) {
-	mode := mcpBridgeMode{Codex: true, Claude: true}
-	if list := strings.TrimSpace(os.Getenv("CONDUCTOR_BRIDGE")); list != "" {
-		mode = parseMCPBridgeMode(list, false, false)
-	}
+	mode := resolveBridgeMode()
 	modeKey := fmt.Sprintf("codex=%t;claude=%t", mode.Codex, mode.Claude)
 
 	now := time.Now()
