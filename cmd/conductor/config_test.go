@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -259,5 +260,41 @@ func TestExpandModelEntries(t *testing.T) {
 	entries = expandModelEntries(cfg, "", "")
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 entries from config, got %d", len(entries))
+	}
+}
+
+func TestValidateConfigReasoningEffort(t *testing.T) {
+	cfg := Config{
+		Roles: map[string]RoleConfig{
+			"sage": {
+				CLI:       "codex",
+				Reasoning: "fast",
+			},
+		},
+	}
+	errors := validateConfig(cfg)
+	if len(errors) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errors), errors)
+	}
+	if want := "roles.sage.reasoning invalid"; !strings.HasPrefix(errors[0], want) {
+		t.Fatalf("unexpected error: %s", errors[0])
+	}
+
+	cfg = Config{
+		Roles: map[string]RoleConfig{
+			"sage": {
+				CLI: "codex",
+				Models: []ModelEntry{
+					{Name: "gpt-4", ReasoningEffort: "turbo"},
+				},
+			},
+		},
+	}
+	errors = validateConfig(cfg)
+	if len(errors) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errors), errors)
+	}
+	if want := "roles.sage.models reasoning invalid"; !strings.HasPrefix(errors[0], want) {
+		t.Fatalf("unexpected error: %s", errors[0])
 	}
 }
