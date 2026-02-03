@@ -216,6 +216,17 @@ func validateConfig(cfg Config) []string {
 			errors = append(errors, fmt.Sprintf("runtime.approval.roles unknown: %s", role))
 		}
 	}
+	for _, agent := range cfg.Runtime.Approval.Agents {
+		if agent == "" {
+			continue
+		}
+		switch agent {
+		case "codex", "claude", "gemini":
+			// ok
+		default:
+			errors = append(errors, fmt.Sprintf("runtime.approval.agents unknown: %s", agent))
+		}
+	}
 	if cfg.Defaults.MaxParallel < 0 {
 		errors = append(errors, "defaults.max_parallel must be >= 0")
 	}
@@ -234,6 +245,9 @@ func validateConfig(cfg Config) []string {
 			errors = append(errors, fmt.Sprintf("roles.%s.%s", name, err.Error()))
 		}
 		if normalized.CLI == "claude" {
+			if !hasArgExact(normalized.Args, "-p") && !hasArgExact(normalized.Args, "--print") {
+				errors = append(errors, fmt.Sprintf("roles.%s.args must include -p or --print", name))
+			}
 			if idx := indexOf(normalized.Args, "-p"); idx >= 0 {
 				if idx+1 >= len(normalized.Args) || normalized.Args[idx+1] != "{prompt}" {
 					errors = append(errors, fmt.Sprintf("roles.%s.args must place {prompt} immediately after -p", name))
@@ -285,6 +299,16 @@ func validateConfig(cfg Config) []string {
 		}
 		if role.RetryBackoffMs < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.retry_backoff_ms must be >= 0", name))
+		}
+		for key := range role.Env {
+			if strings.TrimSpace(key) == "" {
+				errors = append(errors, fmt.Sprintf("roles.%s.env contains empty key", name))
+				break
+			}
+			if strings.Contains(key, "=") {
+				errors = append(errors, fmt.Sprintf("roles.%s.env contains invalid key: %s", name, key))
+				break
+			}
 		}
 	}
 	return errors

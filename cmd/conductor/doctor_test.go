@@ -107,10 +107,31 @@ func TestValidateConfig(t *testing.T) {
 			wantErrors: 1,
 		},
 		{
+			name: "runtime approval unknown agent",
+			cfg: Config{
+				Runtime: RuntimeConfig{
+					Approval: RuntimeApprovalConfig{Agents: []string{"unknown"}},
+				},
+				Roles: map[string]RoleConfig{
+					"oracle": {CLI: "codex"},
+				},
+			},
+			wantErrors: 1,
+		},
+		{
 			name: "claude args missing prompt placeholder",
 			cfg: Config{
 				Roles: map[string]RoleConfig{
 					"writer": {CLI: "claude", Args: []string{"-p", "--model", "sonnet"}},
+				},
+			},
+			wantErrors: 1,
+		},
+		{
+			name: "claude args missing prompt flag",
+			cfg: Config{
+				Roles: map[string]RoleConfig{
+					"writer": {CLI: "claude", Args: []string{"--model", "sonnet", "{prompt}"}},
 				},
 			},
 			wantErrors: 1,
@@ -147,6 +168,15 @@ func TestValidateConfig(t *testing.T) {
 			cfg: Config{
 				Roles: map[string]RoleConfig{
 					"scout": {CLI: "gemini", Args: []string{"-p", "--model", "gemini-3-flash", "{prompt}"}},
+				},
+			},
+			wantErrors: 1,
+		},
+		{
+			name: "role env invalid key",
+			cfg: Config{
+				Roles: map[string]RoleConfig{
+					"oracle": {CLI: "codex", Env: map[string]string{"BAD=KEY": "1"}},
 				},
 			},
 			wantErrors: 1,
