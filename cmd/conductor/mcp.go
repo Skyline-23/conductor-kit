@@ -14,7 +14,7 @@ func runMCP(args []string) int {
 	_ = args
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "conductor-kit",
-		Version: "0.1.0",
+		Version: Version,
 	}, &mcp.ServerOptions{
 		HasResources: true,
 		SubscribeHandler: func(ctx context.Context, req *mcp.SubscribeRequest) error {

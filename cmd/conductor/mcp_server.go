@@ -174,7 +174,7 @@ func runMCPServer(args []string) int {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "conductor-mcp-server",
-		Version: "1.0.0",
+		Version: Version,
 	}, nil)
 
 	// ===== Codex Tools =====
