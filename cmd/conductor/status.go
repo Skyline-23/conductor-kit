@@ -99,7 +99,13 @@ func renderStatusPretty(payload map[string]interface{}, allOK bool) {
 
 	// MCP Bridges section
 	bridges, _ := payload["bridges"].([]map[string]interface{})
-	if len(bridges) > 0 {
+	if skipped, _ := payload["bridges_skipped"].(bool); skipped {
+		sb.WriteString("\n")
+		sb.WriteString(lipgloss.NewStyle().Bold(true).Render("MCP Bridges") + "\n")
+		sb.WriteString(renderDivider(50) + "\n")
+		sb.WriteString(statusWarnStyle.Render("Skipped (use --skip-bridges=false to enable)") + "\n")
+		sb.WriteString("\n")
+	} else if len(bridges) > 0 {
 		sb.WriteString("\n")
 		sb.WriteString(lipgloss.NewStyle().Bold(true).Render("MCP Bridges") + "\n")
 		sb.WriteString(renderDivider(50) + "\n")
