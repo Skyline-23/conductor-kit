@@ -4,36 +4,33 @@ A global skills pack for **Codex CLI**, **Claude Code**, and **Gemini CLI** with
 
 **Language**: English | [한국어](README.ko.md)
 
-## What is this?
+## Quickstart
 
-conductor-kit enables AI CLI tools to work together seamlessly:
+1. Install one or more supported CLIs.
+2. Install conductor-kit.
+3. Run `conductor install` and verify with `conductor status`.
 
-- **Cross-CLI Delegation**: Let Claude delegate to Codex for reasoning, or Gemini for web search
-- **Unified Skill System**: One skill works across all supported CLIs
-- **Role-based Routing**: Automatically route tasks to the best CLI/model combination
-- **MCP Integration**: Full Model Context Protocol support for tool interoperability
+## Install
 
-## Installation
-
-### Option 1: npx (Easiest)
+npx (fastest):
 ```bash
 npx conductor-kit install
 ```
 
-### Option 2: Homebrew (macOS)
+Homebrew (macOS):
 ```bash
 brew tap Skyline-23/conductor-kit
 brew install --cask conductor-kit
 conductor install
 ```
 
-### Option 3: npm global
+npm global:
 ```bash
 npm install -g conductor-kit
 conductor install
 ```
 
-### Option 4: Build from source
+Build from source:
 ```bash
 git clone https://github.com/Skyline-23/conductor-kit ~/.conductor-kit
 cd ~/.conductor-kit
@@ -41,19 +38,13 @@ go build -o ~/.local/bin/conductor ./cmd/conductor
 conductor install
 ```
 
-### Verify Installation
+Verify:
 ```bash
-conductor doctor   # Full diagnostics
-conductor status   # Check CLI availability
+conductor doctor
+conductor status
 ```
 
----
-
-## Tutorial: Getting Started
-
-### Step 1: Install at least one AI CLI
-
-conductor-kit works with these CLIs:
+## Supported CLIs
 
 | CLI | Install | Auth |
 |-----|---------|------|
@@ -61,51 +52,9 @@ conductor-kit works with these CLIs:
 | **Codex CLI** | `npm install -g @openai/codex` | `codex --login` |
 | **Gemini CLI** | `npm install -g @anthropic-ai/gemini-cli` | `gemini auth` |
 
-### Step 2: Run the installer
+## MCP Setup
 
-```bash
-conductor install
-```
-
-This will:
-- Detect which CLIs are installed
-- Copy skills to `~/.claude/skills/` and/or `~/.codex/skills/`
-- Copy slash commands to `~/.claude/commands/` and/or `~/.codex/prompts/`
-- Create config at `~/.conductor-kit/conductor.json`
-
-For project-local installs, use:
-```bash
-conductor install --project
-```
-
-### Step 3: Load the skill
-
-Start your preferred CLI and trigger the conductor skill:
-
-```bash
-# In Claude Code
-claude
-> Load the conductor skill
-> sym  # shorthand trigger
-```
-
-```bash
-# In Codex CLI
-codex
-> Load conductor
-```
-
-The skill provides orchestration guidance and role-based delegation patterns.
-
----
-
-## Tutorial: Cross-CLI Delegation with MCP
-
-The real power of conductor-kit is letting one CLI call another via MCP tools.
-
-### Step 1: Register the MCP server
-
-**For Claude Code** - Add to `~/.claude/mcp.json`:
+Claude Code `~/.claude/mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -117,29 +66,80 @@ The real power of conductor-kit is letting one CLI call another via MCP tools.
 }
 ```
 
-**For Codex CLI**:
+Codex CLI:
 ```bash
 codex mcp add conductor -- conductor mcp
 ```
 
-**For OpenCode**:
+OpenCode:
 ```bash
 opencode mcp add conductor -- conductor mcp
 ```
 
-Notes:
-- Codex config lives in `~/.codex/config.toml` (or project `.codex/config.toml`).
-- OpenCode config lives in `~/.config/opencode/opencode.json` (or project `opencode.json`).
+Config paths:
+- Codex: `~/.codex/config.toml` (or project `.codex/config.toml`)
+- OpenCode: `~/.config/opencode/opencode.json` (or project `opencode.json`)
 
-### Bridge mode
+Bridge mode notes:
+- `conductor mcp` runs a unified MCP server over stdio for any MCP client.
+- Bridges Codex (`codex mcp-server`) and Claude tools (`claude mcp serve`); Claude prompts run via native CLI.
+- Claude tool approval is handled by the MCP client.
+- Codex `mcp-server` inherits global config overrides (approvals/sandboxing live in Codex config).
+- `conductor mcp` warns and continues if an upstream MCP server is unavailable (`CONDUCTOR_BRIDGE_STRICT=1` to fail fast).
 
-- `conductor mcp` runs the unified MCP server in stdio mode for any MCP client.
-- `conductor mcp` bridges Codex (`codex mcp-server`) and Claude tools (`claude mcp serve`), while Claude prompts run via native CLI.
-- Claude Code MCP server exposes tools like View/Edit/LS; the MCP client is responsible for any tool approval flow.
-- Codex `mcp-server` inherits global config overrides, so approvals/sandboxing should be set in Codex config when needed.
-- Codex `app-server` is a separate JSON-RPC protocol (not MCP).
-- `conductor mcp` warns and continues if an upstream MCP server is unavailable (set `CONDUCTOR_BRIDGE_STRICT=1` to fail fast).
-- OpenCode is an MCP client; connect it to local or remote servers via `opencode mcp add`.
+Optional MCP bundles:
+- Templates live in `config/mcp-bundles.json`.
+- Enable in `~/.conductor-kit/mcp-bundles.json` and render:
+```bash
+conductor mcp-bundle --host claude --bundle conductor
+conductor mcp-bundle --host codex --bundle conductor
+```
+
+## Usage
+
+Load the skill:
+```bash
+# Claude Code
+claude
+> Load the conductor skill
+> sym
+```
+
+```bash
+# Codex CLI
+codex
+> Load conductor
+```
+
+Cross-CLI prompts:
+```
+Use the codex tool to analyze this algorithm with deep reasoning
+```
+
+```
+Use the gemini tool to search the web for React 19 best practices
+```
+
+```
+Use the conductor tool with role "sage" to solve this complex problem
+```
+
+Available MCP tools:
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `codex` | Run Codex MCP session (bridged) | Deep reasoning, complex analysis |
+| `claude` | Run Claude Code session (native CLI) | Code generation, refactoring |
+| `claude__*` | Claude Code tools (bridged) | View/Edit/LS, etc. |
+| `gemini` | Run Gemini CLI session | Web search, research |
+| `conductor` | Role-based routing | Auto-select best CLI for task |
+| `memory` | Shared memory cache | Store/retrieve shared context |
+| `codex-reply` / `claude-reply` / `gemini-reply` | Continue a session | Multi-turn conversations |
+| `status` | Check CLI availability | Diagnostics |
+
+Shared memory is cached per project (TTL + git HEAD invalidation) and auto-prepended to MCP calls. Use `memory` or `memory_key`/`memory_mode`.
+
+## Diagnostics
 
 Status tips:
 - `conductor status --skip-bridges` skips MCP bridge probes (faster).
@@ -150,8 +150,6 @@ Status tips:
 - `CONDUCTOR_ASYNC_LOG_MAX_BYTES=40000` caps async stdout/stderr log size.
 - `CONDUCTOR_RUN_HISTORY_MAX_BYTES=10485760` caps run history size.
 - `CONDUCTOR_QUEUE_SNAPSHOT_MAX=200` caps runtime queue snapshot size.
-
-### Diagnostics
 
 `conductor status --json` includes:
 - `ok`: overall health
@@ -167,93 +165,11 @@ Status tips:
 - `errors`: config validation errors
 - `roles`: per-role diagnostics
 
-### MCP bundle templates (optional)
-
-`config/mcp-bundles.json` includes optional templates. `conductor` renders a ready-to-register Conductor server, and `extended` is a scaffold for extra MCP servers.
-
-Enable the servers you want in `~/.conductor-kit/mcp-bundles.json`, then render per host:
-```bash
-conductor mcp-bundle --host claude --bundle conductor
-conductor mcp-bundle --host codex --bundle conductor
-```
-
-### Step 2: Use cross-CLI tools in your prompts
-
-Now you can ask Claude to delegate to other CLIs:
-
-```
-Use the codex tool to analyze this algorithm with deep reasoning
-```
-
-```
-Use the gemini tool to search the web for React 19 best practices
-```
-
-```
-Use the conductor tool with role "sage" to solve this complex problem
-```
-
-### Available MCP Tools
-
-| Tool | Description | Example |
-|------|-------------|---------|
-| `codex` | Run Codex MCP session (bridged) | Deep reasoning, complex analysis |
-| `claude` | Run Claude Code session (native CLI) | Code generation, refactoring |
-| `claude__*` | Claude Code tools (bridged) | View/Edit/LS, etc. |
-| `gemini` | Run Gemini CLI session | Web search, research |
-| `conductor` | Role-based routing | Auto-select best CLI for task |
-| `memory` | Shared memory cache | Store/retrieve shared context |
-| `codex-reply` / `claude-reply` / `gemini-reply` | Continue a session | Multi-turn conversations |
-| `status` | Check CLI availability | Diagnostics |
-
-Shared memory is cached per project (TTL + git HEAD invalidation) and auto-prepended to MCP calls. Use `memory` to update it, or `memory_key`/`memory_mode` to inject additional keys on `codex`, `claude`, `gemini`, or `conductor`.
-
-### Example: Multi-CLI Workflow
-
-```
-I need to implement a new authentication system.
-
-1. Use the gemini tool to research OAuth 2.0 best practices for 2025
-2. Use the codex tool to design the architecture with reasoning
-3. Then implement it here in Claude
-```
-
----
-
-## Tutorial: Using Slash Commands
-
-Slash commands provide quick access to common workflows.
-
-### In Claude Code
-
-| Command | Description |
-|---------|-------------|
-| `/conductor-plan` | Create an implementation plan |
-| `/conductor-search` | Search codebase with delegation |
-| `/conductor-implement` | Implement with verification |
-| `/conductor-debug` | Debug with multi-CLI analysis |
-| `/conductor-review` | Code review workflow |
-| `/conductor-release` | Release preparation |
-| `/conductor-symphony` | Full orchestration mode |
-
-### In Codex CLI
-
-Prefix commands with `/prompts:`:
-```
-/prompts:conductor-plan
-/prompts:conductor-symphony
-```
-
----
-
 ## Configuration
 
-Config file: `~/.conductor-kit/conductor.json` (or nearest `.conductor-kit/conductor.json` in the current/parent directories)
+Config path: `~/.conductor-kit/conductor.json` (or nearest `.conductor-kit/conductor.json` in current/parent directories)
 
-### Role-based Routing
-
-Roles map task types to CLI/model combinations:
-
+Role-based routing example:
 ```json
 {
   "roles": {
@@ -288,16 +204,33 @@ Notes for custom role args:
 - Claude/Gemini: keep `--output-format stream-json` so session IDs can be parsed.
 - Codex: `--approval-policy` = `untrusted|on-request|on-failure|never`, `--sandbox` = `read-only|workspace-write|danger-full-access`.
 
-### Interactive Setup
-
+Interactive setup:
 ```bash
-conductor settings              # TUI wizard
-conductor settings --list-models --cli codex  # List models
+conductor settings
+conductor settings --list-models --cli codex
 ```
 
----
+## Slash Commands
 
-## Commands Reference
+Claude Code:
+
+| Command | Description |
+|---------|-------------|
+| `/conductor-plan` | Create an implementation plan |
+| `/conductor-search` | Search codebase with delegation |
+| `/conductor-implement` | Implement with verification |
+| `/conductor-debug` | Debug with multi-CLI analysis |
+| `/conductor-review` | Code review workflow |
+| `/conductor-release` | Release preparation |
+| `/conductor-symphony` | Full orchestration mode |
+
+Codex CLI (prefix with `/prompts:`):
+```
+/prompts:conductor-plan
+/prompts:conductor-symphony
+```
+
+## Commands
 
 | Command | Description |
 |---------|-------------|
@@ -314,55 +247,32 @@ conductor settings --list-models --cli codex  # List models
 | `conductor mcp` | Start unified MCP server |
 | `conductor help` | Show command help |
 
----
-
 ## Troubleshooting
 
-### "conductor: command not found"
-
-Ensure the binary is in your PATH:
+"conductor: command not found":
 ```bash
-# Check install location
 which conductor
-
-# Add to PATH if needed (for npm global)
 export PATH="$PATH:$(npm config get prefix)/bin"
 ```
 
-### MCP tools not appearing
+MCP tools not appearing:
+```bash
+conductor status
+```
 
-1. Restart your CLI after adding MCP config
-2. Check MCP server is working:
-   ```bash
-   conductor status
-   ```
-
-### CLI not detected
-
-Run diagnostics:
+CLI not detected:
 ```bash
 conductor doctor
 ```
 
-This shows which CLIs are installed and authenticated.
-
----
-
 ## Uninstall
 
 ```bash
-# Homebrew
 brew uninstall --cask conductor-kit
-
-# npm
 npm uninstall -g conductor-kit
-
-# Manual cleanup
 conductor uninstall
 rm -rf ~/.conductor-kit
 ```
-
----
 
 ## License
 
