@@ -136,6 +136,9 @@ func buildRoleArgs(roleCfg RoleConfig, prompt, model, reasoning string) []string
 	if insertIndex < 0 {
 		insertIndex = len(args)
 	}
+	if promptIndex > 0 && (args[promptIndex-1] == "-p" || args[promptIndex-1] == "--print") {
+		insertIndex = promptIndex - 1
+	}
 	extra := []string{}
 	if reasoning != "" && roleCfg.ReasoningFlag != "" && roleCfg.ReasoningKey != "" {
 		extra = append(extra, roleCfg.ReasoningFlag, fmt.Sprintf("%s=%s", roleCfg.ReasoningKey, reasoning))
