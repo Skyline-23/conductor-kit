@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,22 +156,14 @@ type MCPMemoryInput struct {
 }
 
 func runMCPServer(args []string) int {
-	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	bridge := fs.String("bridge", "", "comma-separated MCP bridges (codex,claude,all)")
-	bridgeCodex := fs.Bool("bridge-codex", false, "bridge Codex MCP server mode")
-	bridgeClaude := fs.Bool("bridge-claude", false, "bridge Claude MCP server mode")
-	noBridge := fs.Bool("no-bridge", false, "disable automatic MCP bridging")
-	if err := fs.Parse(args); err != nil {
+	if len(args) > 0 {
 		fmt.Println("Invalid flags.")
 		return 1
 	}
-	explicitBridge := *bridge != "" || *bridgeCodex || *bridgeClaude
-	bridgeMode := parseMCPBridgeMode(*bridge, *bridgeCodex, *bridgeClaude)
-	if !explicitBridge && !*noBridge {
-		bridgeMode = mcpBridgeMode{Codex: true, Claude: true}
-	}
-	bridgeStrict := explicitBridge
+	bridgeMode := mcpBridgeMode{Codex: true, Claude: true}
+	bridgeStrict := true
+	useNativeCodex := !bridgeMode.Codex
+	useNativeClaude := !bridgeMode.Claude
 
 	// Start session cleanup goroutine
 	ctx, cancel := context.WithCancel(context.Background())
@@ -186,9 +176,10 @@ func runMCPServer(args []string) int {
 	}, nil)
 
 	// ===== Codex Tools =====
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "codex",
-		Description: `Run a Codex session. Returns structuredContent.threadId for continuation.
+	if useNativeCodex {
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "codex",
+			Description: `Run a Codex session. Returns structuredContent.threadId for continuation.
 
 Parameters:
 - prompt (required): The user prompt
@@ -203,53 +194,55 @@ Parameters:
 - reasoning-effort: Reasoning effort for o-series models ("low", "medium", "high")
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPCodexInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		if err := ValidatePrompt(input.Prompt); err != nil {
-			return nil, nil, err
-		}
-		prompt := input.Prompt
-		if input.MemoryKey != "" {
-			var err error
-			prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPCodexInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+			if err := ValidatePrompt(input.Prompt); err != nil {
+				return nil, nil, err
+			}
+			prompt := input.Prompt
+			if input.MemoryKey != "" {
+				var err error
+				prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			prompt = applySharedMemory(prompt)
+			config := MCPSessionConfig{
+				ApprovalPolicy: input.ApprovalPolicy,
+				Sandbox:        input.Sandbox,
+				Cwd:            input.Cwd,
+				Profile:        input.Profile,
+			}
+			result, err := mcpRunSessionWithConfig(ctx, "codex", "", input.Model, prompt, mcpBuildCodexArgs(input), input.IdleTimeoutMs, config)
 			if err != nil {
 				return nil, nil, err
 			}
-		}
-		prompt = applySharedMemory(prompt)
-		config := MCPSessionConfig{
-			ApprovalPolicy: input.ApprovalPolicy,
-			Sandbox:        input.Sandbox,
-			Cwd:            input.Cwd,
-			Profile:        input.Profile,
-		}
-		result, err := mcpRunSessionWithConfig(ctx, "codex", "", input.Model, prompt, mcpBuildCodexArgs(input), input.IdleTimeoutMs, config)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, result, nil
-	})
+			return nil, result, nil
+		})
 
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "codex-reply",
-		Description: `Continue a Codex session.
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "codex-reply",
+			Description: `Continue a Codex session.
 
 Parameters:
 - prompt (required): The next user prompt
 - threadId (required): Thread ID from previous response
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		result, err := mcpRunReply(ctx, input)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, result, nil
-	})
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+			result, err := mcpRunReply(ctx, input)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, result, nil
+		})
+	}
 
 	// ===== Claude Tools =====
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "claude",
-		Description: `Run a Claude Code session. Returns structuredContent.threadId for continuation.
+	if useNativeClaude {
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "claude",
+			Description: `Run a Claude Code session. Returns structuredContent.threadId for continuation.
 
 Parameters:
 - prompt (required): The user prompt
@@ -267,49 +260,50 @@ Parameters:
 - debug: Enable debug mode
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPClaudeInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		if err := ValidatePrompt(input.Prompt); err != nil {
-			return nil, nil, err
-		}
-		prompt := input.Prompt
-		if input.MemoryKey != "" {
-			var err error
-			prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPClaudeInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+			if err := ValidatePrompt(input.Prompt); err != nil {
+				return nil, nil, err
+			}
+			prompt := input.Prompt
+			if input.MemoryKey != "" {
+				var err error
+				prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+			prompt = applySharedMemory(prompt)
+			config := MCPSessionConfig{
+				PermissionMode:     input.PermissionMode,
+				AllowedTools:       input.AllowedTools,
+				DisallowedTools:    input.DisallowedTools,
+				SystemPrompt:       input.SystemPrompt,
+				AppendSystemPrompt: input.AppendSystemPrompt,
+			}
+			result, err := mcpRunSessionWithConfig(ctx, "claude", "", input.Model, prompt, mcpBuildClaudeArgs(input), input.IdleTimeoutMs, config)
 			if err != nil {
 				return nil, nil, err
 			}
-		}
-		prompt = applySharedMemory(prompt)
-		config := MCPSessionConfig{
-			PermissionMode:     input.PermissionMode,
-			AllowedTools:       input.AllowedTools,
-			DisallowedTools:    input.DisallowedTools,
-			SystemPrompt:       input.SystemPrompt,
-			AppendSystemPrompt: input.AppendSystemPrompt,
-		}
-		result, err := mcpRunSessionWithConfig(ctx, "claude", "", input.Model, prompt, mcpBuildClaudeArgs(input), input.IdleTimeoutMs, config)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, result, nil
-	})
+			return nil, result, nil
+		})
 
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "claude-reply",
-		Description: `Continue a Claude session.
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "claude-reply",
+			Description: `Continue a Claude session.
 
 Parameters:
 - prompt (required): The next user prompt
 - threadId (required): Thread ID from previous response
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		result, err := mcpRunReply(ctx, input)
-		if err != nil {
-			return nil, nil, err
-		}
-		return nil, result, nil
-	})
+		}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
+			result, err := mcpRunReply(ctx, input)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, result, nil
+		})
+	}
 
 	// ===== Gemini Tools =====
 	mcp.AddTool(server, &mcp.Tool{

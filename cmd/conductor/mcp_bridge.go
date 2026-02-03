@@ -191,6 +191,9 @@ func registerBridgeTools(server *mcp.Server, bridge *mcpBridgeClient, prefix str
 	if err != nil {
 		return err
 	}
+	if len(tools) == 0 {
+		return fmt.Errorf("%s MCP bridge returned no tools", bridgeTitle(bridge.name))
+	}
 
 	for name, tool := range tools {
 		localName := fmt.Sprintf("%s__%s", prefix, name)

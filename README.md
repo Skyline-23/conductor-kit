@@ -129,11 +129,11 @@ Notes:
 ### Headless + bridge modes
 
 - `conductor mcp` runs the unified MCP server in stdio mode for any MCP client.
-- By default, `conductor mcp` auto-bridges Codex/Claude MCP servers when available (best-effort). Use `--no-bridge` to disable, or `--bridge` / `--bridge-codex` / `--bridge-claude` to force (strict).
+- `conductor mcp` is bridge-only: it proxies Codex/Claude MCP servers and exposes their tools.
 - Claude Code can run as a headless MCP server via `claude mcp serve` (stdio).
 - Codex CLI can run as an MCP server via `codex mcp-server` (stdio).
 - Codex `app-server` is a separate JSON-RPC protocol (not MCP).
-- `conductor mcp --bridge codex,claude` proxies upstream MCP servers (`codex mcp-server`, `claude mcp serve`) and exposes their tools as `codex__*` / `claude__*` (overrides `codex`/`codex-reply` if present).
+- `conductor mcp` fails fast if it cannot start or connect to the upstream MCP servers.
 - OpenCode is an MCP client; connect it to local or remote servers via `opencode mcp add`.
 
 ### MCP bundle templates (optional)
@@ -292,7 +292,6 @@ export PATH="$PATH:$(npm config get prefix)/bin"
 1. Restart your CLI after adding MCP config
 2. Check MCP server is working:
    ```bash
-   conductor mcp --help
    conductor status
    ```
 
