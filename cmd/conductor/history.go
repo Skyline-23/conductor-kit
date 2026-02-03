@@ -2,9 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +34,17 @@ type RunRecord struct {
 }
 
 var runLogMu sync.Mutex
+
+const runHistoryDefaultMaxBytes = 10 * 1024 * 1024
+
+func runHistoryMaxBytes() int64 {
+	if val := strings.TrimSpace(os.Getenv("CONDUCTOR_RUN_HISTORY_MAX_BYTES")); val != "" {
+		if parsed, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return parsed
+		}
+	}
+	return runHistoryDefaultMaxBytes
+}
 
 func runLogPath() string {
 	baseDir := getenv("CONDUCTOR_HOME", filepath.Join(os.Getenv("HOME"), ".conductor-kit"))
@@ -59,7 +73,49 @@ func appendRunRecord(record RunRecord, logPrompt bool) error {
 	}
 	defer f.Close()
 	_, err = f.Write(append(line, '\n'))
-	return err
+	if err != nil {
+		return err
+	}
+	if maxBytes := runHistoryMaxBytes(); maxBytes > 0 {
+		if err := trimRunHistory(path, maxBytes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func trimRunHistory(path string, maxBytes int64) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Size() <= maxBytes {
+		return nil
+	}
+	start := info.Size() - maxBytes
+	if start < 0 {
+		start = 0
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.Seek(start, 0); err != nil {
+		return err
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return err
+	}
+	if start > 0 {
+		if idx := bytes.IndexByte(data, '\n'); idx >= 0 {
+			data = data[idx+1:]
+		} else {
+			data = nil
+		}
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 func readRunHistory(limit int, status, role, agent string) ([]RunRecord, error) {
