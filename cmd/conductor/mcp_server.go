@@ -539,6 +539,7 @@ func mcpRunQuickCommand(cmd string, args []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	c := exec.CommandContext(ctx, cmd, args...)
+	c.Env = append(os.Environ(), "CI=1", "NO_COLOR=1")
 	out, err := c.CombinedOutput()
 	return string(out), err
 }
