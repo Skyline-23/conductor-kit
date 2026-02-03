@@ -262,6 +262,7 @@ Notes for custom role args:
 - Claude: keep `-p {prompt}` (or `--print {prompt}`) adjacent.
 - Gemini: if using `-p`, keep `-p {prompt}` adjacent.
 - Claude/Gemini: keep `--output-format stream-json` so session IDs can be parsed.
+- Codex: `--approval-policy` = `untrusted|on-request|on-failure|never`, `--sandbox` = `read-only|workspace-write|danger-full-access`.
 
 ### Interactive Setup
 
