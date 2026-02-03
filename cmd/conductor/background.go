@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -222,6 +223,9 @@ func isRunning(pid int) bool {
 }
 
 func readTail(path string, bytes int) string {
+	if bytes <= 0 {
+		return ""
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -245,6 +249,55 @@ func readTail(path string, bytes int) string {
 type activityWriter struct {
 	w          io.Writer
 	activityCh chan struct{}
+}
+
+type cappedFileWriter struct {
+	file     *os.File
+	path     string
+	maxBytes int64
+}
+
+func newCappedFileWriter(file *os.File, maxBytes int) *cappedFileWriter {
+	return &cappedFileWriter{
+		file:     file,
+		path:     file.Name(),
+		maxBytes: int64(maxBytes),
+	}
+}
+
+func (w *cappedFileWriter) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	if err != nil {
+		return n, err
+	}
+	if w.maxBytes > 0 {
+		w.truncateIfNeeded()
+	}
+	return n, nil
+}
+
+func (w *cappedFileWriter) truncateIfNeeded() {
+	info, err := w.file.Stat()
+	if err != nil {
+		return
+	}
+	if info.Size() <= w.maxBytes {
+		return
+	}
+	f, err := os.Open(w.path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	start := info.Size() - w.maxBytes
+	if start < 0 {
+		start = 0
+	}
+	_, _ = f.Seek(start, 0)
+	data, _ := io.ReadAll(f)
+	_ = w.file.Truncate(0)
+	_, _ = w.file.Seek(0, 0)
+	_, _ = w.file.Write(data)
 }
 
 type boundedBuffer struct {
@@ -532,6 +585,15 @@ func runCommand(spec CmdSpec) (map[string]interface{}, error) {
 
 const defaultReadyTimeoutMs = 5000
 const outputTailMaxBytes = 40000
+
+func asyncLogMaxBytes() int {
+	if val := strings.TrimSpace(os.Getenv("CONDUCTOR_ASYNC_LOG_MAX_BYTES")); val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			return parsed
+		}
+	}
+	return outputTailMaxBytes
+}
 
 func checkReady(spec CmdSpec) error {
 	if spec.ReadyCmd == "" {
@@ -823,6 +885,7 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 	defer stdoutFile.Close()
 	defer stderrFile.Close()
 
+	logMaxBytes := asyncLogMaxBytes()
 	attempts := spec.Retry + 1
 	if attempts < 1 {
 		attempts = 1
@@ -854,8 +917,8 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 		})
 
 		cmd := exec.CommandContext(ctx, spec.Cmd, spec.Args...)
-		cmd.Stdout = &activityWriter{w: stdoutFile, activityCh: activityCh}
-		cmd.Stderr = &activityWriter{w: stderrFile, activityCh: activityCh}
+		cmd.Stdout = &activityWriter{w: newCappedFileWriter(stdoutFile, logMaxBytes), activityCh: activityCh}
+		cmd.Stderr = &activityWriter{w: newCappedFileWriter(stderrFile, logMaxBytes), activityCh: activityCh}
 		if spec.Cwd != "" {
 			cmd.Dir = spec.Cwd
 		}
@@ -974,9 +1037,9 @@ func runAsyncAttempts(runID string, spec CmdSpec, stdoutFile, stderrFile *os.Fil
 	if finalMeta.Status == "ok" {
 		_ = stdoutFile.Sync()
 		_ = stderrFile.Sync()
-		output := strings.TrimSpace(readTail(stdoutFile.Name(), memoryMaxBytes))
+		output := strings.TrimSpace(readTail(stdoutFile.Name(), outputTailMaxBytes))
 		if output == "" {
-			output = strings.TrimSpace(readTail(stderrFile.Name(), memoryMaxBytes))
+			output = strings.TrimSpace(readTail(stderrFile.Name(), outputTailMaxBytes))
 		}
 		if output != "" {
 			rememberSharedMemory(spec.Agent, spec.Role, strings.TrimSpace(mcpExtractText(output)))

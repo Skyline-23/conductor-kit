@@ -145,6 +145,7 @@ Status 팁:
 - `conductor status --skip-bridges`로 MCP 브리지 체크를 생략할 수 있습니다(더 빠름).
 - `CONDUCTOR_BRIDGE_CACHE_TTL=30s`로 브리지 상태 캐시 시간을 조절할 수 있습니다.
 - `CONDUCTOR_AUTH_CACHE_TTL=30s`로 CLI 인증 캐시 시간을 조절할 수 있습니다.
+- `CONDUCTOR_ASYNC_LOG_MAX_BYTES=40000`로 async stdout/stderr 로그 크기를 제한할 수 있습니다.
 
 ### MCP 번들 템플릿(선택)
 
