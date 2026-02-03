@@ -13,7 +13,37 @@
         "max_parallel": { "type": "integer", "minimum": 0 },
         "retry": { "type": "integer", "minimum": 0 },
         "retry_backoff_ms": { "type": "integer", "minimum": 0 },
-        "log_prompt": { "type": "boolean" }
+        "log_prompt": { "type": "boolean" },
+        "summary_only": { "type": "boolean" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_parallel": { "type": "integer", "minimum": 0 },
+        "queue": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "on_mode_change": { "type": "string" }
+          }
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "required": { "type": "boolean" },
+            "roles": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "agents": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "roles": {
@@ -50,12 +80,13 @@
           "reasoning_flag": { "type": "string" },
           "reasoning_key": { "type": "string" },
           "reasoning": { "type": "string" },
+          "description": { "type": "string" },
           "ready_cmd": { "type": "string" },
           "ready_args": {
             "type": "array",
             "items": { "type": "string" }
           },
-          "ready_timeout_ms": { "type": "integer" },
+          "ready_timeout_ms": { "type": "integer", "minimum": 0 },
           "env": {
             "type": "object",
             "additionalProperties": { "type": "string" }
