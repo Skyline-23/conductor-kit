@@ -484,6 +484,7 @@ func runCommand(spec CmdSpec) (map[string]interface{}, error) {
 }
 
 const defaultReadyTimeoutMs = 5000
+const outputTailMaxBytes = 40000
 
 func checkReady(spec CmdSpec) error {
 	if spec.ReadyCmd == "" {
@@ -598,8 +599,12 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 	if snapshot, err := gitStatusSnapshot(cwd); err == nil {
 		changedFiles = diffGitStatus(beforeStatus, snapshot)
 	}
-	readFiles := extractReadFiles(stdout.String() + "\n" + stderr.String())
+	stdoutText := strings.TrimSpace(stdout.String())
+	stderrText := strings.TrimSpace(stderr.String())
+	readFiles := extractReadFiles(stdoutText + "\n" + stderrText)
 	status, exitCode, errMsg := statusFromErrorWithTimeout(ctx, err, idleTimedOut.Load())
+	stdoutTail, stdoutTruncated := trimMemoryValue(stdoutText, outputTailMaxBytes)
+	stderrTail, stderrTruncated := trimMemoryValue(stderrText, outputTailMaxBytes)
 
 	payload := map[string]interface{}{
 		"run_id":        runID,
@@ -612,13 +617,21 @@ func runCommandOnce(spec CmdSpec, attempt, attempts int) (map[string]interface{}
 		"attempt":       attempt,
 		"attempts":      attempts,
 		"exit_code":     exitCode,
-		"stdout":        strings.TrimSpace(stdout.String()),
-		"stderr":        strings.TrimSpace(stderr.String()),
+		"stdout":        strings.TrimSpace(stdoutTail),
+		"stderr":        strings.TrimSpace(stderrTail),
 		"duration_ms":   duration,
 		"started_at":    start.Format(time.RFC3339),
 		"ended_at":      end.Format(time.RFC3339),
 		"read_files":    readFiles,
 		"changed_files": changedFiles,
+	}
+	if stdoutTruncated {
+		payload["stdout_truncated"] = true
+		payload["stdout_total_bytes"] = len(stdoutText)
+	}
+	if stderrTruncated {
+		payload["stderr_truncated"] = true
+		payload["stderr_total_bytes"] = len(stderrText)
 	}
 	if errMsg != "" {
 		payload["error"] = errMsg

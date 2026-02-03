@@ -16,7 +16,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const mcpBridgeConnectTimeout = 15 * time.Second
+const (
+	mcpBridgeConnectTimeout = 15 * time.Second
+	mcpBridgeStatusCacheTTL = 30 * time.Second
+)
 
 type mcpBridgeMode struct {
 	Codex  bool
@@ -24,8 +27,14 @@ type mcpBridgeMode struct {
 }
 
 var (
-	mcpBridgeCodex  *mcpBridgeClient
-	mcpBridgeClaude *mcpBridgeClient
+	mcpBridgeCodex       *mcpBridgeClient
+	mcpBridgeClaude      *mcpBridgeClient
+	mcpBridgeStatusCache = struct {
+		mu       sync.Mutex
+		expires  time.Time
+		statuses []map[string]interface{}
+		ok       bool
+	}{}
 )
 
 func parseMCPBridgeMode(list string, codexFlag, claudeFlag bool) mcpBridgeMode {
@@ -274,6 +283,16 @@ func bridgeHasTool(bridge *mcpBridgeClient, name string) bool {
 }
 
 func bridgeStatusPayload() ([]map[string]interface{}, bool) {
+	now := time.Now()
+	mcpBridgeStatusCache.mu.Lock()
+	if len(mcpBridgeStatusCache.statuses) > 0 && now.Before(mcpBridgeStatusCache.expires) {
+		cached := cloneBridgeStatuses(mcpBridgeStatusCache.statuses)
+		ok := mcpBridgeStatusCache.ok
+		mcpBridgeStatusCache.mu.Unlock()
+		return cached, ok
+	}
+	mcpBridgeStatusCache.mu.Unlock()
+
 	statuses := []map[string]interface{}{}
 	ok := true
 
@@ -288,6 +307,12 @@ func bridgeStatusPayload() ([]map[string]interface{}, bool) {
 	if !claudeOK {
 		ok = false
 	}
+
+	mcpBridgeStatusCache.mu.Lock()
+	mcpBridgeStatusCache.statuses = cloneBridgeStatuses(statuses)
+	mcpBridgeStatusCache.ok = ok
+	mcpBridgeStatusCache.expires = time.Now().Add(mcpBridgeStatusCacheTTL)
+	mcpBridgeStatusCache.mu.Unlock()
 
 	return statuses, ok
 }
@@ -375,6 +400,30 @@ func listBridgeTools(ctx context.Context, cmd string, args []string) (map[string
 		cursor = res.NextCursor
 	}
 	return all, nil
+}
+
+func cloneBridgeStatuses(statuses []map[string]interface{}) []map[string]interface{} {
+	if len(statuses) == 0 {
+		return nil
+	}
+	cloned := make([]map[string]interface{}, 0, len(statuses))
+	for _, entry := range statuses {
+		if entry == nil {
+			cloned = append(cloned, nil)
+			continue
+		}
+		next := map[string]interface{}{}
+		for key, value := range entry {
+			switch v := value.(type) {
+			case []string:
+				next[key] = append([]string{}, v...)
+			default:
+				next[key] = v
+			}
+		}
+		cloned = append(cloned, next)
+	}
+	return cloned
 }
 
 func bridgeDecodeArgs(req *mcp.CallToolRequest) (map[string]any, error) {
