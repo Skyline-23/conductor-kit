@@ -69,8 +69,8 @@ func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode, strict bool) err
 				}
 				fmt.Fprintf(os.Stderr, "Warning: Codex MCP bridge unavailable: %v\n", err)
 			} else {
-				if !bridgeHasTool(bridge, "codex") {
-					return fmt.Errorf("Codex MCP bridge missing codex tool")
+				if !bridgeHasTool(bridge, "codex") || !bridgeHasTool(bridge, "codex-reply") {
+					return fmt.Errorf("Codex MCP bridge missing codex/codex-reply tool")
 				}
 				mcpBridgeCodex = bridge
 			}
@@ -277,7 +277,7 @@ func bridgeStatusPayload() ([]map[string]interface{}, bool) {
 	statuses := []map[string]interface{}{}
 	ok := true
 
-	codexStatus, codexOK := probeMCPBridge("codex", "codex", []string{"mcp-server"}, []string{"codex"})
+	codexStatus, codexOK := probeMCPBridge("codex", "codex", []string{"mcp-server"}, []string{"codex", "codex-reply"})
 	statuses = append(statuses, codexStatus)
 	if !codexOK {
 		ok = false
