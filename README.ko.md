@@ -219,7 +219,7 @@ conductor 도구를 "sage" 역할로 사용해서 이 복잡한 문제를 해결
 
 ## 설정
 
-설정 파일: `~/.conductor-kit/conductor.json`
+설정 파일: `~/.conductor-kit/conductor.json` (현재/상위 디렉터리의 `.conductor-kit/conductor.json` 우선)
 
 ### 역할 기반 라우팅
 
