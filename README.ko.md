@@ -73,6 +73,11 @@ conductor install
 - `~/.claude/commands/` 및/또는 `~/.codex/prompts/`에 슬래시 커맨드 복사
 - `~/.conductor-kit/conductor.json`에 설정 파일 생성
 
+프로젝트 로컬 설치를 원하면:
+```bash
+conductor install --project
+```
+
 ### 3단계: 스킬 로드
 
 선호하는 CLI를 시작하고 conductor 스킬을 트리거하세요:

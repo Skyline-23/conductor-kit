@@ -73,6 +73,11 @@ This will:
 - Copy slash commands to `~/.claude/commands/` and/or `~/.codex/prompts/`
 - Create config at `~/.conductor-kit/conductor.json`
 
+For project-local installs, use:
+```bash
+conductor install --project
+```
+
 ### Step 3: Load the skill
 
 Start your preferred CLI and trigger the conductor skill:
