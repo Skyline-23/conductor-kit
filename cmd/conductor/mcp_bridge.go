@@ -21,6 +21,11 @@ type mcpBridgeMode struct {
 	Claude bool
 }
 
+var (
+	mcpBridgeCodex  *mcpBridgeClient
+	mcpBridgeClaude *mcpBridgeClient
+)
+
 func parseMCPBridgeMode(list string, codexFlag, claudeFlag bool) mcpBridgeMode {
 	mode := mcpBridgeMode{Codex: codexFlag, Claude: claudeFlag}
 	if strings.TrimSpace(list) == "" {
@@ -61,6 +66,11 @@ func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode, strict bool) err
 					return err
 				}
 				fmt.Fprintf(os.Stderr, "Warning: Codex MCP bridge unavailable: %v\n", err)
+			} else {
+				if !bridgeHasTool(bridge, "codex") {
+					return fmt.Errorf("Codex MCP bridge missing codex tool")
+				}
+				mcpBridgeCodex = bridge
 			}
 		}
 	}
@@ -80,6 +90,8 @@ func registerMCPBridges(server *mcp.Server, mode mcpBridgeMode, strict bool) err
 					return err
 				}
 				fmt.Fprintf(os.Stderr, "Warning: Claude MCP bridge unavailable: %v\n", err)
+			} else {
+				mcpBridgeClaude = bridge
 			}
 		}
 	}
@@ -99,6 +111,23 @@ type mcpBridgeClient struct {
 
 func newMcpBridgeClient(name, cmd string, args []string) *mcpBridgeClient {
 	return &mcpBridgeClient{name: name, cmd: cmd, args: args}
+}
+
+func mcpBridgeClientForCLI(cli string) (*mcpBridgeClient, error) {
+	switch strings.ToLower(strings.TrimSpace(cli)) {
+	case "codex":
+		if mcpBridgeCodex == nil {
+			return nil, fmt.Errorf("Codex MCP bridge is not available")
+		}
+		return mcpBridgeCodex, nil
+	case "claude":
+		if mcpBridgeClaude == nil {
+			return nil, fmt.Errorf("Claude MCP bridge is not available")
+		}
+		return mcpBridgeClaude, nil
+	default:
+		return nil, fmt.Errorf("unsupported MCP bridge CLI: %s", cli)
+	}
 }
 
 func (b *mcpBridgeClient) ensureSession(ctx context.Context) (*mcp.ClientSession, error) {
@@ -185,6 +214,14 @@ func (b *mcpBridgeClient) CallTool(ctx context.Context, name string, args map[st
 	return session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 }
 
+func (b *mcpBridgeClient) CallToolAny(ctx context.Context, name string, args any) (*mcp.CallToolResult, error) {
+	session, err := b.ensureSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+}
+
 func registerBridgeTools(server *mcp.Server, bridge *mcpBridgeClient, prefix string, overrides map[string]bool) error {
 	ctx := context.Background()
 	tools, err := bridge.ensureTools(ctx)
@@ -220,6 +257,20 @@ func registerBridgeTools(server *mcp.Server, bridge *mcpBridgeClient, prefix str
 	}
 
 	return nil
+}
+
+func bridgeHasTool(bridge *mcpBridgeClient, name string) bool {
+	if bridge == nil {
+		return false
+	}
+	bridge.mu.Lock()
+	tools := bridge.tools
+	bridge.mu.Unlock()
+	if tools == nil {
+		return false
+	}
+	_, ok := tools[name]
+	return ok
 }
 
 func bridgeDecodeArgs(req *mcp.CallToolRequest) (map[string]any, error) {

@@ -125,7 +125,7 @@ Commands:
   config-validate      Validate conductor config JSON
   doctor               Check config and CLI availability
   mcp-bundle           Render MCP bundle templates for hosts
-  mcp                  Run MCP server (bridges codex/claude + conductor/gemini)
+  mcp                  Run MCP bridge server (codex/claude tools + conductor/gemini)
   version              Show version information
 
 	Aliases:

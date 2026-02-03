@@ -130,6 +130,8 @@ Notes:
 
 - `conductor mcp` runs the unified MCP server in stdio mode for any MCP client.
 - `conductor mcp` is bridge-only: it proxies Codex/Claude MCP servers and exposes their tools.
+- Claude Code MCP server exposes tools like View/Edit/LS; the MCP client is responsible for any tool approval flow.
+- Codex `mcp-server` inherits global config overrides, so approvals/sandboxing should be set in Codex config when needed.
 - Claude Code can run as a headless MCP server via `claude mcp serve` (stdio).
 - Codex CLI can run as an MCP server via `codex mcp-server` (stdio).
 - Codex `app-server` is a separate JSON-RPC protocol (not MCP).
@@ -166,12 +168,12 @@ Use the conductor tool with role "sage" to solve this complex problem
 
 | Tool | Description | Example |
 |------|-------------|---------|
-| `codex` | Run Codex CLI session | Deep reasoning, complex analysis |
-| `claude` | Run Claude Code session | Code generation, refactoring |
+| `codex` | Run Codex MCP session (bridged) | Deep reasoning, complex analysis |
+| `claude__*` | Claude Code tools (bridged) | View/Edit/LS, etc. |
 | `gemini` | Run Gemini CLI session | Web search, research |
 | `conductor` | Role-based routing | Auto-select best CLI for task |
 | `memory` | Shared memory cache | Store/retrieve shared context |
-| `*-reply` | Continue a session | Multi-turn conversations |
+| `codex-reply` / `gemini-reply` | Continue a session | Multi-turn conversations |
 | `status` | Check CLI availability | Diagnostics |
 
 Shared memory is cached per project (TTL + git HEAD invalidation) and auto-prepended to MCP calls. Use `memory` to update it, or `memory_key`/`memory_mode` to inject additional keys on `codex`, `claude`, `gemini`, or `conductor`.

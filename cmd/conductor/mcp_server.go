@@ -39,6 +39,7 @@ type MCPSession struct {
 	Role           string           // role name if created via conductor tool
 	Model          string           // model used
 	Config         MCPSessionConfig // original session configuration
+	IsBridge       bool             // true if session uses MCP bridge
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -230,11 +231,14 @@ Parameters:
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
 		}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-			result, err := mcpRunReply(ctx, input)
+			result, payload, err := mcpRunReply(ctx, input)
 			if err != nil {
 				return nil, nil, err
 			}
-			return nil, result, nil
+			if result != nil {
+				return result, nil, nil
+			}
+			return nil, payload, nil
 		})
 	}
 
@@ -297,11 +301,14 @@ Parameters:
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
 		}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-			result, err := mcpRunReply(ctx, input)
+			result, payload, err := mcpRunReply(ctx, input)
 			if err != nil {
 				return nil, nil, err
 			}
-			return nil, result, nil
+			if result != nil {
+				return result, nil, nil
+			}
+			return nil, payload, nil
 		})
 	}
 
@@ -358,11 +365,14 @@ Parameters:
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		result, err := mcpRunReply(ctx, input)
+		result, payload, err := mcpRunReply(ctx, input)
 		if err != nil {
 			return nil, nil, err
 		}
-		return nil, result, nil
+		if result != nil {
+			return result, nil, nil
+		}
+		return nil, payload, nil
 	})
 
 	// ===== Conductor Role-based Routing =====
@@ -391,11 +401,14 @@ Available roles are defined in ~/.conductor-kit/conductor.json`,
 			}
 			input.Prompt = prompt
 		}
-		result, err := mcpRunRoleSession(ctx, input)
+		result, payload, err := mcpRunRoleSession(ctx, input)
 		if err != nil {
 			return nil, nil, err
 		}
-		return nil, result, nil
+		if result != nil {
+			return result, nil, nil
+		}
+		return nil, payload, nil
 	})
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -408,11 +421,14 @@ Parameters:
 - memory_key: Shared memory key to inject
 - memory_mode: "prepend" (default) or "append"`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
-		result, err := mcpRunReply(ctx, input)
+		result, payload, err := mcpRunReply(ctx, input)
 		if err != nil {
 			return nil, nil, err
 		}
-		return nil, result, nil
+		if result != nil {
+			return result, nil, nil
+		}
+		return nil, payload, nil
 	})
 
 	// ===== Shared Memory Tool =====
@@ -730,6 +746,9 @@ func mcpRunSession(ctx context.Context, cli, prompt string, args []string, idleT
 // mcpRunSessionWithConfig runs a new CLI session with full configuration
 // Uses native session/resume support - no history re-transmission needed
 func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt string, args []string, idleTimeoutMs int, config MCPSessionConfig) (map[string]interface{}, error) {
+	if cli == "codex" || cli == "claude" {
+		return nil, fmt.Errorf("%s sessions must use the MCP bridge in bridge-only mode", strings.Title(cli))
+	}
 	adapter := mcpGetAdapter(cli)
 	if adapter == nil {
 		return nil, fmt.Errorf("unknown CLI: %s", cli)
@@ -777,9 +796,9 @@ func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt strin
 
 // mcpRunReply continues an existing session using native CLI resume
 // NO HISTORY RE-TRANSMISSION - uses native session/resume support
-func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface{}, error) {
+func mcpRunReply(ctx context.Context, input MCPReplyInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 	if err := ValidatePrompt(input.Prompt); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	prompt := input.Prompt
@@ -787,7 +806,7 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 		var err error
 		prompt, err = applyMemoryToPrompt(prompt, input.MemoryKey, input.MemoryMode)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	prompt = applySharedMemory(prompt)
@@ -797,7 +816,7 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 		threadID = input.ConversationID // deprecated fallback
 	}
 	if threadID == "" {
-		return nil, fmt.Errorf("threadId is required")
+		return nil, nil, fmt.Errorf("threadId is required")
 	}
 
 	mcpSessionStoreMu.RLock()
@@ -805,12 +824,20 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 	mcpSessionStoreMu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("thread not found: %s", threadID)
+		return nil, nil, fmt.Errorf("thread not found: %s", threadID)
+	}
+
+	if sess.IsBridge && (sess.CLI == "codex" || sess.CLI == "claude") {
+		result, err := mcpRunBridgeReply(ctx, sess, prompt)
+		if err != nil {
+			return nil, nil, err
+		}
+		return result, nil, nil
 	}
 
 	adapter := mcpGetAdapter(sess.CLI)
 	if adapter == nil {
-		return nil, fmt.Errorf("unknown CLI: %s", sess.CLI)
+		return nil, nil, fmt.Errorf("unknown CLI: %s", sess.CLI)
 	}
 
 	// Build args using native resume - NO history re-transmission
@@ -821,7 +848,7 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 		IdleTimeoutMs: defaultCLIIdleTimeoutMs,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Update session timestamp only (no message storage)
@@ -831,29 +858,36 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (map[string]interface
 
 	textContent := mcpExtractTextContent(sess.CLI, output)
 	rememberSharedMemory(sess.CLI, sess.Role, textContent)
-	return mcpBuildResponseWithMeta(textContent, threadID, sess.CLI, sess.Role, sess.Model), nil
+	return nil, mcpBuildResponseWithMeta(textContent, threadID, sess.CLI, sess.Role, sess.Model), nil
 }
 
 // mcpRunRoleSession runs a role-based session
-func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string]interface{}, error) {
+func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallToolResult, map[string]interface{}, error) {
 	configPath := resolveConfigPath("")
 	cfg, err := loadConfig(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		return nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
 	if cfg.Disabled {
-		return nil, fmt.Errorf("conductor is disabled (run `conductor enable` to resume)")
+		return nil, nil, fmt.Errorf("conductor is disabled (run `conductor enable` to resume)")
 	}
 
 	role, ok := cfg.Roles[input.Role]
 	if !ok {
-		return nil, fmt.Errorf("unknown role: %s", input.Role)
+		return nil, nil, fmt.Errorf("unknown role: %s", input.Role)
 	}
 
 	cli := role.CLI
+	if cli == "codex" || cli == "claude" {
+		result, err := mcpRunBridgeRoleSession(ctx, input, role)
+		if err != nil {
+			return nil, nil, err
+		}
+		return result, nil, nil
+	}
 	adapter := mcpGetAdapter(cli)
 	if adapter == nil {
-		return nil, fmt.Errorf("unknown CLI for role %s: %s", input.Role, cli)
+		return nil, nil, fmt.Errorf("unknown CLI for role %s: %s", input.Role, cli)
 	}
 
 	prompt := applySharedMemory(input.Prompt)
@@ -864,7 +898,7 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 		IdleTimeoutMs: input.IdleTimeoutMs,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Extract native thread ID
@@ -895,7 +929,126 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (map[string
 
 	textContent := mcpExtractTextContent(cli, output)
 	rememberSharedMemory(cli, input.Role, textContent)
-	return mcpBuildResponseWithMeta(textContent, threadID, cli, input.Role, role.Model), nil
+	return nil, mcpBuildResponseWithMeta(textContent, threadID, cli, input.Role, role.Model), nil
+}
+
+func mcpRunBridgeRoleSession(ctx context.Context, input MCPConductorInput, role RoleConfig) (*mcp.CallToolResult, error) {
+	cli := role.CLI
+	bridge, err := mcpBridgeClientForCLI(cli)
+	if err != nil {
+		return nil, err
+	}
+
+	prompt := applySharedMemory(input.Prompt)
+	toolName := ""
+	var args any
+
+	switch cli {
+	case "codex":
+		toolName = "codex"
+		codexInput := MCPCodexInput{
+			Prompt: prompt,
+		}
+		if role.Model != "" {
+			codexInput.Model = role.Model
+		}
+		if role.Reasoning != "" {
+			codexInput.Config = map[string]interface{}{
+				"model_reasoning_effort": role.Reasoning,
+			}
+		}
+		args = codexInput
+	case "claude":
+		if !bridgeHasTool(bridge, "claude") {
+			return nil, fmt.Errorf("Claude MCP server exposes tools only (no claude prompt tool)")
+		}
+		toolName = "claude"
+		args = MCPClaudeInput{
+			Prompt:         prompt,
+			Model:          role.Model,
+			PermissionMode: "bypassPermissions",
+		}
+	default:
+		return nil, fmt.Errorf("unsupported bridge CLI: %s", cli)
+	}
+
+	result, err := bridge.CallToolAny(ctx, toolName, args)
+	if err != nil {
+		return nil, err
+	}
+
+	threadID := mcpExtractThreadIDFromResult(result)
+	if threadID == "" {
+		return nil, fmt.Errorf("%s MCP bridge response missing threadId", strings.Title(cli))
+	}
+
+	mcpAugmentStructuredContent(result, threadID, cli, input.Role, role.Model)
+	textContent := mcpExtractTextFromResult(result)
+	rememberSharedMemory(cli, input.Role, textContent)
+
+	now := time.Now()
+	sess := &MCPSession{
+		ID:             threadID,
+		NativeThreadID: threadID,
+		CLI:            cli,
+		Role:           input.Role,
+		Model:          role.Model,
+		Config:         MCPSessionConfig{},
+		IsBridge:       true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	mcpSessionStoreMu.Lock()
+	mcpEvictOldestSession()
+	mcpSessionStore[threadID] = sess
+	mcpSessionStoreMu.Unlock()
+
+	return result, nil
+}
+
+func mcpRunBridgeReply(ctx context.Context, sess *MCPSession, prompt string) (*mcp.CallToolResult, error) {
+	bridge, err := mcpBridgeClientForCLI(sess.CLI)
+	if err != nil {
+		return nil, err
+	}
+
+	toolName := ""
+	switch sess.CLI {
+	case "codex":
+		toolName = "codex-reply"
+	case "claude":
+		toolName = "claude-reply"
+	default:
+		return nil, fmt.Errorf("unsupported bridge CLI: %s", sess.CLI)
+	}
+	if !bridgeHasTool(bridge, toolName) {
+		return nil, fmt.Errorf("%s MCP bridge missing %s tool", strings.Title(sess.CLI), toolName)
+	}
+
+	threadID := sess.NativeThreadID
+	if threadID == "" {
+		threadID = sess.ID
+	}
+	args := MCPReplyInput{
+		Prompt:   prompt,
+		ThreadID: threadID,
+	}
+
+	result, err := bridge.CallToolAny(ctx, toolName, args)
+	if err != nil {
+		return nil, err
+	}
+
+	mcpAugmentStructuredContent(result, threadID, sess.CLI, sess.Role, sess.Model)
+	textContent := mcpExtractTextFromResult(result)
+	rememberSharedMemory(sess.CLI, sess.Role, textContent)
+
+	mcpSessionStoreMu.Lock()
+	sess.UpdatedAt = time.Now()
+	mcpSessionStoreMu.Unlock()
+
+	return result, nil
 }
 
 // Helper functions
@@ -1234,6 +1387,66 @@ func mcpExtractNativeThreadID(cli, output string) string {
 func mcpExtractTextContent(cli, output string) string {
 	// For now, delegate to existing mcpExtractText which handles JSON parsing
 	return mcpExtractText(output)
+}
+
+func mcpExtractTextFromResult(result *mcp.CallToolResult) string {
+	if result == nil {
+		return ""
+	}
+	texts := []string{}
+	for _, content := range result.Content {
+		switch c := content.(type) {
+		case *mcp.TextContent:
+			if strings.TrimSpace(c.Text) != "" {
+				texts = append(texts, c.Text)
+			}
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func mcpExtractThreadIDFromResult(result *mcp.CallToolResult) string {
+	if result == nil || result.StructuredContent == nil {
+		return ""
+	}
+	switch structured := result.StructuredContent.(type) {
+	case map[string]interface{}:
+		if threadID, ok := structured["threadId"].(string); ok && threadID != "" {
+			return threadID
+		}
+		if threadID, ok := structured["thread_id"].(string); ok && threadID != "" {
+			return threadID
+		}
+	}
+	return ""
+}
+
+func mcpAugmentStructuredContent(result *mcp.CallToolResult, threadID, cli, role, model string) {
+	if result == nil {
+		return
+	}
+	structured, ok := result.StructuredContent.(map[string]interface{})
+	if !ok {
+		if result.StructuredContent != nil {
+			return
+		}
+		structured = map[string]interface{}{}
+	}
+	if threadID != "" {
+		if _, ok := structured["threadId"]; !ok {
+			structured["threadId"] = threadID
+		}
+	}
+	if cli != "" {
+		structured["cli"] = cli
+	}
+	if role != "" {
+		structured["role"] = role
+	}
+	if model != "" {
+		structured["model"] = model
+	}
+	result.StructuredContent = structured
 }
 
 func mcpBuildResponse(output, threadID string) map[string]interface{} {
