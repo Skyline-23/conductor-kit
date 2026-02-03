@@ -488,11 +488,17 @@ func (d *Runtime) listRuns(status string, limit int) []map[string]interface{} {
 	for _, item := range d.queue {
 		if status == "" || item.Status == status {
 			out = append(out, item.view())
+			if limit > 0 && len(out) >= limit {
+				return out
+			}
 		}
 	}
 	for _, item := range d.running {
 		if status == "" || item.Status == status || status == "running" {
 			out = append(out, item.view())
+			if limit > 0 && len(out) >= limit {
+				return out
+			}
 		}
 	}
 	for i := len(d.completed) - 1; i >= 0; i-- {
