@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -25,6 +26,8 @@ type CLIAdapter struct {
 type CLIRunOptions struct {
 	Args          []string
 	IdleTimeoutMs int
+	Cwd           string
+	Env           map[string]string
 }
 
 // Run executes a CLI command with idle timeout support.
@@ -52,6 +55,12 @@ func (a *CLIAdapter) Run(ctx context.Context, opts CLIRunOptions) (string, error
 	defer stopIdle()
 
 	cmd := exec.CommandContext(ctx, a.Cmd, opts.Args...)
+	if opts.Cwd != "" {
+		cmd.Dir = opts.Cwd
+	}
+	if len(opts.Env) > 0 {
+		cmd.Env = mergeEnv(opts.Env)
+	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err
@@ -95,6 +104,26 @@ func (a *CLIAdapter) Run(ctx context.Context, opts CLIRunOptions) (string, error
 		return "", fmt.Errorf("%s CLI failed: %s", a.Name, errMsg)
 	}
 	return strings.TrimSpace(output.String()), nil
+}
+
+func mergeEnv(overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(os.Environ())+len(overrides))
+	for _, kv := range os.Environ() {
+		parts := strings.SplitN(kv, "=", 2)
+		if len(parts) == 2 {
+			if _, ok := overrides[parts[0]]; ok {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	for key, value := range overrides {
+		out = append(out, key+"="+value)
+	}
+	return out
 }
 
 // extractConciseError extracts a concise error message from CLI output.

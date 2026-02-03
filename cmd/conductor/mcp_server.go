@@ -46,11 +46,12 @@ type MCPSession struct {
 
 // MCPSessionConfig stores original session settings for reply
 type MCPSessionConfig struct {
-	// Codex settings
+	// Shared settings
 	ApprovalPolicy string
 	Sandbox        string
 	Cwd            string
 	Profile        string
+	Env            map[string]string
 	// Claude settings
 	PermissionMode     string
 	AllowedTools       string
@@ -283,6 +284,7 @@ Parameters:
 				DisallowedTools:    input.DisallowedTools,
 				SystemPrompt:       input.SystemPrompt,
 				AppendSystemPrompt: input.AppendSystemPrompt,
+				Cwd:                input.Cwd,
 			}
 			result, err := mcpRunSessionWithConfig(ctx, "claude", "", input.Model, prompt, mcpBuildClaudeArgs(input), input.IdleTimeoutMs, config)
 			if err != nil {
@@ -757,6 +759,8 @@ func mcpRunSessionWithConfig(ctx context.Context, cli, role, model, prompt strin
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
 		IdleTimeoutMs: idleTimeoutMs,
+		Cwd:           config.Cwd,
+		Env:           config.Env,
 	})
 	if err != nil {
 		return nil, err
@@ -846,6 +850,8 @@ func mcpRunReply(ctx context.Context, input MCPReplyInput) (*mcp.CallToolResult,
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
 		IdleTimeoutMs: defaultCLIIdleTimeoutMs,
+		Cwd:           sess.Config.Cwd,
+		Env:           sess.Config.Env,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -912,6 +918,8 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 	output, err := adapter.Run(ctx, CLIRunOptions{
 		Args:          args,
 		IdleTimeoutMs: idleTimeoutMs,
+		Cwd:           role.Cwd,
+		Env:           role.Env,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -933,9 +941,12 @@ func mcpRunRoleSession(ctx context.Context, input MCPConductorInput) (*mcp.CallT
 		CLI:            cli,
 		Role:           input.Role,
 		Model:          role.Model,
-		Config:         MCPSessionConfig{},
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		Config: MCPSessionConfig{
+			Cwd: role.Cwd,
+			Env: role.Env,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	mcpSessionStoreMu.Lock()
