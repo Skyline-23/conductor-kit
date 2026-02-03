@@ -124,6 +124,24 @@ func TestValidateConfig(t *testing.T) {
 			},
 			wantErrors: 1,
 		},
+		{
+			name: "claude output format invalid",
+			cfg: Config{
+				Roles: map[string]RoleConfig{
+					"writer": {CLI: "claude", Args: []string{"-p", "{prompt}", "--output-format", "text"}},
+				},
+			},
+			wantErrors: 1,
+		},
+		{
+			name: "codex approval policy invalid",
+			cfg: Config{
+				Roles: map[string]RoleConfig{
+					"oracle": {CLI: "codex", Args: []string{"exec", "{prompt}", "--approval-policy", "bad"}},
+				},
+			},
+			wantErrors: 1,
+		},
 	}
 
 	for _, tt := range tests {

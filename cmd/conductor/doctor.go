@@ -245,6 +245,28 @@ func validateConfig(cfg Config) []string {
 				}
 			}
 		}
+		if normalized.CLI == "claude" || normalized.CLI == "gemini" {
+			if hasArgExact(normalized.Args, "--output-format") {
+				val, ok := readFlagValue(normalized.Args, "--output-format")
+				if !ok || strings.TrimSpace(val) == "" {
+					errors = append(errors, fmt.Sprintf("roles.%s.args missing value for --output-format", name))
+				} else if val != "stream-json" {
+					errors = append(errors, fmt.Sprintf("roles.%s.args --output-format must be stream-json", name))
+				}
+			}
+		}
+		if normalized.CLI == "codex" {
+			if val, ok := readFlagValue(normalized.Args, "--approval-policy"); ok {
+				if !isAllowedApprovalPolicy(val) {
+					errors = append(errors, fmt.Sprintf("roles.%s.args invalid --approval-policy: %s", name, val))
+				}
+			}
+			if val, ok := readFlagValue(normalized.Args, "--sandbox"); ok {
+				if !isAllowedSandbox(val) {
+					errors = append(errors, fmt.Sprintf("roles.%s.args invalid --sandbox: %s", name, val))
+				}
+			}
+		}
 		if role.MaxParallel < 0 {
 			errors = append(errors, fmt.Sprintf("roles.%s.max_parallel must be >= 0", name))
 		}
@@ -259,6 +281,24 @@ func validateConfig(cfg Config) []string {
 		}
 	}
 	return errors
+}
+
+func isAllowedApprovalPolicy(val string) bool {
+	switch val {
+	case "untrusted", "on-request", "on-failure", "never":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedSandbox(val string) bool {
+	switch val {
+	case "read-only", "workspace-write", "danger-full-access":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasArgExact(args []string, target string) bool {
