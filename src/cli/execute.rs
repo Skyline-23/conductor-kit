@@ -1095,7 +1095,7 @@ fn run_ops_open(args: &[String]) -> Result<(), String> {
         let attached = if env::var("CONDUCTOR_OPS_NO_ATTACH").ok().as_deref() == Some("1") {
             false
         } else {
-            attach_tmux_ops_session(&tmux_session_name)?;
+            attach_tmux_ops_session(&cwd, &tmux_session_name)?;
             true
         };
         print_json(&json!({
@@ -1819,12 +1819,13 @@ fn ensure_tmux_ops_session(
     Ok(true)
 }
 
-fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
-    if env::var_os("TMUX").is_some() {
-        run_tmux(["switch-client", "-t", session_name])
-    } else {
-        run_tmux(["attach-session", "-t", session_name])
-    }
+fn attach_tmux_ops_session(cwd: &Path, session_name: &str) -> Result<(), String> {
+    let command = format!(
+        "cd {} && tmux attach-session -t {}",
+        shell_quote(cwd),
+        shell_quote_str(session_name)
+    );
+    open_in_default_terminal(&command)
 }
 
 fn tmux_session_exists(session_name: &str) -> Result<bool, String> {
@@ -1872,6 +1873,33 @@ fn default_tmux_session_name(run_id: &str) -> String {
         })
         .collect::<String>();
     format!("conductor-{sanitized}")
+}
+
+fn open_in_default_terminal(command: &str) -> Result<(), String> {
+    let script_path = std::env::temp_dir().join(format!(
+        "conductor-{}.command",
+        Utc::now().timestamp_millis()
+    ));
+    let script_body = format!("#!/bin/zsh\n{}\n", command);
+    fs::write(&script_path, script_body).map_err(|err| err.to_string())?;
+    let mut perms = fs::metadata(&script_path)
+        .map_err(|err| err.to_string())?
+        .permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).map_err(|err| err.to_string())?;
+    }
+    let output = Command::new("open")
+        .arg(&script_path)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
 }
 
 fn shell_quote(value: &Path) -> String {
