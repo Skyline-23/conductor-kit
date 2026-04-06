@@ -687,9 +687,8 @@ fn settings_tui_loop(
         }
 
         match key.code {
-            KeyCode::Char('q') => return Ok(()),
             KeyCode::Esc => match app.depth {
-                SettingsDepth::Entries => {}
+                SettingsDepth::Entries => return Ok(()),
                 SettingsDepth::Fields => {
                     app.depth = SettingsDepth::Entries;
                     app.status = "Back to entries.".to_string();
