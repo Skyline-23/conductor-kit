@@ -30,6 +30,8 @@ Commands:
   worker-log          Print recent session log output
   worker-session-status Query a worker session
   worker-stop-session Stop a worker session
+  hud-open            Open the live HUD in a new terminal window
+  ops-open            Open the HUD and all worker sessions in terminal windows
   dispatch-route      Deliver a queued dispatch to a worker session
   hud-view            Print a compact runtime HUD view
   hud-watch           Continuously render the runtime HUD

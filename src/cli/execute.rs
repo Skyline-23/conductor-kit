@@ -71,6 +71,8 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "worker-log" => run_worker_log(&args[1..]),
         "worker-session-status" => run_worker_session_status(&args[1..]),
         "worker-stop-session" => run_worker_stop_session(&args[1..]),
+        "hud-open" => run_hud_open(&args[1..]),
+        "ops-open" => run_ops_open(&args[1..]),
         "worker-host" => run_worker_host_command(&args[1..]),
         "dispatch-route" => run_dispatch_route(&args[1..]),
         "hud-view" => run_hud_view(&args[1..]),
@@ -969,21 +971,7 @@ fn run_worker_open_terminal(args: &[String]) -> Result<(), String> {
         session_id,
     );
 
-    let script = format!(
-        "tell application {} to activate\n\
-         tell application {} to do script {}",
-        apple_script_string(&terminal_app),
-        apple_script_string(&terminal_app),
-        apple_script_string(&attach_cmd)
-    );
-    let output = Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|err| err.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    open_terminal_script(&terminal_app, &attach_cmd)?;
     print_json(&json!({
         "ok": true,
         "terminal_app": terminal_app,
@@ -1037,6 +1025,85 @@ fn run_worker_log(args: &[String]) -> Result<(), String> {
         )
     );
     Ok(())
+}
+
+fn run_hud_open(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "hud-open requires <run_id> [terminal_app]")?;
+    let terminal_app = args
+        .get(1)
+        .cloned()
+        .or_else(|| env::var("CONDUCTOR_TERMINAL_APP").ok())
+        .unwrap_or_else(|| "Terminal".to_string());
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let hud_cmd = build_hud_shell_command(
+        &cwd,
+        &conductor_bin,
+        &state_root,
+        config_path.as_deref(),
+        run_id,
+    );
+    open_terminal_script(&terminal_app, &hud_cmd)?;
+    print_json(&json!({
+        "ok": true,
+        "terminal_app": terminal_app,
+        "run_id": run_id,
+        "mode": "hud"
+    }))
+}
+
+fn run_ops_open(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "ops-open requires <run_id> [terminal_app]")?;
+    let terminal_app = args
+        .get(1)
+        .cloned()
+        .or_else(|| env::var("CONDUCTOR_TERMINAL_APP").ok())
+        .unwrap_or_else(|| "Terminal".to_string());
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let store = StateStore::new(state_root.clone());
+    let snapshot = store.read_snapshot(run_id)?;
+
+    let hud_cmd = build_hud_shell_command(
+        &cwd,
+        &conductor_bin,
+        &state_root,
+        config_path.as_deref(),
+        run_id,
+    );
+    open_terminal_script(&terminal_app, &hud_cmd)?;
+
+    let mut opened_sessions = Vec::new();
+    for worker in snapshot.workers {
+        let worker_record = store.read_worker(run_id, &worker.worker_id)?;
+        if let Some(session_id) = worker_record.session_ref {
+            let attach_cmd = build_attach_shell_command(
+                &cwd,
+                &conductor_bin,
+                &state_root,
+                config_path.as_deref(),
+                run_id,
+                &session_id,
+            );
+            open_terminal_script(&terminal_app, &attach_cmd)?;
+            opened_sessions.push(json!({
+                "worker_id": worker.worker_id,
+                "session_id": session_id
+            }));
+        }
+    }
+
+    print_json(&json!({
+        "ok": true,
+        "terminal_app": terminal_app,
+        "run_id": run_id,
+        "hud": true,
+        "sessions": opened_sessions
+    }))
 }
 
 fn run_worker_session_status(args: &[String]) -> Result<(), String> {
@@ -1194,12 +1261,15 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         .as_ref()
         .map(|lease| lease.owner.clone())
         .unwrap_or_else(|| "none".to_string());
-    println!("run      {}", run.run_id);
-    println!("phase    {:?}", run.phase);
-    println!("active   {}", run.active);
-    println!("owner    {}", authority);
+    println!("CONDUCTOR OPS");
+    println!("=============");
+    println!("run        {}", run.run_id);
+    println!("phase      {:?}", run.phase);
+    println!("active     {}", run.active);
+    println!("authority  {}", authority);
+    println!();
     println!(
-        "tasks    pending={} blocked={} in_progress={} completed={} failed={}",
+        "tasks      pending={} blocked={} active={} done={} failed={}",
         snapshot.tasks.pending,
         snapshot.tasks.blocked,
         snapshot.tasks.in_progress,
@@ -1207,18 +1277,21 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.tasks.failed
     );
     println!(
-        "dispatch pending={} notified={} delivered={} failed={}",
+        "dispatch   pending={} notified={} delivered={} failed={}",
         snapshot.dispatch.pending,
         snapshot.dispatch.notified,
         snapshot.dispatch.delivered,
         snapshot.dispatch.failed
     );
-    println!("mailbox  unread={}", snapshot.mailbox.unread);
+    println!("mailbox    unread={}", snapshot.mailbox.unread);
+    println!();
     println!("workers");
+    println!("-------");
     for worker in snapshot.workers {
         println!(
-            "  {}  state={:?} task={} summary={}",
+            "{} | kind={:?} | state={:?} | task={} | summary={}",
             worker.worker_id,
+            worker.worker_kind,
             worker.state,
             worker.current_task_id.unwrap_or_else(|| "-".to_string()),
             worker.current_summary.unwrap_or_else(|| "-".to_string())
@@ -1248,19 +1321,22 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
     loop {
         let snapshot = store.read_snapshot(run_id)?;
         print!("\x1B[2J\x1B[H");
-        println!("run      {}", snapshot.run.run_id);
-        println!("phase    {:?}", snapshot.run.phase);
-        println!("active   {}", snapshot.run.active);
+        println!("CONDUCTOR OPS");
+        println!("=============");
+        println!("run        {}", snapshot.run.run_id);
+        println!("phase      {:?}", snapshot.run.phase);
+        println!("active     {}", snapshot.run.active);
         println!(
-            "owner    {}",
+            "authority  {}",
             snapshot
                 .authority
                 .as_ref()
                 .map(|lease| lease.owner.clone())
                 .unwrap_or_else(|| "none".to_string())
         );
+        println!();
         println!(
-            "tasks    pending={} blocked={} in_progress={} completed={} failed={}",
+            "tasks      pending={} blocked={} active={} done={} failed={}",
             snapshot.tasks.pending,
             snapshot.tasks.blocked,
             snapshot.tasks.in_progress,
@@ -1268,17 +1344,19 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.tasks.failed
         );
         println!(
-            "dispatch pending={} notified={} delivered={} failed={}",
+            "dispatch   pending={} notified={} delivered={} failed={}",
             snapshot.dispatch.pending,
             snapshot.dispatch.notified,
             snapshot.dispatch.delivered,
             snapshot.dispatch.failed
         );
-        println!("mailbox  unread={}", snapshot.mailbox.unread);
+        println!("mailbox    unread={}", snapshot.mailbox.unread);
+        println!();
         println!("workers");
+        println!("-------");
         for worker in snapshot.workers {
             println!(
-                "  {}  kind={:?} state={:?} task={} summary={}",
+                "{} | kind={:?} | state={:?} | task={} | summary={}",
                 worker.worker_id,
                 worker.worker_kind,
                 worker.state,
@@ -1621,6 +1699,45 @@ fn build_attach_shell_command(
     parts.push(shell_quote_str(run_id));
     parts.push(shell_quote_str(session_id));
     parts.join(" ")
+}
+
+fn build_hud_shell_command(
+    cwd: &Path,
+    conductor_bin: &Path,
+    state_root: &Path,
+    config_path: Option<&Path>,
+    run_id: &str,
+) -> String {
+    let mut parts = vec![format!("cd {}", shell_quote(cwd))];
+    parts.push(format!("CONDUCTOR_STATE_DIR={}", shell_quote(state_root)));
+    if let Some(path) = config_path {
+        parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
+    }
+    parts.push(shell_quote(conductor_bin));
+    parts.push("hud-watch".to_string());
+    parts.push(shell_quote_str(run_id));
+    parts.push("1000".to_string());
+    parts.join(" ")
+}
+
+fn open_terminal_script(terminal_app: &str, command: &str) -> Result<(), String> {
+    let script = format!(
+        "tell application {} to activate\n\
+         tell application {} to do script {}",
+        apple_script_string(terminal_app),
+        apple_script_string(terminal_app),
+        apple_script_string(command)
+    );
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
 }
 
 fn shell_quote(value: &Path) -> String {
