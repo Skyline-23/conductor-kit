@@ -3,6 +3,9 @@ mod runtime;
 use crate::runtime::authority::renew_authority;
 use crate::runtime::claims::{acquire_claim, release_claim};
 use crate::runtime::phases::transition_phase;
+use crate::runtime::sessions::{
+    SessionCommand, run_worker_host, send_session_command, spawn_session,
+};
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{DispatchStatus, RunPhase, WorkerKind, WorkerRecord, WorkerState};
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
@@ -108,6 +111,11 @@ fn main() {
         "task-release" => run_task_release(&args[2..]),
         "worker-upsert" => run_worker_upsert(&args[2..]),
         "worker-exec" => run_worker_exec(&args[2..]),
+        "worker-spawn-session" => run_worker_spawn_session(&args[2..]),
+        "worker-send" => run_worker_send(&args[2..]),
+        "worker-session-status" => run_worker_session_status(&args[2..]),
+        "worker-stop-session" => run_worker_stop_session(&args[2..]),
+        "worker-host" => run_worker_host_command(&args[2..]),
         "task-create" => run_task_create(&args[2..]),
         "dispatch-queue" => run_dispatch_queue(&args[2..]),
         "dispatch-update" => run_dispatch_update(&args[2..]),
@@ -356,6 +364,102 @@ fn run_worker_exec(args: &[String]) -> Result<(), String> {
         &store,
     )?;
     print_json(&result)
+}
+
+fn run_worker_spawn_session(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err(
+            "worker-spawn-session requires <run_id> <worker_id> <program> [args...]".to_string(),
+        );
+    }
+    let run_id = &args[0];
+    let worker_id = &args[1];
+    let program = &args[2];
+    let program_args = args[3..].to_vec();
+    let store = StateStore::new(resolve_state_root()?);
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let result = spawn_session(
+        &store,
+        run_id,
+        worker_id,
+        program,
+        &program_args,
+        &conductor_bin,
+    )?;
+    print_json(&result.session)
+}
+
+fn run_worker_send(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "worker-send requires <run_id> <session_id> <data>")?;
+    let session_id = required_arg(args, 1, "worker-send requires <run_id> <session_id> <data>")?;
+    let data = required_arg(args, 2, "worker-send requires <run_id> <session_id> <data>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let session = store.read_session(run_id, session_id)?;
+    let response = send_session_command(
+        Path::new(&session.socket_path),
+        &SessionCommand::SendStdin {
+            data: format!("{data}\n"),
+        },
+    )?;
+    print_json(&response)
+}
+
+fn run_worker_session_status(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "worker-session-status requires <run_id> <session_id>",
+    )?;
+    let session_id = required_arg(
+        args,
+        1,
+        "worker-session-status requires <run_id> <session_id>",
+    )?;
+    let store = StateStore::new(resolve_state_root()?);
+    let session = store.read_session(run_id, session_id)?;
+    let response = send_session_command(Path::new(&session.socket_path), &SessionCommand::Status)?;
+    print_json(&response)
+}
+
+fn run_worker_stop_session(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "worker-stop-session requires <run_id> <session_id>",
+    )?;
+    let session_id = required_arg(
+        args,
+        1,
+        "worker-stop-session requires <run_id> <session_id>",
+    )?;
+    let store = StateStore::new(resolve_state_root()?);
+    let session = store.read_session(run_id, session_id)?;
+    let response = send_session_command(Path::new(&session.socket_path), &SessionCommand::Stop)?;
+    print_json(&response)
+}
+
+fn run_worker_host_command(args: &[String]) -> Result<(), String> {
+    if args.len() < 7 {
+        return Err("worker-host requires <run_id> <worker_id> <session_id> <socket_path> <stdout_path> <stderr_path> <program> [args...]".to_string());
+    }
+    let run_id = &args[0];
+    let worker_id = &args[1];
+    let session_id = &args[2];
+    let socket_path = PathBuf::from(&args[3]);
+    let stdout_path = PathBuf::from(&args[4]);
+    let stderr_path = PathBuf::from(&args[5]);
+    let program = &args[6];
+    let program_args = args[7..].to_vec();
+    run_worker_host(
+        run_id,
+        worker_id,
+        session_id,
+        &socket_path,
+        &stdout_path,
+        &stderr_path,
+        program,
+        &program_args,
+    )
 }
 
 fn run_task_create(args: &[String]) -> Result<(), String> {
@@ -671,6 +775,10 @@ Commands:
   task-release        Release a task claim
   worker-upsert       Upsert worker state for a run
   worker-exec         Execute a worker command over stdio
+  worker-spawn-session Start a long-lived worker session host
+  worker-send         Send stdin to a worker session
+  worker-session-status Query a worker session
+  worker-stop-session Stop a worker session
   task-create         Create a task record
   dispatch-queue      Create a dispatch record
   dispatch-update     Update dispatch status

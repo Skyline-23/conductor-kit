@@ -63,6 +63,8 @@ pub enum EventKind {
     AuthorityAcquired,
     AuthorityRenewed,
     WorkerSpawned,
+    WorkerSessionStarted,
+    WorkerSessionStopped,
     WorkerStateChanged,
     WorkerSpawnFailed,
     WorkerHeartbeatStale,
@@ -201,6 +203,35 @@ pub struct WorkerProjection {
     pub current_summary: Option<String>,
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     pub terminal_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStatus {
+    Starting,
+    Running,
+    Exited,
+    Stopped,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRecord {
+    pub run_id: String,
+    pub worker_id: String,
+    pub session_id: String,
+    pub socket_path: String,
+    pub stdout_path: String,
+    pub stderr_path: String,
+    pub pid: u32,
+    pub child_pid: Option<u32>,
+    pub program: String,
+    pub args: Vec<String>,
+    pub status: SessionStatus,
+    pub started_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub exited_at: Option<DateTime<Utc>>,
+    pub exit_code: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

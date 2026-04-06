@@ -1,8 +1,8 @@
 use crate::runtime::types::{
     DispatchCounts, DispatchRecord, DispatchStatus, EventEnvelope, EventKind, MailboxCounts,
     MailboxMessage, MailboxRecord, ReadinessState, ReplayState, RunPhase, RunRecord, RunSnapshot,
-    RuntimeSnapshot, SCHEMA_VERSION, TaskCounts, TaskRecord, TaskStatus, WorkerProjection,
-    WorkerRecord,
+    RuntimeSnapshot, SCHEMA_VERSION, SessionRecord, TaskCounts, TaskRecord, TaskStatus,
+    WorkerProjection, WorkerRecord,
 };
 use chrono::{Duration, Utc};
 use serde::Serialize;
@@ -458,6 +458,7 @@ impl StateStore {
         for path in [
             self.run_dir(run_id),
             self.run_dir(run_id).join("workers"),
+            self.run_dir(run_id).join("sessions"),
             self.run_dir(run_id).join("tasks"),
             self.run_dir(run_id).join("dispatch"),
             self.run_dir(run_id).join("mailbox"),
@@ -488,6 +489,25 @@ impl StateStore {
         self.run_dir(run_id)
             .join("workers")
             .join(format!("{worker_id}.json"))
+    }
+
+    pub fn session_dir(&self, run_id: &str, session_id: &str) -> PathBuf {
+        self.run_dir(run_id).join("sessions").join(session_id)
+    }
+
+    pub fn session_file(&self, run_id: &str, session_id: &str) -> PathBuf {
+        self.session_dir(run_id, session_id).join("session.json")
+    }
+
+    pub fn write_session(&self, session: &SessionRecord) -> Result<(), String> {
+        self.write_json(
+            &self.session_file(&session.run_id, &session.session_id),
+            session,
+        )
+    }
+
+    pub fn read_session(&self, run_id: &str, session_id: &str) -> Result<SessionRecord, String> {
+        self.read_json(&self.session_file(run_id, session_id))
     }
 
     fn task_file(&self, run_id: &str, task_id: &str) -> PathBuf {
