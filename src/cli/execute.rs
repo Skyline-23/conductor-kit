@@ -3748,3 +3748,186 @@ fn worker_adapter_config(cfg: &Config, worker_type: &str) -> Result<WorkerAdapte
         env: worker.env.clone().unwrap_or_default(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::args::{
+        Defaults, LoopConfig, MemoryConfig, RuntimeConfig, SurfaceConfig, TransportConfig,
+        WorkerConfig, WorkerRuntimeConfig,
+    };
+    use crate::cli::host_catalog::{HostCatalog, VendorCatalog};
+    use crate::runtime::types::{
+        AuthorityLease, DispatchCounts, MailboxCounts, ReadinessState, ReplayState, RunPhase,
+        RunSnapshot, RuntimeSnapshot, TaskCounts,
+    };
+    use chrono::Utc;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    fn sample_config_with_workers(workers: BTreeMap<String, WorkerConfig>) -> Config {
+        Config {
+            defaults: Defaults {
+                idle_timeout_ms: 1000,
+                summary_only: true,
+                max_parallel: 4,
+            },
+            surface: SurfaceConfig {
+                cli: "codex".to_string(),
+                description: "surface".to_string(),
+                base_args: Some(Vec::new()),
+                env: None,
+            },
+            runtime: RuntimeConfig {
+                transport: TransportConfig {
+                    mode: "direct".to_string(),
+                    preferred: vec!["stdio".to_string()],
+                    allow_tmux_fallback: false,
+                },
+                loop_config: LoopConfig {
+                    persist_runs: true,
+                    resume_strategy: "ledger".to_string(),
+                },
+                memory: MemoryConfig {
+                    enabled: true,
+                    ttl_hours: 24,
+                    invalidate_on_git_head_change: true,
+                },
+                workers: WorkerRuntimeConfig {
+                    max_workers: 6,
+                    spawn_policy: "persistent".to_string(),
+                    continue_policy: "resume_when_possible".to_string(),
+                },
+            },
+            workers,
+        }
+    }
+
+    fn sample_settings_app(profile: WorkerConfig, host_catalog: HostCatalog) -> SettingsApp {
+        let mut workers = BTreeMap::new();
+        workers.insert("explore".to_string(), profile);
+        SettingsApp {
+            config_path: PathBuf::from("/tmp/conductor.json"),
+            cfg: sample_config_with_workers(workers),
+            entries: vec![SettingsEntry::Profile("explore".to_string())],
+            selected_entry: 0,
+            selected_field: 0,
+            depth: SettingsDepth::Entries,
+            choices: Vec::new(),
+            selected_choice: 0,
+            pending_choice: None,
+            input: String::new(),
+            status: String::new(),
+            host_catalog,
+        }
+    }
+
+    fn sample_snapshot() -> RuntimeSnapshot {
+        RuntimeSnapshot {
+            schema_version: SCHEMA_VERSION,
+            run: RunSnapshot {
+                run_id: "demo-run".to_string(),
+                phase: RunPhase::Executing,
+                active: true,
+                started_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+            authority: Some(AuthorityLease {
+                owner: "orchestrator-main".to_string(),
+                lease_id: "lease-1".to_string(),
+                leased_until: Utc::now(),
+                stale: false,
+            }),
+            workers: Vec::new(),
+            tasks: TaskCounts {
+                pending: 1,
+                blocked: 0,
+                in_progress: 2,
+                completed: 3,
+                failed: 0,
+            },
+            dispatch: DispatchCounts {
+                pending: 0,
+                notified: 0,
+                delivered: 0,
+                failed: 0,
+            },
+            mailbox: MailboxCounts { unread: 4 },
+            replay: ReplayState {
+                cursor: None,
+                pending_events: 0,
+            },
+            readiness: ReadinessState {
+                ready: true,
+                reasons: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn sync_profile_for_cli_replaces_mismatched_model_and_reasoning() {
+        let mut host_catalog = HostCatalog::default();
+        host_catalog.claude = VendorCatalog {
+            default_model: Some("claude-sonnet-4-6".to_string()),
+            models: vec!["claude-sonnet-4-6".to_string(), "claude-opus-4-1".to_string()],
+            reasoning_levels: BTreeMap::from([(
+                "claude-sonnet-4-6".to_string(),
+                vec!["low".to_string(), "medium".to_string(), "high".to_string()],
+            )]),
+        };
+
+        let mut app = sample_settings_app(
+            WorkerConfig {
+                cli: "claude".to_string(),
+                model: "gpt-5.4".to_string(),
+                reasoning: Some("xhigh".to_string()),
+                description: "explore".to_string(),
+                delivery_mode: Some("session".to_string()),
+                launch_mode: Some("stdin_text".to_string()),
+                base_args: Some(Vec::new()),
+                env: None,
+            },
+            host_catalog,
+        );
+
+        sync_profile_for_cli(&mut app, "explore");
+
+        let profile = app.cfg.workers.get("explore").expect("missing profile");
+        assert_eq!(profile.model, "claude-sonnet-4-6");
+        assert_eq!(profile.reasoning.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn render_hud_strip_plain_is_single_line_without_escape_codes() {
+        let line = render_hud_strip(&sample_snapshot(), false);
+        assert!(line.contains("demo-run"));
+        assert!(line.contains("Executing"));
+        assert!(line.contains("auth:orchestrator-main"));
+        assert!(line.contains("mail:4"));
+        assert!(!line.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn resolve_team_agent_requires_configured_profile_names() {
+        let cfg = sample_config_with_workers(BTreeMap::from([(
+            "review".to_string(),
+            WorkerConfig {
+                cli: "codex".to_string(),
+                model: "gpt-5.4".to_string(),
+                reasoning: Some("medium".to_string()),
+                description: "review".to_string(),
+                delivery_mode: Some("session".to_string()),
+                launch_mode: Some("stdin_text".to_string()),
+                base_args: Some(Vec::new()),
+                env: None,
+            },
+        )]));
+
+        let resolved = resolve_team_agent(&cfg, "review").expect("review should resolve");
+        assert_eq!(resolved.0, "review");
+        assert_eq!(resolved.1, "review");
+
+        let err = resolve_team_agent(&cfg, "codex").expect_err("vendor alias should fail");
+        assert!(err.contains("unknown team agent profile 'codex'"));
+    }
+}
