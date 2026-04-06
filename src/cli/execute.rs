@@ -3123,9 +3123,9 @@ fn ensure_tmux_ops_session(
 
 fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
     if env::var_os("TMUX").is_some() {
-        run_tmux(["switch-client", "-t", session_name])
+        run_tmux_interactive(["switch-client", "-t", session_name])
     } else {
-        run_tmux(["attach-session", "-t", session_name])
+        run_tmux_interactive(["attach-session", "-t", session_name])
     }
 }
 
@@ -3159,6 +3159,26 @@ where
         } else {
             Err(stderr)
         }
+    }
+}
+
+fn run_tmux_interactive<I, S>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args_vec = args
+        .into_iter()
+        .map(|value| value.as_ref().to_string())
+        .collect::<Vec<_>>();
+    let status = Command::new("tmux")
+        .args(args_vec.iter().map(|value| value.as_str()))
+        .status()
+        .map_err(|err| err.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("tmux command failed: {}", args_vec.join(" ")))
     }
 }
 
