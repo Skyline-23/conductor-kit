@@ -3,3 +3,4 @@ pub mod claims;
 pub mod phases;
 pub mod state_store;
 pub mod types;
+pub mod workers;

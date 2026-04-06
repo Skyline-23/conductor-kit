@@ -5,6 +5,7 @@ use crate::runtime::claims::{acquire_claim, release_claim};
 use crate::runtime::phases::transition_phase;
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{DispatchStatus, RunPhase, WorkerKind, WorkerRecord, WorkerState};
+use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -106,6 +107,7 @@ fn main() {
         "task-claim" => run_task_claim(&args[2..]),
         "task-release" => run_task_release(&args[2..]),
         "worker-upsert" => run_worker_upsert(&args[2..]),
+        "worker-exec" => run_worker_exec(&args[2..]),
         "task-create" => run_task_create(&args[2..]),
         "dispatch-queue" => run_dispatch_queue(&args[2..]),
         "dispatch-update" => run_dispatch_update(&args[2..]),
@@ -321,6 +323,39 @@ fn run_worker_upsert(args: &[String]) -> Result<(), String> {
     };
     let worker = store.upsert_worker(worker)?;
     print_json(&worker)
+}
+
+fn run_worker_exec(args: &[String]) -> Result<(), String> {
+    if args.len() < 4 {
+        return Err(
+            "worker-exec requires <run_id> <worker_id> <task_id|-> <program> [args...]".to_string(),
+        );
+    }
+    let run_id = args[0].as_str();
+    let worker_id = args[1].as_str();
+    let task_id = if args[2] == "-" {
+        None
+    } else {
+        Some(args[2].clone())
+    };
+    let program = args[3].clone();
+    let program_args = args[4..].to_vec();
+    let stdin_payload = env::var("CONDUCTOR_WORKER_STDIN").ok();
+    let cwd = env::var("CONDUCTOR_WORKER_CWD").ok().map(PathBuf::from);
+    let store = StateStore::new(resolve_state_root()?);
+    let result = execute_worker(
+        WorkerLaunchSpec {
+            run_id: run_id.to_string(),
+            worker_id: worker_id.to_string(),
+            task_id,
+            program,
+            args: program_args,
+            cwd,
+            stdin_payload,
+        },
+        &store,
+    )?;
+    print_json(&result)
 }
 
 fn run_task_create(args: &[String]) -> Result<(), String> {
@@ -635,6 +670,7 @@ Commands:
   task-claim          Acquire a task claim
   task-release        Release a task claim
   worker-upsert       Upsert worker state for a run
+  worker-exec         Execute a worker command over stdio
   task-create         Create a task record
   dispatch-queue      Create a dispatch record
   dispatch-update     Update dispatch status
