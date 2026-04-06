@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::fs::File;
-use std::io::{IsTerminal, Stdout, stdout};
+use std::io::{IsTerminal, Stdout, stdin, stdout};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -1150,7 +1150,9 @@ fn run_team(args: &[String]) -> Result<(), String> {
     }
 
     ensure_explicit_team_sessions(&run_id, team_size, &agent_names)?;
-    run_ops_open(std::slice::from_ref(&run_id))
+    let tmux_session_name =
+        current_tmux_session_hint().unwrap_or_else(|| default_tmux_session_name(&run_id));
+    run_ops_open_with_filter(&run_id, &tmux_session_name, None)
 }
 
 fn run_ralph(args: &[String]) -> Result<(), String> {
@@ -1165,7 +1167,9 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
         .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
         .transpose()?;
     ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
-    run_ops_open(std::slice::from_ref(&run_id))
+    let tmux_session_name =
+        current_tmux_session_hint().unwrap_or_else(|| default_tmux_session_name(&run_id));
+    run_ops_open_with_filter(&run_id, &tmux_session_name, None)
 }
 
 fn ensure_team_sessions(
@@ -1353,7 +1357,7 @@ fn resolve_surface_launch(
     run_id: &str,
 ) -> Result<crate::runtime::adapters::WorkerAdapterLaunch, String> {
     let surface = &cfg.surface;
-    let adapter = WorkerAdapterConfig {
+    let mut adapter = WorkerAdapterConfig {
         worker_type: "surface".to_string(),
         cli: surface.cli.clone(),
         model: String::new(),
@@ -1364,6 +1368,10 @@ fn resolve_surface_launch(
         base_args: surface.base_args.clone().unwrap_or_default(),
         env: surface.env.clone().unwrap_or_default(),
     };
+    adapter.env.insert(
+        "CONDUCTOR_TMUX_SESSION".to_string(),
+        format!("conductor-{run_id}-surface"),
+    );
     resolve_worker_adapter(&adapter, run_id, "main", None, None)
 }
 
@@ -2448,7 +2456,9 @@ fn run_ops_open_with_filter(
 
     if command_available("tmux") {
         let created = ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
-        let attached = if env::var("CONDUCTOR_OPS_NO_ATTACH").ok().as_deref() == Some("1") {
+        let attached = if env::var("CONDUCTOR_OPS_NO_ATTACH").ok().as_deref() == Some("1")
+            || current_tmux_session_hint().as_deref() == Some(tmux_session_name)
+        {
             false
         } else {
             attach_tmux_ops_session(&tmux_session_name)?;
@@ -3362,6 +3372,9 @@ fn ensure_tmux_ops_session(
     pane_specs: &[(String, String, String)],
 ) -> Result<bool, String> {
     if tmux_session_exists(session_name)? {
+        run_tmux(["set-option", "-t", session_name, "mouse", "on"])?;
+        run_tmux(["set-option", "-t", session_name, "set-clipboard", "on"])?;
+        sync_existing_tmux_ops_session(session_name, pane_specs)?;
         return Ok(false);
     }
 
@@ -3472,12 +3485,83 @@ fn ensure_tmux_ops_session(
     Ok(true)
 }
 
-fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
-    if env::var_os("TMUX").is_some() {
-        run_tmux_interactive(["switch-client", "-t", session_name])
-    } else {
-        run_tmux_interactive(["attach-session", "-t", session_name])
+fn sync_existing_tmux_ops_session(
+    session_name: &str,
+    pane_specs: &[(String, String, String)],
+) -> Result<(), String> {
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_title}",
+    ])?;
+    let mut title_to_pane = BTreeMap::new();
+    let mut main_pane_id = None::<String>;
+    for line in panes.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let pane_id = parts.next().unwrap_or_default().trim().to_string();
+        let pane_title = parts.next().unwrap_or_default().trim().to_string();
+        if pane_title == "main" || pane_title == "conductor-kit" {
+            main_pane_id = Some(pane_id.clone());
+        }
+        if !pane_title.is_empty() {
+            title_to_pane.insert(pane_title, pane_id);
+        }
     }
+    let main_pane_id = main_pane_id.unwrap_or_else(|| format!("{session_name}:0.0"));
+    let mut stack_target = title_to_pane
+        .iter()
+        .filter(|(title, _)| title.starts_with("explore-") || title.starts_with("build-") || title.starts_with("review-") || title.starts_with("verify-"))
+        .map(|(_, pane_id)| pane_id.clone())
+        .last()
+        .unwrap_or_else(|| main_pane_id.clone());
+
+    for (worker_id, _, attach_cmd) in pane_specs {
+        if title_to_pane.contains_key(worker_id) {
+            continue;
+        }
+        let split_direction = if stack_target == main_pane_id { "-h" } else { "-v" };
+        let new_pane_id = run_tmux_capture([
+            "split-window",
+            split_direction,
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            &stack_target,
+            attach_cmd,
+        ])?;
+        let new_pane_id = new_pane_id.trim().to_string();
+        run_tmux(["select-pane", "-t", &new_pane_id, "-T", worker_id])?;
+        stack_target = new_pane_id;
+    }
+    Ok(())
+}
+
+fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
+    let has_tty = stdin().is_terminal() && stdout().is_terminal();
+    if env::var_os("TMUX").is_some() {
+        if has_tty {
+            run_tmux_interactive(["switch-client", "-t", session_name])
+        } else {
+            run_tmux(["switch-client", "-t", session_name])
+        }
+    } else if has_tty {
+        run_tmux_interactive(["attach-session", "-t", session_name])
+    } else {
+        Err(format!(
+            "created tmux session '{session_name}', but there is no interactive terminal to attach it"
+        ))
+    }
+}
+
+fn current_tmux_session_hint() -> Option<String> {
+    env::var("CONDUCTOR_TMUX_SESSION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn tmux_session_exists(session_name: &str) -> Result<bool, String> {
