@@ -62,6 +62,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "resume" => run_open(&args[1..]),
         "team" => run_team(&args[1..]),
         "ralph" => run_ralph(&args[1..]),
+        "report" => run_report(&args[1..]),
         "start" => run_start(&args[1..]),
         "open" => run_open(&args[1..]),
         "attach" => run_attach_alias(&args[1..]),
@@ -1422,12 +1423,93 @@ fn render_team_starter_prompt(
     };
     match team_prompt {
         Some(prompt) => format!(
-            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} Current task: {prompt}"
+            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} Current task: {prompt} As soon as you have a concrete finding, send it back to the operator with `conductor report {worker_id} \"<short result>\"` before you continue."
         ),
         None => format!(
-            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} If the operator has not provided a concrete task yet, inspect the repository and produce an immediate situational summary."
+            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} If the operator has not provided a concrete task yet, inspect the repository and produce an immediate situational summary. Report the first useful summary with `conductor report {worker_id} \"<short result>\"`."
         ),
     }
+}
+
+fn run_report(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
+    }
+
+    let (run_id, worker_id, summary) = if args.len() >= 3 {
+        let first = &args[0];
+        let second = &args[1];
+        if first.chars().all(|ch| ch.is_ascii_digit()) {
+            let run_id = default_run_id();
+            (run_id, first.clone(), args[1..].join(" "))
+        } else if second.contains('-') || second == "main" || second == "surface" {
+            (first.clone(), second.clone(), args[2..].join(" "))
+        } else {
+            let run_id = default_run_id();
+            (run_id, first.clone(), args[1..].join(" "))
+        }
+    } else {
+        let run_id = default_run_id();
+        (run_id, args[0].clone(), args[1].clone())
+    };
+
+    if summary.trim().is_empty() {
+        return Err("report summary must not be empty".to_string());
+    }
+
+    let store = StateStore::new(resolve_state_root()?);
+    let payload = report_to_main(&store, &run_id, &worker_id, &summary)?;
+    print_json(&payload)
+}
+
+fn report_to_main(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+    summary: &str,
+) -> Result<serde_json::Value, String> {
+    let mut worker = store.read_worker(&run_id, &worker_id)?;
+    let now = Utc::now();
+    worker.current_summary = Some(summary.to_string());
+    worker.last_event_at = Some(now);
+    worker.last_stdout_at = Some(now);
+    worker.reason = Some("reported_to_main".to_string());
+    let worker = store.upsert_worker(worker)?;
+
+    let message_id = format!("report-{}-{}", worker_id, now.timestamp_millis());
+    let message = store.create_mailbox_message(
+        &run_id,
+        &message_id,
+        &worker_id,
+        "main",
+        &summary,
+    )?;
+    let _ = store.update_mailbox_status(&run_id, "main", &message_id, false)?;
+    let event = EventEnvelope {
+        schema_version: SCHEMA_VERSION,
+        event: EventKind::MailboxMessageCreated,
+        timestamp: now,
+        run_id: Some(run_id.to_string()),
+        session_id: None,
+        source: "report".to_string(),
+        worker: Some(worker_id.to_string()),
+        task_id: worker.current_task_id.clone(),
+        message_id: Some(message_id.clone()),
+        reason: Some("worker_reported_to_main".to_string()),
+        context: serde_json::Map::from_iter([
+            ("summary".to_string(), json!(summary)),
+            ("to_worker".to_string(), json!("main")),
+        ]),
+    };
+    store.append_runtime_event(&run_id, event)?;
+
+    Ok(json!({
+        "run_id": run_id,
+        "worker_id": worker_id,
+        "summary": summary,
+        "message_id": message.message_id,
+        "mailbox_target": "main"
+    }))
 }
 
 fn rebuild_direct_team_surface(
@@ -4534,6 +4616,79 @@ mod tests {
         assert!(prompt.contains("explore-1"));
         assert!(prompt.contains("Profile: explore"));
         assert!(prompt.contains("inspect the repository and find the likely bug"));
+        assert!(prompt.contains("conductor report explore-1"));
+    }
+
+    #[test]
+    fn report_updates_worker_summary_and_main_mailbox() {
+        let root = unique_temp_dir("conductor-report");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "main".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("surface".to_string()),
+                terminal_label: Some("main".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: None,
+            })
+            .expect("failed to upsert main worker");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: None,
+                current_summary: Some("initial".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: None,
+            })
+            .expect("failed to upsert worker");
+
+        report_to_main(
+            &store,
+            "demo-run",
+            "explore-1",
+            "mapped the key docs and likely change files",
+        )
+        .expect("report should succeed");
+
+        let worker = store
+            .read_worker("demo-run", "explore-1")
+            .expect("worker should be readable");
+        assert_eq!(
+            worker.current_summary.as_deref(),
+            Some("mapped the key docs and likely change files")
+        );
+
+        let snapshot = store
+            .read_snapshot("demo-run")
+            .expect("snapshot should be readable");
+        assert_eq!(snapshot.mailbox.unread, 1);
+
+        let events = store
+            .read_events("demo-run")
+            .expect("events should be readable");
+        assert!(events.iter().any(|event| {
+            event.event == EventKind::MailboxMessageCreated
+                && event.worker.as_deref() == Some("explore-1")
+                && event.reason.as_deref() == Some("worker_reported_to_main")
+        }));
     }
 
     #[test]
