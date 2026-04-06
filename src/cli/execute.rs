@@ -19,12 +19,24 @@ use crate::runtime::types::{
 };
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::fs::File;
+use std::io::{IsTerminal, Stdout, stdout};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -116,6 +128,24 @@ enum SettingsField {
     Description,
 }
 
+#[derive(Clone)]
+enum SettingsEntry {
+    Surface,
+    Profile(String),
+}
+
+struct SettingsApp {
+    config_path: PathBuf,
+    cfg: Config,
+    entries: Vec<SettingsEntry>,
+    selected_entry: usize,
+    selected_field: usize,
+    editing: bool,
+    input: String,
+    status: String,
+    host_defaults: Option<HostModelDefaults>,
+}
+
 fn run_default() -> Result<(), String> {
     let run_id = default_run_id();
     let store = StateStore::new(resolve_state_root()?);
@@ -133,115 +163,23 @@ fn run_default() -> Result<(), String> {
 }
 
 fn run_settings() -> Result<(), String> {
-    let (path, mut cfg) = load_resolved_config()?;
-    loop {
-        println!();
-        println!("conductor settings");
-        println!("config: {}", path.display());
-        if let Some(host_defaults) = detect_host_model_defaults() {
-            println!(
-                "detected host defaults: codex={}, claude={}, gemini={}",
-                host_defaults.codex.as_deref().unwrap_or("-"),
-                host_defaults.claude.as_deref().unwrap_or("-"),
-                host_defaults.gemini.as_deref().unwrap_or("-")
-            );
-        }
-        println!();
-        println!("  s. surface      cli={}", cfg.surface.cli);
-
-        let profile_names = cfg.workers.keys().cloned().collect::<Vec<_>>();
-        for (index, name) in profile_names.iter().enumerate() {
-            if let Some(profile) = cfg.workers.get(name) {
-                println!(
-                    "{:>2}. {:<12} cli={} model={} reasoning={}",
-                    index + 1,
-                    name,
-                    profile.cli,
-                    profile.model,
-                    profile.reasoning.as_deref().unwrap_or("-")
-                );
-            }
-        }
-        println!();
-        println!("Choose `s` for the surface, a profile number to edit, or `q` to quit.");
-        let choice = prompt_line("> ")?;
-        if choice.eq_ignore_ascii_case("q") {
-            break;
-        }
-        if choice.eq_ignore_ascii_case("s") {
-            loop {
-                println!();
-                println!("editing `surface`");
-                println!("  1. cli         = {}", cfg.surface.cli);
-                println!("  2. description = {}", cfg.surface.description);
-                println!("Choose a field number, `b` to go back, or `q` to quit.");
-                let field_choice = prompt_line("> ")?;
-                if field_choice.eq_ignore_ascii_case("q") {
-                    return Ok(());
-                }
-                if field_choice.eq_ignore_ascii_case("b") {
-                    break;
-                }
-                let field = match field_choice.as_str() {
-                    "1" => SettingsField::SurfaceCli,
-                    "2" => SettingsField::Description,
-                    _ => return Err("field selection must be 1, 2, b, or q".to_string()),
-                };
-                let new_value = prompt_line("> ")?;
-                update_surface_field(&mut cfg, field, &new_value)?;
-                save_config(&path, &cfg)?;
-                println!("saved {}", path.display());
-            }
-            continue;
-        }
-
-        let profile_index = choice
-            .parse::<usize>()
-            .map_err(|_| "settings expects `s`, a profile number, or q".to_string())?;
-        if profile_index == 0 || profile_index > profile_names.len() {
-            return Err("profile selection out of range".to_string());
-        }
-        let profile_name = &profile_names[profile_index - 1];
-
-        loop {
-            let profile = cfg
-                .workers
-                .get(profile_name)
-                .ok_or_else(|| format!("missing profile: {profile_name}"))?;
-            println!();
-            println!("editing `{profile_name}`");
-            println!("  1. cli         = {}", profile.cli);
-            println!("  2. model       = {}", profile.model);
-            println!(
-                "  3. reasoning   = {}",
-                profile.reasoning.as_deref().unwrap_or("-")
-            );
-            println!("  4. description = {}", profile.description);
-            println!("Choose a field number, `b` to go back, or `q` to quit.");
-            let field_choice = prompt_line("> ")?;
-            if field_choice.eq_ignore_ascii_case("q") {
-                return Ok(());
-            }
-            if field_choice.eq_ignore_ascii_case("b") {
-                break;
-            }
-
-            let field = match field_choice.as_str() {
-                "1" => SettingsField::Cli,
-                "2" => SettingsField::Model,
-                "3" => SettingsField::Reasoning,
-                "4" => SettingsField::Description,
-                _ => return Err("field selection must be 1, 2, 3, 4, b, or q".to_string()),
-            };
-
-            println!("Enter the new value. Use `-` to clear reasoning.");
-            let new_value = prompt_line("> ")?;
-            update_profile_field(&mut cfg, profile_name, field, &new_value)?;
-            save_config(&path, &cfg)?;
-            println!("saved {}", path.display());
-        }
+    let (config_path, cfg) = load_resolved_config()?;
+    if !stdout().is_terminal() {
+        return Err("settings requires an interactive terminal".to_string());
     }
-    Ok(())
+    let mut app = SettingsApp {
+        config_path,
+        cfg,
+        entries: Vec::new(),
+        selected_entry: 0,
+        selected_field: 0,
+        editing: false,
+        input: String::new(),
+        status: "Arrows move, Enter edits, q quits.".to_string(),
+        host_defaults: detect_host_model_defaults(),
+    };
+    app.entries = settings_entries(&app.cfg);
+    run_settings_tui(&mut app)
 }
 
 fn run_start(args: &[String]) -> Result<(), String> {
@@ -257,16 +195,6 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .transpose()?;
     ensure_team_sessions(&run_id, TeamMode::Default, requested_width)?;
     run_ops_open(std::slice::from_ref(&run_id))
-}
-
-fn prompt_line(prompt: &str) -> Result<String, String> {
-    print!("{prompt}");
-    std::io::stdout().flush().map_err(|err| err.to_string())?;
-    let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .map_err(|err| err.to_string())?;
-    Ok(input.trim().to_string())
 }
 
 fn update_profile_field(
@@ -312,6 +240,326 @@ fn update_profile_field(
         }
     }
     Ok(())
+}
+
+fn settings_entries(cfg: &Config) -> Vec<SettingsEntry> {
+    let mut entries = vec![SettingsEntry::Surface];
+    entries.extend(cfg.workers.keys().cloned().map(SettingsEntry::Profile));
+    entries
+}
+
+fn selected_entry<'a>(app: &'a SettingsApp) -> &'a SettingsEntry {
+    &app.entries[app.selected_entry]
+}
+
+fn entry_label(entry: &SettingsEntry) -> String {
+    match entry {
+        SettingsEntry::Surface => "surface".to_string(),
+        SettingsEntry::Profile(name) => name.clone(),
+    }
+}
+
+fn entry_fields(app: &SettingsApp) -> Vec<(SettingsField, String, String)> {
+    match selected_entry(app) {
+        SettingsEntry::Surface => vec![
+            (
+                SettingsField::SurfaceCli,
+                "cli".to_string(),
+                app.cfg.surface.cli.clone(),
+            ),
+            (
+                SettingsField::Description,
+                "description".to_string(),
+                app.cfg.surface.description.clone(),
+            ),
+        ],
+        SettingsEntry::Profile(name) => {
+            let profile = app
+                .cfg
+                .workers
+                .get(name)
+                .expect("settings entry missing profile");
+            vec![
+                (SettingsField::Cli, "cli".to_string(), profile.cli.clone()),
+                (
+                    SettingsField::Model,
+                    "model".to_string(),
+                    profile.model.clone(),
+                ),
+                (
+                    SettingsField::Reasoning,
+                    "reasoning".to_string(),
+                    profile.reasoning.clone().unwrap_or_else(|| "-".to_string()),
+                ),
+                (
+                    SettingsField::Description,
+                    "description".to_string(),
+                    profile.description.clone(),
+                ),
+            ]
+        }
+    }
+}
+
+fn normalize_selected_field(app: &mut SettingsApp) {
+    let field_count = entry_fields(app).len();
+    if field_count == 0 {
+        app.selected_field = 0;
+    } else if app.selected_field >= field_count {
+        app.selected_field = field_count - 1;
+    }
+}
+
+fn current_field(app: &SettingsApp) -> (SettingsField, String, String) {
+    let fields = entry_fields(app);
+    fields.get(app.selected_field).cloned().unwrap_or((
+        SettingsField::Description,
+        String::new(),
+        String::new(),
+    ))
+}
+
+fn edit_hint(field: SettingsField) -> &'static str {
+    match field {
+        SettingsField::Reasoning => "Allowed: low, medium, high, or - to clear.",
+        SettingsField::SurfaceCli | SettingsField::Cli => "Use the installed CLI name to launch.",
+        SettingsField::Model => "Set the exact model name for this profile.",
+        SettingsField::Description => "Use a short operator-facing description.",
+    }
+}
+
+fn begin_settings_edit(app: &mut SettingsApp) {
+    let (_, _, value) = current_field(app);
+    app.input = value;
+    app.editing = true;
+    app.status = "Editing field. Enter saves, Esc cancels.".to_string();
+}
+
+fn apply_settings_edit(app: &mut SettingsApp) -> Result<(), String> {
+    let (field, label, _) = current_field(app);
+    let value = app.input.trim().to_string();
+    match selected_entry(app).clone() {
+        SettingsEntry::Surface => update_surface_field(&mut app.cfg, field, &value)?,
+        SettingsEntry::Profile(name) => update_profile_field(&mut app.cfg, &name, field, &value)?,
+    }
+    save_config(&app.config_path, &app.cfg)?;
+    app.entries = settings_entries(&app.cfg);
+    normalize_selected_field(app);
+    app.editing = false;
+    app.input.clear();
+    app.status = format!("Saved {label} to {}", app.config_path.display());
+    Ok(())
+}
+
+fn host_defaults_line(defaults: &Option<HostModelDefaults>) -> String {
+    match defaults {
+        Some(defaults) => format!(
+            "Detected host defaults  codex={}  claude={}  gemini={}",
+            defaults.codex.as_deref().unwrap_or("-"),
+            defaults.claude.as_deref().unwrap_or("-"),
+            defaults.gemini.as_deref().unwrap_or("-")
+        ),
+        None => "Detected host defaults unavailable".to_string(),
+    }
+}
+
+fn run_settings_tui(app: &mut SettingsApp) -> Result<(), String> {
+    enable_raw_mode().map_err(|err| err.to_string())?;
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen).map_err(|err| err.to_string())?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).map_err(|err| err.to_string())?;
+
+    let result = settings_tui_loop(&mut terminal, app);
+
+    disable_raw_mode().map_err(|err| err.to_string())?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen).map_err(|err| err.to_string())?;
+    terminal.show_cursor().map_err(|err| err.to_string())?;
+    result
+}
+
+fn settings_tui_loop(
+    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    app: &mut SettingsApp,
+) -> Result<(), String> {
+    loop {
+        terminal
+            .draw(|frame| draw_settings(frame, app))
+            .map_err(|err| err.to_string())?;
+
+        if !event::poll(Duration::from_millis(250)).map_err(|err| err.to_string())? {
+            continue;
+        }
+
+        let Event::Key(key) = event::read().map_err(|err| err.to_string())? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+
+        if app.editing {
+            match key.code {
+                KeyCode::Esc => {
+                    app.editing = false;
+                    app.input.clear();
+                    app.status = "Edit canceled.".to_string();
+                }
+                KeyCode::Enter => {
+                    if let Err(err) = apply_settings_edit(app) {
+                        app.status = err;
+                    }
+                }
+                KeyCode::Backspace => {
+                    app.input.pop();
+                }
+                KeyCode::Char(ch) => {
+                    app.input.push(ch);
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        match key.code {
+            KeyCode::Char('q') => return Ok(()),
+            KeyCode::Up => {
+                if app.selected_entry > 0 {
+                    app.selected_entry -= 1;
+                    normalize_selected_field(app);
+                }
+            }
+            KeyCode::Down => {
+                if app.selected_entry + 1 < app.entries.len() {
+                    app.selected_entry += 1;
+                    normalize_selected_field(app);
+                }
+            }
+            KeyCode::Left => {
+                if app.selected_field > 0 {
+                    app.selected_field -= 1;
+                }
+            }
+            KeyCode::Right => {
+                let field_count = entry_fields(app).len();
+                if app.selected_field + 1 < field_count {
+                    app.selected_field += 1;
+                }
+            }
+            KeyCode::Enter => begin_settings_edit(app),
+            _ => {}
+        }
+    }
+}
+
+fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
+    let areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(2),
+        ])
+        .split(frame.area());
+
+    let header = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled(
+                "conductor settings",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("  {}", app.config_path.display())),
+        ]),
+        Line::from(host_defaults_line(&app.host_defaults)),
+    ])
+    .block(Block::default().borders(Borders::ALL).title("Overview"))
+    .wrap(Wrap { trim: true });
+    frame.render_widget(header, areas[0]);
+
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(24), Constraint::Min(30)])
+        .split(areas[1]);
+
+    let entry_items = app
+        .entries
+        .iter()
+        .map(|entry| ListItem::new(Line::from(entry_label(entry))))
+        .collect::<Vec<_>>();
+    let mut entry_state = ListState::default();
+    entry_state.select(Some(app.selected_entry));
+    let entry_list = List::new(entry_items)
+        .block(Block::default().borders(Borders::ALL).title("Entries"))
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(entry_list, body[0], &mut entry_state);
+
+    let fields = entry_fields(app);
+    let field_items = fields
+        .iter()
+        .map(|(_, label, value)| {
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{label:<12}"),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(value.clone()),
+            ]))
+        })
+        .collect::<Vec<_>>();
+    let mut field_state = ListState::default();
+    field_state.select(Some(app.selected_field));
+    let field_title = format!("Fields  {}", entry_label(selected_entry(app)));
+    let field_list = List::new(field_items)
+        .block(Block::default().borders(Borders::ALL).title(field_title))
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(field_list, body[1], &mut field_state);
+
+    let footer = Paragraph::new(vec![
+        Line::from(app.status.clone()),
+        Line::from("Arrows move, Enter edits, Esc cancels, q quits."),
+    ])
+    .block(Block::default().borders(Borders::ALL).title("Status"))
+    .wrap(Wrap { trim: true });
+    frame.render_widget(footer, areas[2]);
+
+    if app.editing {
+        let popup_area = centered_rect(70, 30, frame.area());
+        let (field, label, _) = current_field(app);
+        let popup = Paragraph::new(vec![
+            Line::from(vec![Span::styled(
+                format!("{} / {}", entry_label(selected_entry(app)), label),
+                Style::default().add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(edit_hint(field)),
+            Line::from(""),
+            Line::from(app.input.clone()),
+        ])
+        .block(Block::default().borders(Borders::ALL).title("Edit"))
+        .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, popup_area);
+        frame.render_widget(popup, popup_area);
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 fn update_surface_field(cfg: &mut Config, field: SettingsField, value: &str) -> Result<(), String> {
