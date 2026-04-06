@@ -28,22 +28,24 @@
   "workers": {
     "orchestrator": {
       "cli": "codex",
-      "model": "gpt-5.4",
-      "reasoning": "medium",
-      "description": "Top-level coordinator for orchestration loops",
+      "model": "host-default",
+      "description": "Top-level Codex coordinator using the user's existing Codex settings",
       "delivery_mode": "session",
       "launch_mode": "stdin_text",
-      "base_args": [
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--no-alt-screen",
-        "-m",
-        "{model}"
-      ]
+      "base_args": []
     },
     "worker": {
+      "cli": "codex",
+      "model": "host-default",
+      "description": "Default interactive Codex worker using the user's existing Codex settings",
+      "delivery_mode": "session",
+      "launch_mode": "stdin_text",
+      "base_args": []
+    },
+    "gemini_worker": {
       "cli": "gemini",
       "model": "gemini-2.5-flash",
-      "description": "General worker process for fan-out tasks",
+      "description": "Optional interactive Gemini worker",
       "delivery_mode": "session",
       "launch_mode": "stdin_text",
       "base_args": [
@@ -67,17 +69,11 @@
     },
     "verifier": {
       "cli": "codex",
-      "model": "gpt-5.4",
-      "reasoning": "medium",
-      "description": "Verification worker for fan-out result review",
+      "model": "host-default",
+      "description": "Verification worker using the user's existing Codex settings",
       "delivery_mode": "session",
       "launch_mode": "stdin_text",
-      "base_args": [
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--no-alt-screen",
-        "-m",
-        "{model}"
-      ]
+      "base_args": []
     }
   }
 }

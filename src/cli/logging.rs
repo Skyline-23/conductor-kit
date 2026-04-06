@@ -6,11 +6,18 @@ pub fn print_help() {
 conductor <command>
 
 Commands:
+  start               Start a default Codex team and open the ops view
+  open                Open the ops view for the current or named run
+  attach              Attach to a named worker in the current or named run
   help                Show this help
   version             Print version
+  worker-log          Print recent session log output
+  hud-view            Print a compact runtime HUD view
+  doctor              Validate config
+
+Advanced:
   config-path         Print resolved config path
   status              Print config status payload
-  doctor              Validate config
   runtime-init        Initialize runtime state for a run
   runtime-snapshot    Print runtime snapshot for a run
   runtime-refresh     Rebuild and persist snapshot for a run
@@ -27,13 +34,10 @@ Commands:
   worker-send-raw     Send raw bytes to a worker session
   worker-attach       Attach the current terminal to a worker session
   worker-open-terminal Open a worker session in a new terminal window
-  worker-log          Print recent session log output
   worker-session-status Query a worker session
   worker-stop-session Stop a worker session
   hud-open            Open the live HUD in a new terminal window
-  ops-open            Open the HUD and worker sessions in one tmux layout inside Ghostty
-  dispatch-route      Deliver a queued dispatch to a worker session
-  hud-view            Print a compact runtime HUD view
+  ops-open            Open the HUD and worker sessions in one tmux layout
   hud-watch           Continuously render the runtime HUD
   events-list         Print runtime events
   hook-run            Run a hook command against matching events

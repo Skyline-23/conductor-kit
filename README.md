@@ -87,12 +87,13 @@ User overrides are expected at:
 When running inside this repository, the CLI also falls back to `./config/conductor.json`.
 
 The helper currently supports:
+- `conductor start`
+- `conductor open`
+- `conductor attach`
 - `conductor help`
 - `conductor status`
 - `conductor doctor`
 - `conductor config-path`
-- `conductor run-orchestrate`
-- `conductor run-fanout`
 - `conductor hud-view`
 - `conductor hud-watch`
 - `conductor worker-log`
@@ -100,12 +101,13 @@ The helper currently supports:
 The default worker presets now include:
 - `orchestrator`
 - `worker`
+- `gemini_worker`
 - `verifier`
 - `claude_worker`
 
 The shipped presets are aimed at real local interactive CLIs:
-- `orchestrator` and `verifier` use interactive `codex`
-- `worker` uses interactive `gemini`
+- `orchestrator`, `worker`, and `verifier` use the user's existing `codex` settings
+- `gemini_worker` uses interactive `gemini`
 - `claude_worker` uses interactive `claude`
 
 If you want Claude to handle both worker and verifier paths, use:

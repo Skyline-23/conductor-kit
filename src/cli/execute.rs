@@ -39,6 +39,9 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
     let cmd = args.get(0).map(String::as_str).unwrap_or("help");
 
     match cmd {
+        "start" => run_start(&args[1..]),
+        "open" => run_open(&args[1..]),
+        "attach" => run_attach_alias(&args[1..]),
         "help" | "-h" | "--help" => {
             print_help();
             Ok(())
@@ -89,6 +92,77 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
             Err("unknown command".to_string())
         }
     }
+}
+
+fn run_start(args: &[String]) -> Result<(), String> {
+    let run_id = args
+        .first()
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(default_run_id);
+    let worker_count = args
+        .get(1)
+        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(2);
+    let worker_count = worker_count.max(1);
+
+    let (_, cfg) = load_resolved_config()?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, &run_id)?;
+
+    let orchestrator = worker_adapter_config(&cfg, "orchestrator")?;
+    ensure_adapter_session(&store, &orchestrator, &run_id, "codex-lead", None)?;
+
+    for index in 1..=worker_count {
+        let worker_id = format!("codex-{index}");
+        let worker = worker_adapter_config(&cfg, "worker")?;
+        ensure_adapter_session(&store, &worker, &run_id, &worker_id, None)?;
+    }
+
+    run_ops_open(std::slice::from_ref(&run_id))
+}
+
+fn run_open(args: &[String]) -> Result<(), String> {
+    let run_id = args
+        .first()
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(default_run_id);
+    run_ops_open(std::slice::from_ref(&run_id))
+}
+
+fn run_attach_alias(args: &[String]) -> Result<(), String> {
+    let first = args.first().map(String::as_str).unwrap_or("");
+    let (run_id, worker_name): (String, String) = if first.contains("session-")
+        || first.starts_with("codex-")
+        || first.starts_with("worker-")
+        || first.starts_with("claude-")
+        || first.starts_with("gemini-")
+    {
+        (default_run_id(), first.to_string())
+    } else {
+        let run = if first.trim().is_empty() {
+            default_run_id()
+        } else {
+            first.to_string()
+        };
+        let worker = args
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| "codex-1".to_string());
+        (run, worker)
+    };
+
+    let session_id = if worker_name.starts_with("session-") {
+        worker_name
+    } else {
+        format!("session-{worker_name}")
+    };
+    let attach_args = vec![run_id, session_id];
+    run_worker_attach(&attach_args)
 }
 
 fn run_config_path() -> Result<(), String> {
@@ -1586,6 +1660,33 @@ fn ensure_run_exists(store: &StateStore, run_id: &str) -> Result<(), String> {
         let _ = store.init_run(run_id, "orchestrator-main")?;
     }
     Ok(())
+}
+
+fn default_run_id() -> String {
+    let fallback = "conductor".to_string();
+    let cwd = match env::current_dir() {
+        Ok(value) => value,
+        Err(_) => return fallback,
+    };
+    let name = match cwd.file_name().and_then(|value| value.to_str()) {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => return fallback,
+    };
+    let sanitized = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        fallback
+    } else {
+        sanitized
+    }
 }
 
 fn ensure_adapter_session(
