@@ -3053,6 +3053,7 @@ fn build_hud_shell_command(
     if let Some(path) = config_path {
         env_parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
     }
+    env_parts.extend(terminal_passthrough_env(Vec::new()));
     let command_parts = [
         env_parts.join(" "),
         shell_quote(conductor_bin),
@@ -3067,11 +3068,12 @@ fn build_launch_shell_command(
     cwd: &Path,
     launch: &crate::runtime::adapters::WorkerAdapterLaunch,
 ) -> String {
-    let mut env_parts = launch
+    let base_env = launch
         .env
         .iter()
         .map(|(key, value)| format!("{key}={}", shell_quote_str(value)))
         .collect::<Vec<_>>();
+    let mut env_parts = terminal_passthrough_env(base_env);
     let mut command_parts = vec![shell_quote_str(&launch.program)];
     command_parts.extend(launch.args.iter().map(|arg| shell_quote_str(arg)));
     if let Some(payload) = &launch.stdin_payload {
@@ -3088,6 +3090,24 @@ fn build_launch_shell_command(
         env_prefix,
         command_parts.join(" ")
     )
+}
+
+fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
+    for key in [
+        "COLORTERM",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+    ] {
+        if let Ok(value) = env::var(key) {
+            if !value.trim().is_empty() {
+                env_parts.push(format!("{key}={}", shell_quote_str(&value)));
+            }
+        }
+    }
+    env_parts
 }
 
 fn open_terminal_script(terminal_app: &str, command: &str) -> Result<(), String> {
@@ -3133,6 +3153,8 @@ fn ensure_tmux_ops_session(
         "ops",
         main_cmd,
     ])?;
+    run_tmux(["set-option", "-t", session_name, "mouse", "on"])?;
+    run_tmux(["set-option", "-t", session_name, "set-clipboard", "on"])?;
 
     let include_hud = !hud_cmd.trim().is_empty();
 
@@ -3141,7 +3163,7 @@ fn ensure_tmux_ops_session(
             "split-window",
             "-v",
             "-l",
-            "6",
+            "4",
             "-t",
             &format!("{session_name}:0"),
             hud_cmd,
@@ -3169,7 +3191,7 @@ fn ensure_tmux_ops_session(
             "-t",
             &format!("{session_name}:0.{}", pane_specs.len()),
             "-y",
-            "6",
+            "4",
         ])?;
     }
 
