@@ -25,6 +25,13 @@ Everything else is intentionally stripped away. No giant prompt hierarchy. No tm
 
 - `skills/conductor/SKILL.md`
   Lean orchestration instructions for the host agent.
+- `skills/team/SKILL.md`
+  Expands the current run into a configured multi-worker team.
+- `skills/ralph/SKILL.md`
+  Starts the wider resumable orchestration loop.
+- `skills/plan/SKILL.md`, `skills/implement/SKILL.md`,
+  `skills/review/SKILL.md`, `skills/symphony/SKILL.md`
+  Thin skill shims for the shared command surface.
 - `commands/`
   Shared markdown commands for plan, implement, review, and symphony mode.
 - `config/conductor.json`
@@ -102,6 +109,14 @@ plus sub-workers stacked on the right.
 
 Use `conductor settings` to edit each profile's `cli`, `model`, `reasoning`,
 and description from the terminal.
+
+Installed skill shortcuts:
+- `$team`
+- `$ralph`
+- `$plan`
+- `$implement`
+- `$review`
+- `$symphony`
 
 Operator commands:
 - `conductor help`
