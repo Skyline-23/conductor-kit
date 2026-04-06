@@ -117,6 +117,18 @@ impl StateStore {
         self.read_json(&self.dispatch_file(run_id, request_id))
     }
 
+    pub fn read_events(&self, run_id: &str) -> Result<Vec<EventEnvelope>, String> {
+        let path = self.event_log_file(run_id);
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+        let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
+        raw.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<EventEnvelope>(line).map_err(|err| err.to_string()))
+            .collect()
+    }
+
     pub fn refresh_snapshot(&self, run_id: &str) -> Result<RuntimeSnapshot, String> {
         let snapshot = self.capture_snapshot(run_id)?;
         self.write_json(&self.snapshot_file(run_id), &snapshot)?;

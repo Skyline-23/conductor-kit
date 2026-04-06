@@ -2,6 +2,7 @@ mod runtime;
 
 use crate::runtime::authority::renew_authority;
 use crate::runtime::claims::{acquire_claim, release_claim};
+use crate::runtime::hooks::{event_name_of, filter_events, watch_and_run_hooks};
 use crate::runtime::phases::transition_phase;
 use crate::runtime::sessions::{
     SessionCommand, run_worker_host, send_session_command, spawn_session,
@@ -120,6 +121,8 @@ fn main() {
         "worker-host" => run_worker_host_command(&args[2..]),
         "dispatch-route" => run_dispatch_route(&args[2..]),
         "hud-view" => run_hud_view(&args[2..]),
+        "events-list" => run_events_list(&args[2..]),
+        "hook-run" => run_hook_run(&args[2..]),
         "task-create" => run_task_create(&args[2..]),
         "dispatch-queue" => run_dispatch_queue(&args[2..]),
         "dispatch-update" => run_dispatch_update(&args[2..]),
@@ -593,6 +596,60 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_events_list(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "events-list requires <run_id> [event_name]")?;
+    let event_name = args.get(1).map(String::as_str);
+    let store = StateStore::new(resolve_state_root()?);
+    let events = filter_events(store.read_events(run_id)?, event_name);
+    let payload = events
+        .into_iter()
+        .map(|event| {
+            json!({
+                "event": event_name_of(&event),
+                "timestamp": event.timestamp,
+                "source": event.source,
+                "run_id": event.run_id,
+                "worker": event.worker,
+                "task_id": event.task_id,
+                "message_id": event.message_id,
+                "reason": event.reason,
+                "context": event.context
+            })
+        })
+        .collect::<Vec<_>>();
+    print_json(&payload)
+}
+
+fn run_hook_run(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err("hook-run requires <run_id> <event_name|*> <program> [args...]".to_string());
+    }
+    let run_id = &args[0];
+    let event_name = &args[1];
+    let program = &args[2];
+    let program_args = args[3..].to_vec();
+    let timeout_secs = env::var("CONDUCTOR_HOOK_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(2);
+    let cwd = env::var("CONDUCTOR_HOOK_CWD").ok().map(PathBuf::from);
+    let store = StateStore::new(resolve_state_root()?);
+    let handled = watch_and_run_hooks(
+        &store,
+        run_id,
+        Some(event_name),
+        program,
+        &program_args,
+        timeout_secs,
+        cwd,
+    )?;
+    print_json(&json!({
+        "ok": true,
+        "handled": handled,
+        "event": event_name
+    }))
+}
+
 fn run_task_create(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "task-create requires <run_id> <task_id> <title>")?;
     let task_id = required_arg(args, 1, "task-create requires <run_id> <task_id> <title>")?;
@@ -912,6 +969,8 @@ Commands:
   worker-stop-session Stop a worker session
   dispatch-route      Deliver a queued dispatch to a worker session
   hud-view            Print a compact runtime HUD view
+  events-list         Print runtime events
+  hook-run            Run a hook command against matching events
   task-create         Create a task record
   dispatch-queue      Create a dispatch record
   dispatch-update     Update dispatch status
