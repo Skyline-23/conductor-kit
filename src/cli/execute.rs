@@ -1304,7 +1304,7 @@ fn open_direct_team_in_current_surface(
     let (_, cfg) = load_resolved_config()?;
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, run_id)?;
-    ensure_surface_session(&store, &cfg, run_id)?;
+    stop_worker_session_if_present(&store, run_id, "main");
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
 
     let pane_specs = prepare_direct_team_panes(
@@ -1536,9 +1536,11 @@ fn tallest_tmux_pane(pane_ids: &[String]) -> Result<Option<String>, String> {
 fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
     let tmux_session_name = format!("conductor-{run_id}-surface");
     let (_, cfg) = load_resolved_config()?;
+    let store = StateStore::new(resolve_state_root()?);
+    stop_worker_session_if_present(&store, run_id, "main");
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
-    let state_root = resolve_state_root()?;
+    let state_root = store.root().to_path_buf();
     let config_path = resolve_config_path().ok();
     let hud_cmd = build_hud_shell_command(
         &cwd,
