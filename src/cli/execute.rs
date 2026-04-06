@@ -1139,9 +1139,19 @@ fn run_team(args: &[String]) -> Result<(), String> {
         return Err("team count must be at least 1".to_string());
     }
 
+    let mut prompt_index = None;
+    for (index, value) in args.iter().enumerate().skip(count_index + 1) {
+        if value == "--prompt" {
+            prompt_index = Some(index);
+            break;
+        }
+    }
+
+    let agent_slice_end = prompt_index.unwrap_or(args.len());
     let agent_names = args
         .iter()
         .skip(count_index + 1)
+        .take(agent_slice_end.saturating_sub(count_index + 1))
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>();
@@ -1149,10 +1159,29 @@ fn run_team(args: &[String]) -> Result<(), String> {
         return Err("team requires at least one agent name".to_string());
     }
 
-    ensure_explicit_team_sessions(&run_id, team_size, &agent_names)?;
-    let tmux_session_name =
-        current_tmux_session_hint().unwrap_or_else(|| default_tmux_session_name(&run_id));
-    run_ops_open_with_filter(&run_id, &tmux_session_name, None)
+    let prompt = prompt_index
+        .and_then(|index| args.get(index + 1..))
+        .map(|parts| parts.join(" "))
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env::var("CONDUCTOR_TEAM_PROMPT").ok())
+        .filter(|value| !value.trim().is_empty());
+
+    let active_tmux_session = current_tmux_session_hint()
+        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false));
+
+    if let Some(tmux_session_name) = active_tmux_session {
+        open_direct_team_in_current_surface(
+            &run_id,
+            team_size,
+            &agent_names,
+            prompt.as_deref(),
+            &tmux_session_name,
+        )
+    } else {
+        ensure_explicit_team_sessions(&run_id, team_size, &agent_names)?;
+        let tmux_session_name = default_tmux_session_name(&run_id);
+        run_ops_open_with_filter(&run_id, &tmux_session_name, None)
+    }
 }
 
 fn run_ralph(args: &[String]) -> Result<(), String> {
@@ -1258,6 +1287,127 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct OpsPaneSpec {
+    title: String,
+    command: String,
+    starter_prompt: Option<String>,
+}
+
+fn open_direct_team_in_current_surface(
+    run_id: &str,
+    team_size: usize,
+    agent_names: &[String],
+    team_prompt: Option<&str>,
+    tmux_session_name: &str,
+) -> Result<(), String> {
+    let (_, cfg) = load_resolved_config()?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
+    ensure_surface_session(&store, &cfg, run_id)?;
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+
+    let pane_specs = prepare_direct_team_panes(
+        &store,
+        &cfg,
+        run_id,
+        team_size,
+        agent_names,
+        team_prompt,
+        &cwd,
+    )?;
+
+    ensure_tmux_ops_session(tmux_session_name, "", &pane_specs)?;
+    Ok(())
+}
+
+fn prepare_direct_team_panes(
+    store: &StateStore,
+    cfg: &Config,
+    run_id: &str,
+    team_size: usize,
+    agent_names: &[String],
+    team_prompt: Option<&str>,
+    cwd: &Path,
+) -> Result<Vec<OpsPaneSpec>, String> {
+    let mut stem_counts = BTreeMap::<String, usize>::new();
+    let mut pane_specs = Vec::new();
+    for index in 0..team_size {
+        let agent_name = &agent_names[index % agent_names.len()];
+        let (worker_type, worker_stem) = resolve_team_agent(cfg, agent_name)?;
+        let adapter = worker_adapter_config(cfg, &worker_type)?;
+        let counter = stem_counts.entry(worker_stem.clone()).or_insert(0);
+        *counter += 1;
+        let worker_id = format!("{worker_stem}-{counter}");
+        let launch = resolve_worker_adapter(&adapter, run_id, &worker_id, None, None)?;
+        stop_worker_session_if_present(store, run_id, &worker_id);
+        let summary = Some(format!("direct {} pane ready", worker_type));
+        store.upsert_worker(WorkerRecord {
+            worker_id: worker_id.clone(),
+            run_id: run_id.to_string(),
+            worker_kind: worker_kind_for_type(&worker_type, &worker_id),
+            session_ref: None,
+            state: WorkerState::Working,
+            current_task_id: None,
+            current_summary: summary,
+            terminal_label: Some(worker_id.clone()),
+            last_heartbeat_at: Some(Utc::now()),
+            last_stdout_at: None,
+            last_event_at: Some(Utc::now()),
+            reason: Some("direct_team_pane".to_string()),
+        })?;
+        pane_specs.push(OpsPaneSpec {
+            title: worker_id.clone(),
+            command: build_direct_launch_shell_command(cwd, &launch),
+            starter_prompt: Some(render_team_starter_prompt(
+                run_id,
+                &worker_id,
+                &worker_type,
+                team_prompt,
+            )),
+        });
+    }
+    Ok(pane_specs)
+}
+
+fn stop_worker_session_if_present(store: &StateStore, run_id: &str, worker_id: &str) {
+    let session_id = format!("session-{worker_id}");
+    if let Ok(session) = store.read_session(run_id, &session_id) {
+        let _ = send_session_command(Path::new(&session.socket_path), &SessionCommand::Stop);
+    }
+}
+
+fn render_team_starter_prompt(
+    run_id: &str,
+    worker_id: &str,
+    worker_type: &str,
+    team_prompt: Option<&str>,
+) -> String {
+    let role_instruction = match worker_type {
+        "explore" => {
+            "Start immediately by mapping the repository, the likely touch points, and the fastest path to useful findings."
+        }
+        "build" => {
+            "Start immediately by locating the implementation surface and drafting the smallest concrete change path."
+        }
+        "review" => {
+            "Start immediately by checking likely regressions, risky files, and verification gaps."
+        }
+        "verify" => {
+            "Start immediately by preparing the validation path, likely commands, and evidence to confirm completion."
+        }
+        _ => "Start immediately by scanning the repository and contributing useful progress from your lane.",
+    };
+    match team_prompt {
+        Some(prompt) => format!(
+            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} Current task: {prompt}"
+        ),
+        None => format!(
+            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} If the operator has not provided a concrete task yet, inspect the repository and produce an immediate situational summary."
+        ),
+    }
+}
+
 fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
     let tmux_session_name = format!("conductor-{run_id}-surface");
     let (_, cfg) = load_resolved_config()?;
@@ -1281,7 +1431,11 @@ fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
     );
     let launch = resolve_surface_launch(&cfg, run_id)?;
     let surface_cmd = build_launch_shell_command(&cwd, &launch);
-    let pane_specs = vec![("main".to_string(), "surface".to_string(), surface_cmd)];
+    let pane_specs = vec![OpsPaneSpec {
+        title: "main".to_string(),
+        command: surface_cmd,
+        starter_prompt: None,
+    }];
     if tmux_session_exists(&tmux_session_name)? {
         run_tmux(["kill-session", "-t", &tmux_session_name])?;
     }
@@ -1292,8 +1446,8 @@ fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
         return run_surface_attached_tmux_session(
             &tmux_session_name,
             &hud_status_cmd,
-            pane_specs[0].0.as_str(),
-            pane_specs[0].2.as_str(),
+            pane_specs[0].title.as_str(),
+            pane_specs[0].command.as_str(),
         );
     }
     ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
@@ -2452,10 +2606,14 @@ fn run_ops_open_with_filter(
                 run_id,
                 &session_id,
             );
-            pane_specs.push((worker.worker_id, session_id, attach_cmd));
+            pane_specs.push(OpsPaneSpec {
+                title: worker.worker_id,
+                command: attach_cmd,
+                starter_prompt: None,
+            });
         }
     }
-    pane_specs.sort_by_key(|(worker_id, _, _)| pane_sort_key(worker_id));
+    pane_specs.sort_by_key(|spec| pane_sort_key(&spec.title));
 
     if command_available("tmux") {
         let created = ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
@@ -2474,9 +2632,9 @@ fn run_ops_open_with_filter(
             "created": created,
             "attached": attached,
             "hud": true,
-            "sessions": pane_specs.iter().map(|(worker_id, session_id, _)| json!({
-                "worker_id": worker_id,
-                "session_id": session_id
+            "sessions": pane_specs.iter().map(|spec| json!({
+                "worker_id": spec.title,
+                "session_id": serde_json::Value::Null
             })).collect::<Vec<_>>()
         }))
     } else {
@@ -2484,8 +2642,8 @@ fn run_ops_open_with_filter(
             .ok()
             .unwrap_or_else(|| "Terminal".to_string());
         open_terminal_script(&terminal_app, &hud_cmd)?;
-        for (_, _, attach_cmd) in &pane_specs {
-            open_terminal_script(&terminal_app, attach_cmd)?;
+        for spec in &pane_specs {
+            open_terminal_script(&terminal_app, &spec.command)?;
         }
         print_json(&json!({
             "ok": true,
@@ -2493,9 +2651,9 @@ fn run_ops_open_with_filter(
             "terminal_app": terminal_app,
             "fallback": "terminal_windows",
             "hud": true,
-            "sessions": pane_specs.iter().map(|(worker_id, session_id, _)| json!({
-                "worker_id": worker_id,
-                "session_id": session_id
+            "sessions": pane_specs.iter().map(|spec| json!({
+                "worker_id": spec.title,
+                "session_id": serde_json::Value::Null
             })).collect::<Vec<_>>()
         }))
     }
@@ -3306,6 +3464,31 @@ fn build_launch_shell_command(
     ))
 }
 
+fn build_direct_launch_shell_command(
+    cwd: &Path,
+    launch: &crate::runtime::adapters::WorkerAdapterLaunch,
+) -> String {
+    let base_env = launch
+        .env
+        .iter()
+        .map(|(key, value)| format!("{key}={}", shell_quote_str(value)))
+        .collect::<Vec<_>>();
+    let env_parts = terminal_passthrough_env(base_env);
+    let env_prefix = if env_parts.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", env_parts.join(" "))
+    };
+    let mut command_parts = vec![shell_quote_str(&launch.program)];
+    command_parts.extend(launch.args.iter().map(|arg| shell_quote_str(arg)));
+    build_tmux_pane_shell_command(format!(
+        "cd {} && {}exec {}",
+        shell_quote(cwd),
+        env_prefix,
+        command_parts.join(" ")
+    ))
+}
+
 fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
     for key in [
         "COLORTERM",
@@ -3373,7 +3556,7 @@ fn open_terminal_script(terminal_app: &str, command: &str) -> Result<(), String>
 fn ensure_tmux_ops_session(
     session_name: &str,
     hud_cmd: &str,
-    pane_specs: &[(String, String, String)],
+    pane_specs: &[OpsPaneSpec],
 ) -> Result<bool, String> {
     if tmux_session_exists(session_name)? {
         run_tmux(["set-option", "-t", session_name, "mouse", "on"])?;
@@ -3382,8 +3565,8 @@ fn ensure_tmux_ops_session(
         return Ok(false);
     }
 
-    let (main_title, main_cmd) = if let Some((worker_id, _, attach_cmd)) = pane_specs.first() {
-        (worker_id.as_str(), attach_cmd.as_str())
+    let (main_title, main_cmd) = if let Some(spec) = pane_specs.first() {
+        (spec.title.as_str(), spec.command.as_str())
     } else {
         ("HUD", hud_cmd)
     };
@@ -3430,14 +3613,22 @@ fn ensure_tmux_ops_session(
             &format!("{session_name}:0"),
             hud_cmd,
         ])?;
-        for (_, _, attach_cmd) in pane_specs.iter().skip(1) {
-            run_tmux([
+        for spec in pane_specs.iter().skip(1) {
+            let new_pane_id = run_tmux_capture([
                 "split-window",
                 "-h",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
                 "-t",
                 &format!("{session_name}:0.0"),
-                attach_cmd,
+                &spec.command,
             ])?;
+            let new_pane_id = new_pane_id.trim().to_string();
+            if let Some(prompt) = &spec.starter_prompt {
+                send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+            }
         }
     }
 
@@ -3476,14 +3667,20 @@ fn ensure_tmux_ops_session(
     }
 
     let pane_title_offset = 1;
-    for (index, (worker_id, _, _)) in pane_specs.iter().skip(1).enumerate() {
+    for (index, spec) in pane_specs.iter().skip(1).enumerate() {
         run_tmux([
             "select-pane",
             "-t",
             &format!("{session_name}:0.{}", index + pane_title_offset),
             "-T",
-            worker_id,
+            &spec.title,
         ])?;
+    }
+
+    if let Some(spec) = pane_specs.first() {
+        if let Some(prompt) = &spec.starter_prompt {
+            send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)?;
+        }
     }
 
     Ok(true)
@@ -3491,7 +3688,7 @@ fn ensure_tmux_ops_session(
 
 fn sync_existing_tmux_ops_session(
     session_name: &str,
-    pane_specs: &[(String, String, String)],
+    pane_specs: &[OpsPaneSpec],
 ) -> Result<(), String> {
     let panes = run_tmux_capture([
         "list-panes",
@@ -3521,8 +3718,8 @@ fn sync_existing_tmux_ops_session(
         .last()
         .unwrap_or_else(|| main_pane_id.clone());
 
-    for (worker_id, _, attach_cmd) in pane_specs {
-        if title_to_pane.contains_key(worker_id) {
+    for spec in pane_specs {
+        if title_to_pane.contains_key(&spec.title) {
             continue;
         }
         let split_direction = if stack_target == main_pane_id { "-h" } else { "-v" };
@@ -3535,13 +3732,35 @@ fn sync_existing_tmux_ops_session(
             "#{pane_id}",
             "-t",
             &stack_target,
-            attach_cmd,
+            &spec.command,
         ])?;
         let new_pane_id = new_pane_id.trim().to_string();
-        run_tmux(["select-pane", "-t", &new_pane_id, "-T", worker_id])?;
+        run_tmux(["select-pane", "-t", &new_pane_id, "-T", &spec.title])?;
+        if let Some(prompt) = &spec.starter_prompt {
+            send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+        }
         stack_target = new_pane_id;
     }
     Ok(())
+}
+
+fn send_prompt_to_tmux_pane(pane_id: &str, prompt: &str) -> Result<(), String> {
+    if prompt.trim().is_empty() {
+        return Ok(());
+    }
+    let buffer_name = format!(
+        "conductor-{}",
+        pane_id.trim_start_matches('%').replace('%', "-")
+    );
+    run_tmux(["set-buffer", "-b", &buffer_name, prompt])?;
+    let script = format!(
+        "sleep 0.8; tmux paste-buffer -b {} -t {}; tmux delete-buffer -b {}; tmux send-keys -t {} Enter",
+        shell_quote_str(&buffer_name),
+        shell_quote_str(pane_id),
+        shell_quote_str(&buffer_name),
+        shell_quote_str(pane_id),
+    );
+    run_tmux(["run-shell", "-b", &script])
 }
 
 fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
@@ -4017,5 +4236,18 @@ mod tests {
 
         let err = resolve_team_agent(&cfg, "codex").expect_err("vendor alias should fail");
         assert!(err.contains("unknown team agent profile 'codex'"));
+    }
+
+    #[test]
+    fn render_team_starter_prompt_includes_profile_and_task() {
+        let prompt = render_team_starter_prompt(
+            "demo-run",
+            "explore-1",
+            "explore",
+            Some("inspect the repository and find the likely bug"),
+        );
+        assert!(prompt.contains("explore-1"));
+        assert!(prompt.contains("Profile: explore"));
+        assert!(prompt.contains("inspect the repository and find the likely bug"));
     }
 }

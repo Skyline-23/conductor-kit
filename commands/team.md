@@ -4,6 +4,7 @@ Use this command when the current task needs parallel orchestration.
 
 What it should do:
 - call `conductor team ...` directly
+- pass the current task summary with `--prompt "..."` when available
 - not use model-native sub-agents or delegation
 - keep the current Codex session as the operator surface
 - ensure a `conductor` run exists for the current project
@@ -14,6 +15,7 @@ What it should do:
 
 Default shape:
 - `conductor team 4 explore build review verify`
+- `conductor team 4 explore build review verify --prompt "inspect the repository and find the likely bug surface"`
 
 Optional:
 - `conductor team <count> <profile> [profile...]`

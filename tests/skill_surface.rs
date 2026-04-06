@@ -31,6 +31,7 @@ fn team_and_ralph_skills_force_cli_routing() {
         .expect("failed to read ralph skill");
 
     assert!(team.contains("conductor team <count> <profile> [profile...]"));
+    assert!(team.contains("--prompt \"<current task>\""));
     assert!(team.contains("do not call built-in sub-agent or delegation tools"));
     assert!(ralph.contains("conductor ralph"));
     assert!(ralph.contains("do not call built-in sub-agent or delegation tools"));
