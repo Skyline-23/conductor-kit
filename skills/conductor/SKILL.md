@@ -47,6 +47,8 @@ Conductor is not for:
 
 ## Rules
 
+- when `$team` or `$ralph` is invoked, call the matching `conductor` CLI command instead of using model-native sub-agents
+- do not use built-in delegation as a substitute for conductor-managed workers
 - Use workers because they reduce ambiguity, not because a rule says so.
 - Prefer direct evidence from the repo over model speculation.
 - If a worker result conflicts with the code, trust the code.

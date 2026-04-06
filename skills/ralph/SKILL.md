@@ -13,6 +13,8 @@ Run:
 - `conductor ralph <run_id> <worker_count>`
 
 Rules:
+- do not call built-in sub-agent or delegation tools
+- do not spawn agents directly from the host model
 - initialize or resume the current conductor run first
 - expand to a wider team only when the task is not trivial
 - keep progress visible through tmux panes and the conductor HUD

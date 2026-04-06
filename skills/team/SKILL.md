@@ -11,6 +11,9 @@ Run:
 - `conductor team <count> <profile> [profile...]`
 
 Rules:
+- do not call built-in sub-agent or delegation tools
+- do not spawn agents directly from the host model
+- treat `$team` as a thin command shortcut, not an orchestration plan
 - keep the current surface session as the operator pane
 - require an explicit team width
 - require configured profile names from conductor settings
