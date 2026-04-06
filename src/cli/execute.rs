@@ -22,7 +22,7 @@ use chrono::Utc;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    Clear as TerminalClear, ClearType as TerminalClearType, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -175,7 +175,7 @@ fn run_settings() -> Result<(), String> {
         selected_field: 0,
         editing: false,
         input: String::new(),
-        status: "Arrows move, Enter edits, q quits.".to_string(),
+        status: "Arrows move. Space edits. Enter saves. Esc cancels. q quits.".to_string(),
         host_defaults: detect_host_model_defaults(),
     };
     app.entries = settings_entries(&app.cfg);
@@ -366,14 +366,18 @@ fn host_defaults_line(defaults: &Option<HostModelDefaults>) -> String {
 fn run_settings_tui(app: &mut SettingsApp) -> Result<(), String> {
     enable_raw_mode().map_err(|err| err.to_string())?;
     let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen).map_err(|err| err.to_string())?;
+    execute!(stdout, TerminalClear(TerminalClearType::All)).map_err(|err| err.to_string())?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|err| err.to_string())?;
 
     let result = settings_tui_loop(&mut terminal, app);
 
     disable_raw_mode().map_err(|err| err.to_string())?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).map_err(|err| err.to_string())?;
+    execute!(
+        terminal.backend_mut(),
+        TerminalClear(TerminalClearType::All)
+    )
+    .map_err(|err| err.to_string())?;
     terminal.show_cursor().map_err(|err| err.to_string())?;
     result
 }
@@ -446,7 +450,7 @@ fn settings_tui_loop(
                     app.selected_field += 1;
                 }
             }
-            KeyCode::Enter => begin_settings_edit(app),
+            KeyCode::Char(' ') => begin_settings_edit(app),
             _ => {}
         }
     }
@@ -518,7 +522,7 @@ fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
 
     let footer = Paragraph::new(vec![
         Line::from(app.status.clone()),
-        Line::from("Arrows move, Enter edits, Esc cancels, q quits."),
+        Line::from("Arrows move, Space edits, Enter saves, Esc cancels, q quits."),
     ])
     .block(Block::default().borders(Borders::ALL).title("Status"))
     .wrap(Wrap { trim: true });
