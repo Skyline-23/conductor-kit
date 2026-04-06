@@ -104,6 +104,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "dispatch-route" => run_dispatch_route(&args[1..]),
         "hud-view" => run_hud_view(&args[1..]),
         "hud-watch" => run_hud_watch(&args[1..]),
+        "hud-strip-watch" => run_hud_strip_watch(&args[1..]),
         "events-list" => run_events_list(&args[1..]),
         "hook-run" => run_hook_run(&args[1..]),
         "task-create" => run_task_create(&args[1..]),
@@ -2682,6 +2683,69 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_hud_strip_watch(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "hud-strip-watch requires <run_id> [interval_ms] [iterations]",
+    )?;
+    let interval_ms = args
+        .get(1)
+        .map(|value| value.parse::<u64>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(1000);
+    let iterations = args
+        .get(2)
+        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(0);
+    let store = StateStore::new(resolve_state_root()?);
+    let mut count = 0usize;
+    loop {
+        let snapshot = store.read_snapshot(run_id)?;
+        print!("\x1B[2J\x1B[H");
+        println!("{}", render_hud_strip(&snapshot));
+        count += 1;
+        if iterations > 0 && count >= iterations {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    Ok(())
+}
+
+fn render_hud_strip(snapshot: &crate::runtime::types::RuntimeSnapshot) -> String {
+    let authority = snapshot
+        .authority
+        .as_ref()
+        .map(|lease| lease.owner.as_str())
+        .unwrap_or("none");
+    let active_workers = snapshot
+        .workers
+        .iter()
+        .filter(|worker| {
+            matches!(
+                worker.state,
+                crate::runtime::types::WorkerState::Working | crate::runtime::types::WorkerState::Blocked
+            )
+        })
+        .count();
+    format!(
+        "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  mail:{}",
+        snapshot.run.run_id,
+        snapshot.run.phase,
+        authority,
+        snapshot.tasks.pending,
+        snapshot.tasks.in_progress,
+        snapshot.tasks.blocked,
+        snapshot.tasks.completed,
+        snapshot.tasks.failed,
+        active_workers,
+        snapshot.workers.len(),
+        snapshot.mailbox.unread,
+    )
+}
+
 fn run_events_list(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "events-list requires <run_id> [event_name]")?;
     let event_name = args.get(1).map(String::as_str);
@@ -3057,7 +3121,7 @@ fn build_hud_shell_command(
     let command_parts = [
         env_parts.join(" "),
         shell_quote(conductor_bin),
-        "hud-watch".to_string(),
+        "hud-strip-watch".to_string(),
         shell_quote_str(run_id),
         "1000".to_string(),
     ];
@@ -3093,6 +3157,8 @@ fn build_launch_shell_command(
 }
 
 fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
+    env_parts.push("CLICOLOR_FORCE=1".to_string());
+    env_parts.push("FORCE_COLOR=1".to_string());
     for key in [
         "COLORTERM",
         "TERM_PROGRAM",
@@ -3106,6 +3172,9 @@ fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
                 env_parts.push(format!("{key}={}", shell_quote_str(&value)));
             }
         }
+    }
+    if !env_parts.iter().any(|part| part.starts_with("COLORTERM=")) {
+        env_parts.push("COLORTERM=truecolor".to_string());
     }
     env_parts
 }
@@ -3163,7 +3232,7 @@ fn ensure_tmux_ops_session(
             "split-window",
             "-v",
             "-l",
-            "4",
+            "2",
             "-t",
             &format!("{session_name}:0"),
             hud_cmd,
@@ -3191,7 +3260,7 @@ fn ensure_tmux_ops_session(
             "-t",
             &format!("{session_name}:0.{}", pane_specs.len()),
             "-y",
-            "4",
+            "2",
         ])?;
     }
 
