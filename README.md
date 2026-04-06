@@ -78,7 +78,6 @@ Supported launch modes:
 - `argv_json`
 
 Supported delivery modes:
-- `oneshot`
 - `session`
 
 User overrides are expected at:
@@ -104,10 +103,10 @@ The default worker presets now include:
 - `verifier`
 - `claude_worker`
 
-The shipped presets are aimed at real local CLIs:
-- `orchestrator` and `verifier` use `codex exec`
-- `worker` uses `gemini -p`
-- `claude_worker` uses `claude -p`
+The shipped presets are aimed at real local interactive CLIs:
+- `orchestrator` and `verifier` use interactive `codex`
+- `worker` uses interactive `gemini`
+- `claude_worker` uses interactive `claude`
 
 If you want Claude to handle both worker and verifier paths, use:
 - `CONDUCTOR_CONFIG=config/conductor.claude.json`

@@ -92,7 +92,7 @@
           "description": { "type": "string" },
           "delivery_mode": {
             "type": "string",
-            "enum": ["oneshot", "session"]
+            "enum": ["session"]
           },
           "launch_mode": {
             "type": "string",

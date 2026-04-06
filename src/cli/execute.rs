@@ -1,28 +1,39 @@
 use crate::cli::args::{
-    command_available, load_resolved_config, required_arg, resolve_config_path,
-    resolve_state_root, parse_dispatch_status, parse_run_phase, parse_worker_state, Config,
-    StatusPayload,
+    Config, StatusPayload, command_available, load_resolved_config, parse_dispatch_status,
+    parse_run_phase, parse_worker_state, required_arg, resolve_config_path, resolve_state_root,
 };
 use crate::cli::logging::{print_help, print_json};
-use crate::runtime::adapters::{resolve_worker_adapter, WorkerAdapterConfig};
+use crate::runtime::adapters::{WorkerAdapterConfig, resolve_worker_adapter};
 use crate::runtime::authority::renew_authority;
 use crate::runtime::claims::{acquire_claim, release_claim};
 use crate::runtime::hooks::{event_name_of, filter_events, watch_and_run_hooks};
 use crate::runtime::phases::transition_phase;
-use crate::runtime::sessions::{run_worker_host, send_session_command, spawn_session, SessionCommand};
+use crate::runtime::sessions::{
+    SessionCommand, run_worker_host, send_session_command, spawn_session,
+};
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
-    DispatchStatus, EventEnvelope, EventKind, RunPhase, SessionStatus, WorkerKind, WorkerRecord,
-    WorkerState, SCHEMA_VERSION,
+    DispatchStatus, EventEnvelope, EventKind, RunPhase, SCHEMA_VERSION, SessionStatus, WorkerKind,
+    WorkerRecord, WorkerState,
 };
-use crate::runtime::workers::{execute_worker, WorkerLaunchSpec};
+use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
+use std::time::Duration;
 
 pub fn execute_command(args: &[String]) -> Result<(), String> {
     let cmd = args.get(0).map(String::as_str).unwrap_or("help");
@@ -54,6 +65,9 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "worker-adapter-exec" => run_worker_adapter_exec(&args[1..]),
         "worker-adapter-spawn-session" => run_worker_adapter_spawn_session(&args[1..]),
         "worker-send" => run_worker_send(&args[1..]),
+        "worker-send-raw" => run_worker_send_raw(&args[1..]),
+        "worker-attach" => run_worker_attach(&args[1..]),
+        "worker-open-terminal" => run_worker_open_terminal(&args[1..]),
         "worker-log" => run_worker_log(&args[1..]),
         "worker-session-status" => run_worker_session_status(&args[1..]),
         "worker-stop-session" => run_worker_stop_session(&args[1..]),
@@ -326,14 +340,7 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
     )?;
     for (worker_id, task_id) in &task_specs {
         if adapter.delivery_mode == "session" {
-            ensure_adapter_session(
-                &store,
-                &adapter,
-                run_id,
-                worker_id,
-                Some(task_id),
-                Some(prompt),
-            )?;
+            ensure_adapter_session(&store, &adapter, run_id, worker_id, Some(task_id))?;
         }
     }
 
@@ -438,7 +445,6 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
                 run_id,
                 &verifier_worker_id,
                 Some(&task.task_id),
-                Some(&verifier_prompt),
             )?;
         }
         let verifier_dispatch_id = format!("dispatch-{verifier_worker_id}-{invocation_id}");
@@ -752,6 +758,7 @@ fn run_worker_spawn_session(args: &[String]) -> Result<(), String> {
     let program = &args[2];
     let program_args = args[3..].to_vec();
     let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let result = spawn_session(
         &store,
@@ -816,7 +823,7 @@ fn run_worker_adapter_spawn_session(args: &[String]) -> Result<(), String> {
     let prompt = args.get(3).map(String::as_str);
     let (_, cfg) = load_resolved_config()?;
     let adapter = worker_adapter_config(&cfg, worker_type)?;
-    let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, prompt)?;
+    let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, None)?;
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, run_id)?;
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
@@ -829,10 +836,12 @@ fn run_worker_adapter_spawn_session(args: &[String]) -> Result<(), String> {
         &launch.env,
         &conductor_bin,
     )?;
-    if let Some(payload) = launch.stdin_payload {
+    if let Some(body) = prompt {
         let _ = send_session_command(
             Path::new(&result.session.socket_path),
-            &SessionCommand::SendStdin { data: payload },
+            &SessionCommand::SendStdin {
+                data: format!("{body}\n"),
+            },
         )?;
     }
     print_json(&result.session)
@@ -847,11 +856,140 @@ fn run_worker_send(args: &[String]) -> Result<(), String> {
     let response = send_session_command(
         Path::new(&session.socket_path),
         &SessionCommand::SendStdin {
-            data: format!("{data}
-"),
+            data: format!(
+                "{data}
+"
+            ),
         },
     )?;
     print_json(&response)
+}
+
+fn run_worker_send_raw(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "worker-send-raw requires <run_id> <session_id> <data>",
+    )?;
+    let session_id = required_arg(
+        args,
+        1,
+        "worker-send-raw requires <run_id> <session_id> <data>",
+    )?;
+    let data = required_arg(
+        args,
+        2,
+        "worker-send-raw requires <run_id> <session_id> <data>",
+    )?;
+    let store = StateStore::new(resolve_state_root()?);
+    let session = store.read_session(run_id, session_id)?;
+    let response = send_session_command(
+        Path::new(&session.socket_path),
+        &SessionCommand::SendRaw {
+            data: data.to_string(),
+        },
+    )?;
+    print_json(&response)
+}
+
+fn run_worker_attach(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "worker-attach requires <run_id> <session_id>")?;
+    let session_id = required_arg(args, 1, "worker-attach requires <run_id> <session_id>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let session = store.read_session(run_id, session_id)?;
+    let socket_path = PathBuf::from(&session.socket_path);
+    let stdout_path = PathBuf::from(&session.stdout_path);
+
+    let running = Arc::new(AtomicBool::new(true));
+    let follow_running = running.clone();
+    let follow_path = stdout_path.clone();
+    let follow_handle = thread::spawn(move || follow_log_file(&follow_path, follow_running));
+
+    let raw_mode = TerminalRawMode::enable()?;
+    let _ = std::io::stdout().write_all(
+        b"\r\n[attached] press Ctrl-] to detach. input is forwarded to the worker PTY.\r\n",
+    );
+    let _ = std::io::stdout().flush();
+
+    let mut stdin = std::io::stdin();
+    let mut buf = [0_u8; 1];
+    while running.load(Ordering::SeqCst) {
+        match stdin.read(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                if buf[0] == 0x1d {
+                    break;
+                }
+                let data = String::from_utf8_lossy(&buf[..1]).to_string();
+                let response =
+                    send_session_command(&socket_path, &SessionCommand::SendRaw { data })?;
+                if response.status == "exited" || response.status == "stopped" {
+                    break;
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+
+    running.store(false, Ordering::SeqCst);
+    let _ = follow_handle.join();
+    drop(raw_mode);
+    let _ = std::io::stdout().write_all(b"\r\n[detached]\r\n");
+    let _ = std::io::stdout().flush();
+    Ok(())
+}
+
+fn run_worker_open_terminal(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "worker-open-terminal requires <run_id> <session_id> [terminal_app]",
+    )?;
+    let session_id = required_arg(
+        args,
+        1,
+        "worker-open-terminal requires <run_id> <session_id> [terminal_app]",
+    )?;
+    let terminal_app = args
+        .get(2)
+        .cloned()
+        .or_else(|| env::var("CONDUCTOR_TERMINAL_APP").ok())
+        .unwrap_or_else(|| "Terminal".to_string());
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let attach_cmd = build_attach_shell_command(
+        &cwd,
+        &conductor_bin,
+        &state_root,
+        config_path.as_deref(),
+        run_id,
+        session_id,
+    );
+
+    let script = format!(
+        "tell application {} to activate\n\
+         tell application {} to do script {}",
+        apple_script_string(&terminal_app),
+        apple_script_string(&terminal_app),
+        apple_script_string(&attach_cmd)
+    );
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    print_json(&json!({
+        "ok": true,
+        "terminal_app": terminal_app,
+        "run_id": run_id,
+        "session_id": session_id
+    }))
 }
 
 fn run_worker_log(args: &[String]) -> Result<(), String> {
@@ -891,8 +1029,13 @@ fn run_worker_log(args: &[String]) -> Result<(), String> {
     let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
     let collected = raw.lines().collect::<Vec<_>>();
     let start = collected.len().saturating_sub(lines);
-    println!("{}", collected[start..].join("
-"));
+    println!(
+        "{}",
+        collected[start..].join(
+            "
+"
+        )
+    );
     Ok(())
 }
 
@@ -1016,8 +1159,10 @@ fn run_dispatch_route(args: &[String]) -> Result<(), String> {
     let response = send_session_command(
         Path::new(&session.socket_path),
         &SessionCommand::SendStdin {
-            data: format!("{body}
-"),
+            data: format!(
+                "{body}
+"
+            ),
         },
     )?;
     if response.ok {
@@ -1345,7 +1490,6 @@ fn ensure_adapter_session(
     run_id: &str,
     worker_id: &str,
     task_id: Option<&str>,
-    prompt: Option<&str>,
 ) -> Result<String, String> {
     let session_id = format!("session-{worker_id}");
     let desired_kind = worker_kind_for_type(adapter.worker_type.as_str(), worker_id);
@@ -1357,8 +1501,8 @@ fn ensure_adapter_session(
         }
         return Ok(session_id);
     }
-    let launch = resolve_worker_adapter(adapter, run_id, worker_id, task_id, prompt)?;
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let launch = resolve_worker_adapter(adapter, run_id, worker_id, task_id, None)?;
     let result = spawn_session(
         store,
         run_id,
@@ -1368,12 +1512,6 @@ fn ensure_adapter_session(
         &launch.env,
         &conductor_bin,
     )?;
-    if let Some(payload) = launch.stdin_payload {
-        let _ = send_session_command(
-            Path::new(&result.session.socket_path),
-            &SessionCommand::SendStdin { data: payload },
-        )?;
-    }
     let mut worker = store.read_worker(run_id, worker_id)?;
     if worker.worker_kind != desired_kind {
         worker.worker_kind = desired_kind;
@@ -1403,111 +1541,129 @@ fn dispatch_prompt_to_adapter(
     message_id: &str,
     body: &str,
 ) -> Result<RoutedDispatch, String> {
-    let launch = resolve_worker_adapter(adapter, run_id, worker_id, Some(task_id), Some(body))?;
-    let worker_kind = worker_kind_for_type(adapter.worker_type.as_str(), worker_id);
+    if adapter.delivery_mode != "session" {
+        return Err(format!(
+            "worker type {} is not allowed to use non-session delivery",
+            adapter.worker_type
+        ));
+    }
     let _ = store.queue_dispatch(run_id, dispatch_id, worker_id, serde_json::Map::new())?;
     let dispatch = store.read_dispatch(run_id, dispatch_id)?;
     let _ =
         store.create_mailbox_message(run_id, message_id, source_worker, &dispatch.target, body)?;
     let _ = store.update_dispatch_status(run_id, dispatch_id, DispatchStatus::Notified, None)?;
     let _ = store.update_mailbox_status(run_id, &dispatch.target, message_id, false)?;
-    match launch.delivery_mode.as_str() {
-        "session" => {
-            let session_id = ensure_adapter_session(
-                store,
-                adapter,
-                run_id,
-                worker_id,
-                Some(task_id),
-                Some(body),
-            )?;
-            let session = store.read_session(run_id, &session_id)?;
-            let response = send_session_command(
-                Path::new(&session.socket_path),
-                &SessionCommand::SendStdin {
-                    data: format!("{body}
-"),
-                },
-            )?;
-            if response.ok {
-                let _ = store.update_mailbox_status(run_id, &dispatch.target, message_id, true)?;
-                let _ = store.update_dispatch_status(
-                    run_id,
-                    dispatch_id,
-                    DispatchStatus::Delivered,
-                    None,
-                )?;
-            } else {
-                let _ = store.update_dispatch_status(
-                    run_id,
-                    dispatch_id,
-                    DispatchStatus::Failed,
-                    response.message.clone(),
-                )?;
-            }
-            Ok(RoutedDispatch {
-                session_id: Some(session_id),
-                ok: response.ok,
-                response: serde_json::to_value(response).map_err(|err| err.to_string())?,
-            })
-        }
-        "oneshot" => {
-            let execution = execute_worker(
-                WorkerLaunchSpec {
-                    run_id: run_id.to_string(),
-                    worker_id: worker_id.to_string(),
-                    task_id: Some(task_id.to_string()),
-                    worker_kind,
-                    program: launch.program,
-                    args: launch.args,
-                    cwd: launch.cwd,
-                    stdin_payload: launch.stdin_payload,
-                    env: launch.env,
-                },
-                store,
-            );
-            match execution {
-                Ok(result) => {
-                    let _ =
-                        store.update_mailbox_status(run_id, &dispatch.target, message_id, true)?;
-                    let _ = store.update_dispatch_status(
-                        run_id,
-                        dispatch_id,
-                        if result.success {
-                            DispatchStatus::Delivered
-                        } else {
-                            DispatchStatus::Failed
-                        },
-                        if result.success {
-                            None
-                        } else {
-                            Some(result.stderr.clone())
-                        },
-                    )?;
-                    Ok(RoutedDispatch {
-                        session_id: None,
-                        ok: result.success,
-                        response: serde_json::to_value(result).map_err(|err| err.to_string())?,
-                    })
+    let session_id = ensure_adapter_session(store, adapter, run_id, worker_id, Some(task_id))?;
+    let session = store.read_session(run_id, &session_id)?;
+    let response = send_session_command(
+        Path::new(&session.socket_path),
+        &SessionCommand::SendStdin {
+            data: format!("{body}\n"),
+        },
+    )?;
+    if response.ok {
+        let _ = store.update_mailbox_status(run_id, &dispatch.target, message_id, true)?;
+        let _ =
+            store.update_dispatch_status(run_id, dispatch_id, DispatchStatus::Delivered, None)?;
+    } else {
+        let _ = store.update_dispatch_status(
+            run_id,
+            dispatch_id,
+            DispatchStatus::Failed,
+            response.message.clone(),
+        )?;
+    }
+    Ok(RoutedDispatch {
+        session_id: Some(session_id),
+        ok: response.ok,
+        response: serde_json::to_value(response).map_err(|err| err.to_string())?,
+    })
+}
+
+fn follow_log_file(path: &Path, running: Arc<AtomicBool>) {
+    let mut offset = 0_u64;
+    while running.load(Ordering::SeqCst) {
+        if let Ok(mut file) = File::open(path) {
+            if let Ok(metadata) = file.metadata() {
+                let len = metadata.len();
+                if len < offset {
+                    offset = 0;
                 }
-                Err(err) => {
-                    let _ = store.update_dispatch_status(
-                        run_id,
-                        dispatch_id,
-                        DispatchStatus::Failed,
-                        Some(err.clone()),
-                    )?;
-                    Ok(RoutedDispatch {
-                        session_id: None,
-                        ok: false,
-                        response: serde_json::json!({
-                            "error": err
-                        }),
-                    })
+                if len > offset && file.seek(SeekFrom::Start(offset)).is_ok() {
+                    let mut buffer = Vec::new();
+                    if file.read_to_end(&mut buffer).is_ok() && !buffer.is_empty() {
+                        let _ = std::io::stdout().write_all(&buffer);
+                        let _ = std::io::stdout().flush();
+                        offset = len;
+                    }
                 }
             }
         }
-        other => Err(format!("unsupported delivery mode: {other}")),
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn build_attach_shell_command(
+    cwd: &Path,
+    conductor_bin: &Path,
+    state_root: &Path,
+    config_path: Option<&Path>,
+    run_id: &str,
+    session_id: &str,
+) -> String {
+    let mut parts = vec![format!("cd {}", shell_quote(cwd))];
+    parts.push(format!("CONDUCTOR_STATE_DIR={}", shell_quote(state_root)));
+    if let Some(path) = config_path {
+        parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
+    }
+    parts.push(shell_quote(conductor_bin));
+    parts.push("worker-attach".to_string());
+    parts.push(shell_quote_str(run_id));
+    parts.push(shell_quote_str(session_id));
+    parts.join(" ")
+}
+
+fn shell_quote(value: &Path) -> String {
+    shell_quote_str(&value.display().to_string())
+}
+
+fn shell_quote_str(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn apple_script_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+struct TerminalRawMode {
+    fd: i32,
+    original: libc::termios,
+}
+
+impl TerminalRawMode {
+    fn enable() -> Result<Self, String> {
+        let fd = std::io::stdin().as_raw_fd();
+        let mut termios = std::mem::MaybeUninit::<libc::termios>::uninit();
+        let rc = unsafe { libc::tcgetattr(fd, termios.as_mut_ptr()) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let original = unsafe { termios.assume_init() };
+        let mut raw = original;
+        unsafe {
+            libc::cfmakeraw(&mut raw);
+        }
+        let rc = unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        Ok(Self { fd, original })
+    }
+}
+
+impl Drop for TerminalRawMode {
+    fn drop(&mut self) {
+        let _ = unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.original) };
     }
 }
 
@@ -1586,9 +1742,9 @@ fn validate_config(cfg: &Config) -> Vec<String> {
             ));
         }
         if let Some(delivery_mode) = &worker.delivery_mode {
-            if !matches!(delivery_mode.as_str(), "oneshot" | "session") {
+            if delivery_mode != "session" {
                 issues.push(format!(
-                    "workers.{name}.delivery_mode must be oneshot or session"
+                    "workers.{name}.delivery_mode must remain session in the PTY baseline"
                 ));
             }
         }

@@ -21,11 +21,12 @@ Commands:
   task-claim          Acquire a task claim
   task-release        Release a task claim
   worker-upsert       Upsert worker state for a run
-  worker-exec         Execute a worker command over stdio
   worker-spawn-session Start a long-lived worker session host
-  worker-adapter-exec Execute a configured worker adapter once
   worker-adapter-spawn-session Start a configured worker adapter session
   worker-send         Send stdin to a worker session
+  worker-send-raw     Send raw bytes to a worker session
+  worker-attach       Attach the current terminal to a worker session
+  worker-open-terminal Open a worker session in a new terminal window
   worker-log          Print recent session log output
   worker-session-status Query a worker session
   worker-stop-session Stop a worker session

@@ -21,7 +21,7 @@
     },
     "workers": {
       "max_workers": 4,
-      "spawn_policy": "ephemeral",
+      "spawn_policy": "persistent",
       "continue_policy": "resume_when_possible"
     }
   },
@@ -31,15 +31,11 @@
       "model": "gpt-5.4",
       "reasoning": "medium",
       "description": "Top-level coordinator for orchestration loops",
-      "delivery_mode": "oneshot",
-      "launch_mode": "argv_prompt",
+      "delivery_mode": "session",
+      "launch_mode": "stdin_text",
       "base_args": [
-        "exec",
-        "--skip-git-repo-check",
-        "--json",
-        "--color",
-        "never",
         "--dangerously-bypass-approvals-and-sandbox",
+        "--no-alt-screen",
         "-m",
         "{model}"
       ]
@@ -48,29 +44,25 @@
       "cli": "gemini",
       "model": "gemini-2.5-flash",
       "description": "General worker process for fan-out tasks",
-      "delivery_mode": "oneshot",
-      "launch_mode": "argv_prompt",
+      "delivery_mode": "session",
+      "launch_mode": "stdin_text",
       "base_args": [
         "-m",
         "{model}",
-        "--yolo",
-        "--output-format",
-        "json",
-        "-p"
+        "--yolo"
       ]
     },
     "claude_worker": {
       "cli": "claude",
       "model": "claude-sonnet-4-6",
       "description": "General worker process for fan-out tasks using Claude Code",
-      "delivery_mode": "oneshot",
-      "launch_mode": "argv_prompt",
+      "delivery_mode": "session",
+      "launch_mode": "stdin_text",
       "base_args": [
-        "--output-format",
-        "json",
         "--permission-mode",
         "acceptEdits",
-        "-p"
+        "--model",
+        "{model}"
       ]
     },
     "verifier": {
@@ -78,15 +70,11 @@
       "model": "gpt-5.4",
       "reasoning": "medium",
       "description": "Verification worker for fan-out result review",
-      "delivery_mode": "oneshot",
-      "launch_mode": "argv_prompt",
+      "delivery_mode": "session",
+      "launch_mode": "stdin_text",
       "base_args": [
-        "exec",
-        "--skip-git-repo-check",
-        "--json",
-        "--color",
-        "never",
         "--dangerously-bypass-approvals-and-sandbox",
+        "--no-alt-screen",
         "-m",
         "{model}"
       ]

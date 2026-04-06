@@ -4,6 +4,7 @@ use crate::runtime::types::{
     WorkerRecord, WorkerState,
 };
 use chrono::Utc;
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use std::collections::BTreeMap;
@@ -11,8 +12,10 @@ use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -20,6 +23,7 @@ use std::time::Duration;
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum SessionCommand {
     SendStdin { data: String },
+    SendRaw { data: String },
     Status,
     Stop,
 }
@@ -68,6 +72,12 @@ pub fn spawn_session(
     command.args(args);
     for (key, value) in child_env {
         command.env(format!("CONDUCTOR_CHILD_{key}"), value);
+    }
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
     }
     command.stdin(Stdio::null());
     command.stdout(File::create(&host_stdout_path).map_err(|err| err.to_string())?);
@@ -148,9 +158,9 @@ pub fn send_session_command(
 }
 
 pub fn run_worker_host(
-    run_id: &str,
-    worker_id: &str,
-    session_id: &str,
+    _run_id: &str,
+    _worker_id: &str,
+    _session_id: &str,
     socket_path: &Path,
     stdout_path: &Path,
     stderr_path: &Path,
@@ -165,46 +175,40 @@ pub fn run_worker_host(
     }
 
     let stdout_file = File::create(stdout_path).map_err(|err| err.to_string())?;
-    let stderr_file = File::create(stderr_path).map_err(|err| err.to_string())?;
+    let _stderr_file = File::create(stderr_path).map_err(|err| err.to_string())?;
 
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .envs(read_child_env())
-        .spawn()
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|err| err.to_string())?;
-
-    let mut child_stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "failed to capture child stdin".to_string())?;
-    let child_stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "failed to capture child stdout".to_string())?;
-    let child_stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture child stderr".to_string())?;
-
-    pipe_stream_to_file(child_stdout, stdout_file);
-    pipe_stream_to_file(child_stderr, stderr_file);
+    let mut builder = CommandBuilder::new(program);
+    builder.args(args);
+    for (key, value) in read_child_env() {
+        builder.env(key, value);
+    }
+    let mut child = pair
+        .slave
+        .spawn_command(builder)
+        .map_err(|err| err.to_string())?;
+    let writer = pair.master.take_writer().map_err(|err| err.to_string())?;
+    let writer = Arc::new(Mutex::new(writer));
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|err| err.to_string())?;
+    pipe_stream_to_file(reader, stdout_file);
 
     let listener = UnixListener::bind(socket_path).map_err(|err| err.to_string())?;
     listener
         .set_nonblocking(true)
         .map_err(|err| err.to_string())?;
 
-    let mut child_exit_code: Option<i32> = None;
     loop {
-        if child_exit_code.is_none() {
-            if let Some(status) = try_wait(&mut child)? {
-                child_exit_code = status.code();
-            }
-        }
-
         match listener.accept() {
             Ok((mut stream, _)) => {
                 let mut raw = String::new();
@@ -214,34 +218,44 @@ pub fn run_worker_host(
                 let command: SessionCommand =
                     serde_json::from_str(raw.trim()).map_err(|err| err.to_string())?;
                 let response = match command {
-                    SessionCommand::SendStdin { data } => {
-                        child_stdin
-                            .write_all(data.as_bytes())
-                            .and_then(|_| child_stdin.flush())
-                            .map_err(|err| err.to_string())?;
-                        SessionResponse {
-                            ok: true,
-                            status: if child_exit_code.is_some() {
-                                "exited".to_string()
-                            } else {
-                                "running".to_string()
-                            },
-                            message: None,
+                    SessionCommand::SendStdin { data } | SessionCommand::SendRaw { data } => {
+                        let child_exit_code = try_wait(&mut child)?;
+                        if let Some(code) = child_exit_code {
+                            SessionResponse {
+                                ok: false,
+                                status: "exited".to_string(),
+                                message: Some(format!("exit_code={code}")),
+                            }
+                        } else {
+                            let mut guard = writer
+                                .lock()
+                                .map_err(|_| "pty writer poisoned".to_string())?;
+                            guard
+                                .write_all(data.as_bytes())
+                                .and_then(|_| guard.flush())
+                                .map_err(|err| err.to_string())?;
+                            SessionResponse {
+                                ok: true,
+                                status: "running".to_string(),
+                                message: None,
+                            }
                         }
                     }
-                    SessionCommand::Status => SessionResponse {
-                        ok: true,
-                        status: if child_exit_code.is_some() {
-                            "exited".to_string()
-                        } else {
-                            "running".to_string()
+                    SessionCommand::Status => match try_wait(&mut child)? {
+                        Some(code) => SessionResponse {
+                            ok: true,
+                            status: "exited".to_string(),
+                            message: Some(format!("exit_code={code}")),
                         },
-                        message: child_exit_code.map(|code| format!("exit_code={code}")),
+                        None => SessionResponse {
+                            ok: true,
+                            status: "running".to_string(),
+                            message: None,
+                        },
                     },
                     SessionCommand::Stop => {
                         let _ = child.kill();
                         let _ = child.wait();
-                        child_exit_code = Some(-1);
                         SessionResponse {
                             ok: true,
                             status: "stopped".to_string(),
@@ -253,18 +267,11 @@ pub fn run_worker_host(
                 stream.write_all(&encoded).map_err(|err| err.to_string())?;
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                if child_exit_code.is_some() {
-                    break;
-                }
                 thread::sleep(Duration::from_millis(50));
             }
             Err(err) => return Err(err.to_string()),
         }
     }
-
-    let _ = fs::remove_file(socket_path);
-    let _ = (run_id, worker_id, session_id);
-    Ok(())
 }
 
 fn pipe_stream_to_file<R: Read + Send + 'static>(reader: R, mut file: File) {
@@ -298,8 +305,11 @@ fn wait_for_socket(socket_path: &Path) -> Result<(), String> {
     ))
 }
 
-fn try_wait(child: &mut Child) -> Result<Option<std::process::ExitStatus>, String> {
-    child.try_wait().map_err(|err| err.to_string())
+fn try_wait(child: &mut Box<dyn portable_pty::Child + Send + Sync>) -> Result<Option<i32>, String> {
+    child
+        .try_wait()
+        .map(|status| status.map(|value| value.exit_code() as i32))
+        .map_err(|err| err.to_string())
 }
 
 fn read_child_env() -> BTreeMap<String, String> {

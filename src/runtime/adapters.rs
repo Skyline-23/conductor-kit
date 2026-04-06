@@ -18,7 +18,6 @@ pub struct WorkerAdapterConfig {
 
 #[derive(Debug, Clone)]
 pub struct WorkerAdapterLaunch {
-    pub delivery_mode: String,
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -124,7 +123,6 @@ pub fn resolve_worker_adapter(
         launch_env.insert("CONDUCTOR_TASK_ID".to_string(), task_id.to_string());
     }
     Ok(WorkerAdapterLaunch {
-        delivery_mode: config.delivery_mode.clone(),
         program,
         args,
         cwd,
