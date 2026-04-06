@@ -25,6 +25,7 @@ use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
+use crossterm::cursor::MoveTo;
 use crossterm::terminal::{
     Clear as TerminalClear, ClearType as TerminalClearType, disable_raw_mode, enable_raw_mode,
 };
@@ -631,7 +632,8 @@ fn run_settings_tui(app: &mut SettingsApp) -> Result<(), String> {
     disable_raw_mode().map_err(|err| err.to_string())?;
     execute!(
         terminal.backend_mut(),
-        TerminalClear(TerminalClearType::UntilNewLine)
+        TerminalClear(TerminalClearType::All),
+        MoveTo(0, 0)
     )
     .map_err(|err| err.to_string())?;
     terminal.show_cursor().map_err(|err| err.to_string())?;
