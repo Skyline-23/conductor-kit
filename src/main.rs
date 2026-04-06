@@ -1,7 +1,10 @@
 mod runtime;
 
+use crate::runtime::authority::renew_authority;
+use crate::runtime::claims::{acquire_claim, release_claim};
+use crate::runtime::phases::transition_phase;
 use crate::runtime::state_store::StateStore;
-use crate::runtime::types::{DispatchStatus, WorkerKind, WorkerRecord, WorkerState};
+use crate::runtime::types::{DispatchStatus, RunPhase, WorkerKind, WorkerRecord, WorkerState};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -98,6 +101,10 @@ fn main() {
         "runtime-init" => run_runtime_init(&args[2..]),
         "runtime-snapshot" => run_runtime_snapshot(&args[2..]),
         "runtime-refresh" => run_runtime_refresh(&args[2..]),
+        "authority-renew" => run_authority_renew(&args[2..]),
+        "phase-set" => run_phase_set(&args[2..]),
+        "task-claim" => run_task_claim(&args[2..]),
+        "task-release" => run_task_release(&args[2..]),
         "worker-upsert" => run_worker_upsert(&args[2..]),
         "task-create" => run_task_create(&args[2..]),
         "dispatch-queue" => run_dispatch_queue(&args[2..]),
@@ -209,6 +216,75 @@ fn run_runtime_refresh(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let snapshot = store.refresh_snapshot(run_id)?;
     print_json(&snapshot)
+}
+
+fn run_authority_renew(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "authority-renew requires <run_id> <owner> [lease_minutes]",
+    )?;
+    let owner = required_arg(
+        args,
+        1,
+        "authority-renew requires <run_id> <owner> [lease_minutes]",
+    )?;
+    let lease_minutes = args
+        .get(2)
+        .map(|value| value.parse::<i64>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(5);
+    let store = StateStore::new(resolve_state_root()?);
+    let run = renew_authority(&store, run_id, owner, lease_minutes)?;
+    print_json(&run)
+}
+
+fn run_phase_set(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "phase-set requires <run_id> <phase> [reason]")?;
+    let phase = parse_run_phase(required_arg(
+        args,
+        1,
+        "phase-set requires <run_id> <phase> [reason]",
+    )?)?;
+    let reason = args.get(2).cloned();
+    let store = StateStore::new(resolve_state_root()?);
+    let run = transition_phase(&store, run_id, phase, reason)?;
+    print_json(&run)
+}
+
+fn run_task_claim(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "task-claim requires <run_id> <task_id> <owner> [lease_minutes]",
+    )?;
+    let task_id = required_arg(
+        args,
+        1,
+        "task-claim requires <run_id> <task_id> <owner> [lease_minutes]",
+    )?;
+    let owner = required_arg(
+        args,
+        2,
+        "task-claim requires <run_id> <task_id> <owner> [lease_minutes]",
+    )?;
+    let lease_minutes = args
+        .get(3)
+        .map(|value| value.parse::<i64>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(5);
+    let store = StateStore::new(resolve_state_root()?);
+    let task = acquire_claim(&store, run_id, task_id, owner, lease_minutes)?;
+    print_json(&task)
+}
+
+fn run_task_release(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "task-release requires <run_id> <task_id> <owner>")?;
+    let task_id = required_arg(args, 1, "task-release requires <run_id> <task_id> <owner>")?;
+    let owner = required_arg(args, 2, "task-release requires <run_id> <task_id> <owner>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let task = release_claim(&store, run_id, task_id, owner)?;
+    print_json(&task)
 }
 
 fn run_worker_upsert(args: &[String]) -> Result<(), String> {
@@ -525,6 +601,21 @@ fn parse_dispatch_status(value: &str) -> Result<DispatchStatus, String> {
     }
 }
 
+fn parse_run_phase(value: &str) -> Result<RunPhase, String> {
+    match value {
+        "starting" => Ok(RunPhase::Starting),
+        "discovering" => Ok(RunPhase::Discovering),
+        "spawning" => Ok(RunPhase::Spawning),
+        "executing" => Ok(RunPhase::Executing),
+        "verifying" => Ok(RunPhase::Verifying),
+        "fixing" => Ok(RunPhase::Fixing),
+        "complete" => Ok(RunPhase::Complete),
+        "failed" => Ok(RunPhase::Failed),
+        "cancelled" => Ok(RunPhase::Cancelled),
+        _ => Err("phase must be starting, discovering, spawning, executing, verifying, fixing, complete, failed, or cancelled".to_string()),
+    }
+}
+
 fn print_help() {
     println!(
         "\
@@ -539,6 +630,10 @@ Commands:
   runtime-init        Initialize runtime state for a run
   runtime-snapshot    Print runtime snapshot for a run
   runtime-refresh     Rebuild and persist snapshot for a run
+  authority-renew     Renew authority lease for a run
+  phase-set           Transition run phase
+  task-claim          Acquire a task claim
+  task-release        Release a task claim
   worker-upsert       Upsert worker state for a run
   task-create         Create a task record
   dispatch-queue      Create a dispatch record

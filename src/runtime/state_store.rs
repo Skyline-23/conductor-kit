@@ -89,6 +89,26 @@ impl StateStore {
         self.read_json(&self.snapshot_file(run_id))
     }
 
+    pub fn read_run(&self, run_id: &str) -> Result<RunRecord, String> {
+        self.read_json(&self.run_file(run_id))
+    }
+
+    pub fn write_run(&self, run: &RunRecord) -> Result<(), String> {
+        self.write_json(&self.run_file(&run.run_id), run)
+    }
+
+    pub fn read_task(&self, run_id: &str, task_id: &str) -> Result<TaskRecord, String> {
+        self.read_json(&self.task_file(run_id, task_id))
+    }
+
+    pub fn write_task(&self, task: &TaskRecord) -> Result<(), String> {
+        self.write_json(&self.task_file(&task.run_id, &task.task_id), task)
+    }
+
+    pub fn append_runtime_event(&self, run_id: &str, event: EventEnvelope) -> Result<(), String> {
+        self.append_event(run_id, event)
+    }
+
     pub fn refresh_snapshot(&self, run_id: &str) -> Result<RuntimeSnapshot, String> {
         let snapshot = self.capture_snapshot(run_id)?;
         self.write_json(&self.snapshot_file(run_id), &snapshot)?;
