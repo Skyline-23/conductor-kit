@@ -94,6 +94,12 @@ The primary surface is:
 - `conductor ralph`
 - `conductor attach`
 
+`conductor` and `conductor init` bring up the lead Codex session by default.
+`conductor team` requires an explicit team size and agent profile list from
+`config/conductor.json`, for example `conductor team 4 worker verifier`, and
+expands to the OMX-style split view with the lead pane on the left and the HUD
+plus sub-workers stacked on the right.
+
 Operator commands:
 - `conductor help`
 - `conductor status`

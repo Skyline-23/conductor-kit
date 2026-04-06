@@ -7,13 +7,13 @@ conductor <command>
 
 Commands:
   conductor           Open the current run, or initialize it if missing
-  start               Start a default Codex team and open the ops view
+  start               Start the lead Codex session and open the ops view
   init                Alias for start
   open                Open the ops view for the current or named run
   resume              Alias for open
   attach              Attach to a named worker in the current or named run
-  team                Start a larger Codex team layout
-  ralph               Start the ralph-style orchestration layout
+  team                Start a configured team: team <count> <profile> [profile...]
+  ralph               Start the wider ralph-style orchestration layout
   help                Show this help
   version             Print version
   worker-log          Print recent session log output

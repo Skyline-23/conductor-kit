@@ -99,6 +99,12 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TeamMode {
+    Default,
+    Ralph,
+}
+
 fn run_default() -> Result<(), String> {
     let run_id = default_run_id();
     let store = StateStore::new(resolve_state_root()?);
@@ -122,26 +128,11 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
-    let worker_count = args
+    let requested_width = args
         .get(1)
         .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
-        .transpose()?
-        .unwrap_or(2);
-    let worker_count = worker_count.max(1);
-
-    let (_, cfg) = load_resolved_config()?;
-    let store = StateStore::new(resolve_state_root()?);
-    ensure_run_exists(&store, &run_id)?;
-
-    let orchestrator = worker_adapter_config(&cfg, "orchestrator")?;
-    ensure_adapter_session(&store, &orchestrator, &run_id, "codex-lead", None)?;
-
-    for index in 1..=worker_count {
-        let worker_id = format!("codex-{index}");
-        let worker = worker_adapter_config(&cfg, "worker")?;
-        ensure_adapter_session(&store, &worker, &run_id, &worker_id, None)?;
-    }
-
+        .transpose()?;
+    ensure_team_sessions(&run_id, TeamMode::Default, requested_width)?;
     run_ops_open(std::slice::from_ref(&run_id))
 }
 
@@ -187,18 +178,41 @@ fn run_attach_alias(args: &[String]) -> Result<(), String> {
 }
 
 fn run_team(args: &[String]) -> Result<(), String> {
-    let run_id = args
-        .first()
-        .map(String::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(default_run_id);
-    let worker_count = args
-        .get(1)
-        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
-        .transpose()?
-        .unwrap_or(3);
-    run_start(&[run_id, worker_count.to_string()])
+    let (run_id, count_index) = match args.first().map(String::as_str) {
+        Some(first) if first.parse::<usize>().is_ok() => (default_run_id(), 0),
+        Some(first) if !first.trim().is_empty() => (first.to_string(), 1),
+        _ => {
+            return Err(
+                "team requires <count> <agent> [agent...] or <run_id> <count> <agent> [agent...]"
+                    .to_string(),
+            );
+        }
+    };
+
+    let team_size = args
+        .get(count_index)
+        .ok_or_else(|| {
+            "team requires <count> <agent> [agent...] or <run_id> <count> <agent> [agent...]"
+                .to_string()
+        })?
+        .parse::<usize>()
+        .map_err(|err| err.to_string())?;
+    if team_size == 0 {
+        return Err("team count must be at least 1".to_string());
+    }
+
+    let agent_names = args
+        .iter()
+        .skip(count_index + 1)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if agent_names.is_empty() {
+        return Err("team requires at least one agent name".to_string());
+    }
+
+    ensure_explicit_team_sessions(&run_id, team_size, &agent_names)?;
+    run_ops_open(std::slice::from_ref(&run_id))
 }
 
 fn run_ralph(args: &[String]) -> Result<(), String> {
@@ -208,12 +222,125 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
-    let worker_count = args
+    let requested_width = args
         .get(1)
         .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
-        .transpose()?
-        .unwrap_or(4);
-    run_start(&[run_id, worker_count.to_string()])
+        .transpose()?;
+    ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
+    run_ops_open(std::slice::from_ref(&run_id))
+}
+
+fn ensure_team_sessions(
+    run_id: &str,
+    mode: TeamMode,
+    requested_width: Option<usize>,
+) -> Result<(), String> {
+    let (_, cfg) = load_resolved_config()?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
+
+    let orchestrator = worker_adapter_config(&cfg, "orchestrator")?;
+    ensure_adapter_session(&store, &orchestrator, run_id, "codex-lead", None)?;
+
+    let snapshot = store.read_snapshot(run_id)?;
+    for (worker_id, adapter_kind) in plan_team_roster(&snapshot, mode, requested_width) {
+        let adapter = worker_adapter_config(&cfg, &adapter_kind)?;
+        ensure_adapter_session(&store, &adapter, run_id, &worker_id, None)?;
+    }
+
+    Ok(())
+}
+
+fn ensure_explicit_team_sessions(
+    run_id: &str,
+    team_size: usize,
+    agent_names: &[String],
+) -> Result<(), String> {
+    let (_, cfg) = load_resolved_config()?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
+
+    let orchestrator = worker_adapter_config(&cfg, "orchestrator")?;
+    ensure_adapter_session(&store, &orchestrator, run_id, "codex-lead", None)?;
+
+    let mut stem_counts = BTreeMap::<String, usize>::new();
+    for index in 0..team_size {
+        let agent_name = &agent_names[index % agent_names.len()];
+        let (worker_type, worker_stem) = resolve_team_agent(&cfg, agent_name)?;
+        let adapter = worker_adapter_config(&cfg, &worker_type)?;
+        let counter = stem_counts.entry(worker_stem.clone()).or_insert(0);
+        *counter += 1;
+        let worker_id = format!("{worker_stem}-{counter}");
+        ensure_adapter_session(&store, &adapter, run_id, &worker_id, None)?;
+    }
+
+    Ok(())
+}
+
+fn plan_team_roster(
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+    mode: TeamMode,
+    requested_width: Option<usize>,
+) -> Vec<(String, String)> {
+    if mode == TeamMode::Default {
+        return Vec::new();
+    }
+
+    if let Some(width) = requested_width {
+        return (1..=width)
+            .map(|index| (format!("worker-{index}"), "worker".to_string()))
+            .collect();
+    }
+
+    let pressure = snapshot.tasks.pending + snapshot.tasks.blocked + snapshot.tasks.in_progress;
+    let mut roster = vec![
+        ("explore-1".to_string(), "worker".to_string()),
+        ("worker-1".to_string(), "worker".to_string()),
+    ];
+
+    if pressure >= 2 || mode == TeamMode::Ralph {
+        roster.push(("worker-2".to_string(), "worker".to_string()));
+    }
+    if pressure >= 5 || mode == TeamMode::Ralph {
+        roster.push(("worker-3".to_string(), "worker".to_string()));
+    }
+    roster.push(("verifier-1".to_string(), "verifier".to_string()));
+
+    roster
+}
+
+fn resolve_team_agent(cfg: &Config, agent_name: &str) -> Result<(String, String), String> {
+    let profile = agent_name.trim();
+    if profile.is_empty() {
+        return Err("team agent names must not be empty".to_string());
+    }
+    if !cfg.workers.contains_key(profile) {
+        let available = cfg.workers.keys().cloned().collect::<Vec<_>>().join(", ");
+        return Err(format!(
+            "unknown team agent profile '{profile}'. Available profiles: {available}"
+        ));
+    }
+    Ok((profile.to_string(), sanitize_worker_stem(profile)))
+}
+
+fn sanitize_worker_stem(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if sanitized.is_empty() {
+        "agent".to_string()
+    } else {
+        sanitized
+    }
 }
 
 fn run_config_path() -> Result<(), String> {
@@ -1214,13 +1341,14 @@ fn run_ops_open(args: &[String]) -> Result<(), String> {
             pane_specs.push((worker.worker_id, session_id, attach_cmd));
         }
     }
+    pane_specs.sort_by_key(|(worker_id, _, _)| pane_sort_key(worker_id));
 
     if command_available("tmux") {
         let created = ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
         let attached = if env::var("CONDUCTOR_OPS_NO_ATTACH").ok().as_deref() == Some("1") {
             false
         } else {
-            attach_tmux_ops_session(&cwd, &tmux_session_name)?;
+            attach_tmux_ops_session(&tmux_session_name)?;
             true
         };
         print_json(&json!({
@@ -1931,6 +2059,11 @@ fn ensure_tmux_ops_session(
         return Ok(false);
     }
 
+    let (main_title, main_cmd) = if let Some((worker_id, _, attach_cmd)) = pane_specs.first() {
+        (worker_id.as_str(), attach_cmd.as_str())
+    } else {
+        ("HUD", hud_cmd)
+    };
     run_tmux([
         "new-session",
         "-d",
@@ -1938,31 +2071,58 @@ fn ensure_tmux_ops_session(
         session_name,
         "-n",
         "ops",
-        hud_cmd,
+        main_cmd,
     ])?;
 
-    for (_, _, attach_cmd) in pane_specs {
+    if !pane_specs.is_empty() {
         run_tmux([
             "split-window",
+            "-h",
             "-t",
             &format!("{session_name}:0"),
-            attach_cmd,
+            hud_cmd,
         ])?;
-        run_tmux(["select-layout", "-t", &format!("{session_name}:0"), "tiled"])?;
+        for (_, _, attach_cmd) in pane_specs.iter().skip(1) {
+            run_tmux([
+                "split-window",
+                "-v",
+                "-t",
+                &format!("{session_name}:0.1"),
+                attach_cmd,
+            ])?;
+        }
     }
+
+    run_tmux([
+        "select-layout",
+        "-t",
+        &format!("{session_name}:0"),
+        "main-vertical",
+    ])?;
 
     run_tmux([
         "select-pane",
         "-t",
         &format!("{session_name}:0.0"),
         "-T",
-        "HUD",
+        main_title,
     ])?;
-    for (index, (worker_id, _, _)) in pane_specs.iter().enumerate() {
+
+    if !pane_specs.is_empty() {
         run_tmux([
             "select-pane",
             "-t",
-            &format!("{session_name}:0.{}", index + 1),
+            &format!("{session_name}:0.1"),
+            "-T",
+            "HUD",
+        ])?;
+    }
+
+    for (index, (worker_id, _, _)) in pane_specs.iter().skip(1).enumerate() {
+        run_tmux([
+            "select-pane",
+            "-t",
+            &format!("{session_name}:0.{}", index + 2),
             "-T",
             worker_id,
         ])?;
@@ -1971,13 +2131,12 @@ fn ensure_tmux_ops_session(
     Ok(true)
 }
 
-fn attach_tmux_ops_session(cwd: &Path, session_name: &str) -> Result<(), String> {
-    let command = format!(
-        "cd {} && tmux attach-session -t {}",
-        shell_quote(cwd),
-        shell_quote_str(session_name)
-    );
-    open_in_default_terminal(&command)
+fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
+    if env::var_os("TMUX").is_some() {
+        run_tmux(["switch-client", "-t", session_name])
+    } else {
+        run_tmux(["attach-session", "-t", session_name])
+    }
 }
 
 fn tmux_session_exists(session_name: &str) -> Result<bool, String> {
@@ -2027,30 +2186,11 @@ fn default_tmux_session_name(run_id: &str) -> String {
     format!("conductor-{sanitized}")
 }
 
-fn open_in_default_terminal(command: &str) -> Result<(), String> {
-    let script_path = std::env::temp_dir().join(format!(
-        "conductor-{}.command",
-        Utc::now().timestamp_millis()
-    ));
-    let script_body = format!("#!/bin/zsh\n{}\n", command);
-    fs::write(&script_path, script_body).map_err(|err| err.to_string())?;
-    let mut perms = fs::metadata(&script_path)
-        .map_err(|err| err.to_string())?
-        .permissions();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        perms.set_mode(0o755);
-        fs::set_permissions(&script_path, perms).map_err(|err| err.to_string())?;
-    }
-    let output = Command::new("open")
-        .arg(&script_path)
-        .output()
-        .map_err(|err| err.to_string())?;
-    if output.status.success() {
-        Ok(())
+fn pane_sort_key(worker_id: &str) -> (u8, String) {
+    if worker_id == "codex-lead" {
+        (0, worker_id.to_string())
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        (1, worker_id.to_string())
     }
 }
 
