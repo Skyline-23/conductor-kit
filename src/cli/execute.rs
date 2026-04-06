@@ -3125,7 +3125,11 @@ fn build_hud_shell_command(
         shell_quote_str(run_id),
         "1000".to_string(),
     ];
-    format!("cd {} && {}", shell_quote(cwd), command_parts.join(" "))
+    build_tmux_pane_shell_command(format!(
+        "cd {} && exec {}",
+        shell_quote(cwd),
+        command_parts.join(" ")
+    ))
 }
 
 fn build_launch_shell_command(
@@ -3148,18 +3152,15 @@ fn build_launch_shell_command(
     } else {
         format!("{} ", env_parts.join(" "))
     };
-    format!(
-        "cd {} && {}{}",
+    build_tmux_pane_shell_command(format!(
+        "cd {} && {}exec {}",
         shell_quote(cwd),
         env_prefix,
         command_parts.join(" ")
-    )
+    ))
 }
 
 fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
-    env_parts.push("CLICOLOR_FORCE=1".to_string());
-    env_parts.push("FORCE_COLOR=1".to_string());
-    env_parts.push("TERM=xterm-256color".to_string());
     for key in [
         "COLORTERM",
         "TERM_PROGRAM",
@@ -3174,10 +3175,33 @@ fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
             }
         }
     }
-    if !env_parts.iter().any(|part| part.starts_with("COLORTERM=")) {
-        env_parts.push("COLORTERM=truecolor".to_string());
-    }
     env_parts
+}
+
+fn build_tmux_pane_shell_command(inner: String) -> String {
+    let shell_path = env::var("SHELL").ok();
+    let raw_shell = shell_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("/bin/sh");
+    let shell_bin = match raw_shell {
+        "/bin/zsh" | "/bin/bash" | "/bin/sh" => raw_shell,
+        _ => "/bin/sh",
+    };
+    let rc_source = if shell_bin.ends_with("/zsh") {
+        "if [ -f ~/.zshrc ]; then source ~/.zshrc; fi; "
+    } else if shell_bin.ends_with("/bash") {
+        "if [ -f ~/.bashrc ]; then source ~/.bashrc; fi; "
+    } else {
+        ""
+    };
+    let wrapped = format!("{rc_source}{inner}");
+    format!(
+        "{} -lc {}",
+        shell_quote_str(shell_bin),
+        shell_quote_str(&wrapped)
+    )
 }
 
 fn open_terminal_script(terminal_app: &str, command: &str) -> Result<(), String> {
