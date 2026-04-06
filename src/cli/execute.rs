@@ -1439,23 +1439,17 @@ fn rebuild_direct_team_surface(
         "-t",
         &format!("{session_name}:0"),
         "-F",
-        "#{pane_id}\t#{pane_title}",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
     ])?;
-    let mut main_pane_id = None::<String>;
+    let main_pane_id = find_main_pane_id(session_name, &panes)?;
     let mut extra_panes = Vec::new();
     for line in panes.lines() {
-        let mut parts = line.splitn(2, '\t');
+        let mut parts = line.splitn(4, '\t');
         let pane_id = parts.next().unwrap_or_default().trim().to_string();
-        let pane_title = parts.next().unwrap_or_default().trim().to_string();
-        if pane_title == "main" || pane_title == "conductor-kit" {
-            main_pane_id = Some(pane_id);
-        } else if !pane_id.is_empty() {
+        if pane_id != main_pane_id && !pane_id.is_empty() {
             extra_panes.push(pane_id);
         }
     }
-    let Some(main_pane_id) = main_pane_id else {
-        return Err(format!("could not find the main pane in tmux session {session_name}"));
-    };
 
     for pane_id in extra_panes {
         let _ = run_tmux(["kill-pane", "-t", &pane_id]);
@@ -1633,6 +1627,14 @@ fn run_surface_attached_tmux_session(
     run_tmux(["set-option", "-t", session_name, "status-left-length", "240"])?;
     run_tmux(["set-option", "-t", session_name, "status-right", ""])?;
     run_tmux(["set-option", "-t", session_name, "status-interval", "1"])?;
+    run_tmux([
+        "set-option",
+        "-w",
+        "-t",
+        &format!("{session_name}:0"),
+        "@conductor_main_pane",
+        main_pane_id.trim(),
+    ])?;
     run_tmux([
         "set-option",
         "-t",
@@ -3635,7 +3637,11 @@ fn build_direct_launch_shell_command(
         format!("{} ", env_parts.join(" "))
     };
     let mut command_parts = vec![shell_quote_str(&launch.program)];
-    command_parts.extend(launch.args.iter().map(|arg| shell_quote_str(arg)));
+    command_parts.extend(
+        team_launch_args(launch)
+            .into_iter()
+            .map(|arg| shell_quote_str(&arg)),
+    );
     build_tmux_pane_shell_command(format!(
         "cd {} && {}exec {}",
         shell_quote(cwd),
@@ -3660,6 +3666,19 @@ fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
         }
     }
     env_parts
+}
+
+fn team_launch_args(launch: &crate::runtime::adapters::WorkerAdapterLaunch) -> Vec<String> {
+    let mut args = launch.args.clone();
+    let is_codex = Path::new(&launch.program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.starts_with("codex"))
+        .unwrap_or(false);
+    if is_codex && !args.iter().any(|arg| arg == "--no-alt-screen") {
+        args.insert(0, "--no-alt-screen".to_string());
+    }
+    args
 }
 
 fn build_tmux_pane_shell_command(inner: String) -> String {
@@ -3743,6 +3762,14 @@ fn ensure_tmux_ops_session(
         "-t",
         &format!("{session_name}:0.0"),
         "#{pane_id}",
+    ])?;
+    run_tmux([
+        "set-option",
+        "-w",
+        "-t",
+        &format!("{session_name}:0"),
+        "@conductor_main_pane",
+        main_pane_id.trim(),
     ])?;
     let main_exit_hook = format!(
         "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
@@ -3853,22 +3880,19 @@ fn sync_existing_tmux_ops_session(
         "-t",
         &format!("{session_name}:0"),
         "-F",
-        "#{pane_id}\t#{pane_title}",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
     ])?;
     let mut title_to_pane = BTreeMap::new();
-    let mut main_pane_id = None::<String>;
+    let main_pane_id = find_main_pane_id(session_name, &panes)?;
     for line in panes.lines() {
-        let mut parts = line.splitn(2, '\t');
+        let mut parts = line.splitn(4, '\t');
         let pane_id = parts.next().unwrap_or_default().trim().to_string();
+        let _pane_index = parts.next().unwrap_or_default();
         let pane_title = parts.next().unwrap_or_default().trim().to_string();
-        if pane_title == "main" || pane_title == "conductor-kit" {
-            main_pane_id = Some(pane_id.clone());
-        }
         if !pane_title.is_empty() {
             title_to_pane.insert(pane_title, pane_id);
         }
     }
-    let main_pane_id = main_pane_id.unwrap_or_else(|| format!("{session_name}:0.0"));
     let mut stack_target = title_to_pane
         .iter()
         .filter(|(title, _)| title.starts_with("explore-") || title.starts_with("build-") || title.starts_with("review-") || title.starts_with("verify-"))
@@ -3927,17 +3951,17 @@ fn rebalance_tmux_team_layout(session_name: &str) -> Result<(), String> {
         "-t",
         &format!("{session_name}:0"),
         "-F",
-        "#{pane_id}\t#{pane_title}",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
     ])?;
 
-    let mut main_pane_id = None::<String>;
+    let main_pane_id = find_main_pane_id(session_name, &panes)?;
     let mut worker_count = 0usize;
     for line in panes.lines() {
-        let mut parts = line.splitn(2, '\t');
+        let mut parts = line.splitn(4, '\t');
         let pane_id = parts.next().unwrap_or_default().trim().to_string();
+        let _pane_index = parts.next().unwrap_or_default();
         let pane_title = parts.next().unwrap_or_default().trim().to_string();
-        if pane_title == "main" || pane_title == "conductor-kit" {
-            main_pane_id = Some(pane_id);
+        if pane_id == main_pane_id {
             continue;
         }
         if pane_title.is_empty() || pane_title == "HUD" {
@@ -3949,10 +3973,6 @@ fn rebalance_tmux_team_layout(session_name: &str) -> Result<(), String> {
     if worker_count == 0 {
         return Ok(());
     }
-
-    let Some(main_pane_id) = main_pane_id else {
-        return Ok(());
-    };
 
     let window_width = run_tmux_capture([
         "display-message",
@@ -3984,6 +4004,33 @@ fn rebalance_tmux_team_layout(session_name: &str) -> Result<(), String> {
     ])?;
     run_tmux(["select-pane", "-t", &main_pane_id])?;
     Ok(())
+}
+
+fn find_main_pane_id(session_name: &str, panes: &str) -> Result<String, String> {
+    let target = format!("{session_name}:0");
+    if let Ok(configured) = run_tmux_capture(["show-options", "-w", "-v", "-t", &target, "@conductor_main_pane"]) {
+        let configured = configured.trim().to_string();
+        if !configured.is_empty()
+            && panes
+                .lines()
+                .any(|line| line.split('\t').next().unwrap_or_default().trim() == configured)
+        {
+            return Ok(configured);
+        }
+    }
+
+    for line in panes.lines() {
+        let mut parts = line.splitn(4, '\t');
+        let pane_id = parts.next().unwrap_or_default().trim().to_string();
+        let pane_index = parts.next().unwrap_or_default().trim();
+        let pane_title = parts.next().unwrap_or_default().trim();
+        let pane_command = parts.next().unwrap_or_default().trim();
+        if pane_title == "main" || pane_title == "conductor-kit" || pane_index == "0" || pane_command.contains("codex") {
+            return Ok(pane_id);
+        }
+    }
+
+    Err(format!("could not find the main pane in tmux session {session_name}"))
 }
 
 fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
@@ -4577,5 +4624,31 @@ mod tests {
         assert!(launch.program.ends_with("codex"));
         assert_eq!(launch.args, vec!["resume".to_string()]);
         assert!(launch.stdin_payload.is_none());
+    }
+
+    #[test]
+    fn team_launch_args_prepend_no_alt_screen_for_codex_workers() {
+        let launch = crate::runtime::adapters::WorkerAdapterLaunch {
+            program: "/opt/homebrew/bin/codex".to_string(),
+            args: vec!["-m".to_string(), "gpt-5.4".to_string()],
+            cwd: None,
+            stdin_payload: None,
+            env: BTreeMap::new(),
+        };
+        assert_eq!(
+            team_launch_args(&launch),
+            vec![
+                "--no-alt-screen".to_string(),
+                "-m".to_string(),
+                "gpt-5.4".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn find_main_pane_id_falls_back_to_pane_zero_when_titles_drift() {
+        let panes = "%166\t0\t⠴ conductor-kit\tcodex-aarch64-a\n%168\t1\tmain\tconductor\n";
+        let main = find_main_pane_id("demo-session", panes).expect("main pane should resolve");
+        assert_eq!(main, "%166");
     }
 }
