@@ -218,7 +218,7 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
     ensure_surface_only(&run_id)?;
-    attach_surface_session(&run_id)
+    run_surface_ops_open(&run_id)
 }
 
 fn update_profile_field(
@@ -1077,7 +1077,7 @@ fn run_open(args: &[String]) -> Result<(), String> {
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
     ensure_surface_only(&run_id)?;
-    attach_surface_session(&run_id)
+    run_surface_ops_open(&run_id)
 }
 
 fn run_attach_alias(args: &[String]) -> Result<(), String> {
@@ -1257,9 +1257,9 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
     Ok(())
 }
 
-fn attach_surface_session(run_id: &str) -> Result<(), String> {
-    let session_id = "session-main".to_string();
-    run_worker_attach(&[run_id.to_string(), session_id])
+fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
+    let tmux_session_name = format!("conductor-{run_id}-surface");
+    run_ops_open_with_filter(run_id, &tmux_session_name, Some("main"))
 }
 
 fn resolve_surface_launch(
@@ -2316,6 +2316,14 @@ fn run_ops_open(args: &[String]) -> Result<(), String> {
         .get(1)
         .cloned()
         .unwrap_or_else(|| default_tmux_session_name(run_id));
+    run_ops_open_with_filter(run_id, &tmux_session_name, None)
+}
+
+fn run_ops_open_with_filter(
+    run_id: &str,
+    tmux_session_name: &str,
+    only_worker_id: Option<&str>,
+) -> Result<(), String> {
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
     let state_root = resolve_state_root()?;
@@ -2332,6 +2340,11 @@ fn run_ops_open(args: &[String]) -> Result<(), String> {
 
     let mut pane_specs = Vec::new();
     for worker in snapshot.workers {
+        if let Some(target) = only_worker_id {
+            if worker.worker_id != target {
+                continue;
+            }
+        }
         let worker_record = store.read_worker(run_id, &worker.worker_id)?;
         if let Some(session_id) = worker_record.session_ref {
             let attach_cmd = build_attach_shell_command(
