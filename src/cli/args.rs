@@ -6,21 +6,21 @@ use std::path::{Path, PathBuf};
 
 use crate::runtime::types::{DispatchStatus, RunPhase, WorkerState};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub defaults: Defaults,
     pub runtime: RuntimeConfig,
     pub workers: BTreeMap<String, WorkerConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Defaults {
     pub idle_timeout_ms: i64,
     pub summary_only: bool,
     pub max_parallel: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {
     pub transport: TransportConfig,
     #[serde(rename = "loop")]
@@ -29,34 +29,34 @@ pub struct RuntimeConfig {
     pub workers: WorkerRuntimeConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransportConfig {
     pub mode: String,
     pub preferred: Vec<String>,
     pub allow_tmux_fallback: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoopConfig {
     pub persist_runs: bool,
     pub resume_strategy: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryConfig {
     pub enabled: bool,
     pub ttl_hours: i64,
     pub invalidate_on_git_head_change: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerRuntimeConfig {
     pub max_workers: i64,
     pub spawn_policy: String,
     pub continue_policy: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkerConfig {
     pub cli: String,
     pub model: String,
@@ -178,6 +178,14 @@ pub fn load_resolved_config() -> Result<(PathBuf, Config), String> {
     let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
     let cfg = serde_json::from_str::<Config>(&raw).map_err(|err| err.to_string())?;
     Ok((path, cfg))
+}
+
+pub fn save_config(path: &Path, cfg: &Config) -> Result<(), String> {
+    let rendered = serde_json::to_string_pretty(cfg).map_err(|err| err.to_string())?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    fs::write(path, format!("{rendered}\n")).map_err(|err| err.to_string())
 }
 
 pub fn command_available(command: &str) -> bool {

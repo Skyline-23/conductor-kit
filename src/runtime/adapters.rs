@@ -168,6 +168,7 @@ fn expand_template(
     value
         .replace("{worker_type}", &config.worker_type)
         .replace("{model}", &config.model)
+        .replace("{reasoning}", config.reasoning.as_deref().unwrap_or(""))
         .replace("{cli}", &config.cli)
         .replace("{run_id}", run_id)
         .replace("{worker_id}", worker_id)

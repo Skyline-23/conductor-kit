@@ -12,6 +12,7 @@ Commands:
   open                Open the ops view for the current or named run
   resume              Alias for open
   attach              Attach to a named worker in the current or named run
+  settings            Open the conductor settings editor
   team                Start a configured team: team <count> <profile> [profile...]
   ralph               Start the wider ralph-style orchestration layout
   help                Show this help

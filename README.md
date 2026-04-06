@@ -96,9 +96,12 @@ The primary surface is:
 
 `conductor` and `conductor init` bring up the lead Codex session by default.
 `conductor team` requires an explicit team size and agent profile list from
-`config/conductor.json`, for example `conductor team 4 worker verifier`, and
+`config/conductor.json`, for example `conductor team 4 explore build review verify`, and
 expands to the OMX-style split view with the lead pane on the left and the HUD
 plus sub-workers stacked on the right.
+
+Use `conductor settings` to edit each profile's `cli`, `model`, `reasoning`,
+and description from the terminal.
 
 Operator commands:
 - `conductor help`
@@ -109,19 +112,21 @@ Operator commands:
 - `conductor hud-watch`
 - `conductor worker-log`
 
-The default worker presets now include:
-- `orchestrator`
-- `worker`
-- `gemini_worker`
-- `verifier`
-- `claude_worker`
+The default profiles now include:
+- `lead`
+- `explore`
+- `build`
+- `review`
+- `verify`
 
-The shipped presets are aimed at real local interactive CLIs:
-- `orchestrator`, `worker`, and `verifier` use the user's existing `codex` settings
-- `gemini_worker` uses interactive `gemini`
-- `claude_worker` uses interactive `claude`
+The shipped defaults use explicit Codex model lanes:
+- `lead` -> `codex` + `gpt-5.4`
+- `explore` -> `codex` + `gpt-5.3-codex-spark`
+- `build` -> `codex` + `gpt-5.4-mini`
+- `review` -> `codex` + `gpt-5.4`
+- `verify` -> `codex` + `gpt-5.4-mini`
 
-If you want Claude to handle both worker and verifier paths, use:
+If you want Claude-oriented defaults, use:
 - `CONDUCTOR_CONFIG=config/conductor.claude.json`
 
 ## Build

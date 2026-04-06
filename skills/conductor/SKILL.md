@@ -18,7 +18,7 @@ Default `conductor` usage should stay narrow. Start the lead Codex session
 first, then expand with `$team` or `$ralph` only when orchestration is needed.
 
 `$team` should require an explicit team size and configured agent profiles, such
-as `conductor team 4 worker verifier`.
+as `conductor team 4 explore build review verify`.
 
 Command shortcuts:
 - `$team`

@@ -20,60 +20,81 @@
       "invalidate_on_git_head_change": true
     },
     "workers": {
-      "max_workers": 4,
+      "max_workers": 6,
       "spawn_policy": "persistent",
       "continue_policy": "resume_when_possible"
     }
   },
   "workers": {
-    "orchestrator": {
+    "lead": {
       "cli": "codex",
-      "model": "host-default",
-      "description": "Top-level Codex coordinator using the user's existing Codex settings",
-      "delivery_mode": "session",
-      "launch_mode": "stdin_text",
-      "base_args": []
-    },
-    "worker": {
-      "cli": "codex",
-      "model": "host-default",
-      "description": "Default interactive Codex worker using the user's existing Codex settings",
-      "delivery_mode": "session",
-      "launch_mode": "stdin_text",
-      "base_args": []
-    },
-    "gemini_worker": {
-      "cli": "gemini",
-      "model": "gemini-2.5-flash",
-      "description": "Optional interactive Gemini worker",
+      "model": "gpt-5.4",
+      "reasoning": "high",
+      "description": "Main operator and orchestration lead",
       "delivery_mode": "session",
       "launch_mode": "stdin_text",
       "base_args": [
         "-m",
         "{model}",
-        "--yolo"
+        "-c",
+        "model_reasoning_effort=\"{reasoning}\""
       ]
     },
-    "claude_worker": {
-      "cli": "claude",
-      "model": "claude-sonnet-4-6",
-      "description": "General worker process for fan-out tasks using Claude Code",
+    "explore": {
+      "cli": "codex",
+      "model": "gpt-5.3-codex-spark",
+      "reasoning": "low",
+      "description": "Fast codebase exploration and triage lane",
       "delivery_mode": "session",
       "launch_mode": "stdin_text",
       "base_args": [
-        "--permission-mode",
-        "acceptEdits",
-        "--model",
-        "{model}"
+        "-m",
+        "{model}",
+        "-c",
+        "model_reasoning_effort=\"{reasoning}\""
       ]
     },
-    "verifier": {
+    "build": {
       "cli": "codex",
-      "model": "host-default",
-      "description": "Verification worker using the user's existing Codex settings",
+      "model": "gpt-5.4-mini",
+      "reasoning": "high",
+      "description": "Primary implementation lane",
       "delivery_mode": "session",
       "launch_mode": "stdin_text",
-      "base_args": []
+      "base_args": [
+        "-m",
+        "{model}",
+        "-c",
+        "model_reasoning_effort=\"{reasoning}\""
+      ]
+    },
+    "review": {
+      "cli": "codex",
+      "model": "gpt-5.4",
+      "reasoning": "medium",
+      "description": "Review and challenge lane",
+      "delivery_mode": "session",
+      "launch_mode": "stdin_text",
+      "base_args": [
+        "-m",
+        "{model}",
+        "-c",
+        "model_reasoning_effort=\"{reasoning}\""
+      ]
+    },
+    "verify": {
+      "cli": "codex",
+      "model": "gpt-5.4-mini",
+      "reasoning": "high",
+      "description": "Verification and completion evidence lane",
+      "delivery_mode": "session",
+      "launch_mode": "stdin_text",
+      "base_args": [
+        "-m",
+        "{model}",
+        "-c",
+        "model_reasoning_effort=\"{reasoning}\""
+      ]
     }
   }
 }

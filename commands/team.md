@@ -11,7 +11,7 @@ What it should do:
 - keep state visible through the HUD and worker panes
 
 Default shape:
-- `conductor team 4 worker verifier`
+- `conductor team 4 explore build review verify`
 
 Optional:
 - `conductor team <count> <profile> [profile...]`

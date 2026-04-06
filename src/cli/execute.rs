@@ -1,6 +1,7 @@
 use crate::cli::args::{
     Config, StatusPayload, command_available, load_resolved_config, parse_dispatch_status,
     parse_run_phase, parse_worker_state, required_arg, resolve_config_path, resolve_state_root,
+    save_config,
 };
 use crate::cli::logging::{print_help, print_json};
 use crate::runtime::adapters::{WorkerAdapterConfig, resolve_worker_adapter};
@@ -47,6 +48,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "start" => run_start(&args[1..]),
         "open" => run_open(&args[1..]),
         "attach" => run_attach_alias(&args[1..]),
+        "settings" => run_settings(),
         "help" | "-h" | "--help" => {
             print_help();
             Ok(())
@@ -105,6 +107,14 @@ enum TeamMode {
     Ralph,
 }
 
+#[derive(Clone, Copy)]
+enum SettingsField {
+    Cli,
+    Model,
+    Reasoning,
+    Description,
+}
+
 fn run_default() -> Result<(), String> {
     let run_id = default_run_id();
     let store = StateStore::new(resolve_state_root()?);
@@ -121,6 +131,83 @@ fn run_default() -> Result<(), String> {
     }
 }
 
+fn run_settings() -> Result<(), String> {
+    let (path, mut cfg) = load_resolved_config()?;
+    loop {
+        println!();
+        println!("conductor settings");
+        println!("config: {}", path.display());
+        println!();
+
+        let profile_names = cfg.workers.keys().cloned().collect::<Vec<_>>();
+        for (index, name) in profile_names.iter().enumerate() {
+            if let Some(profile) = cfg.workers.get(name) {
+                println!(
+                    "{:>2}. {:<12} cli={} model={} reasoning={}",
+                    index + 1,
+                    name,
+                    profile.cli,
+                    profile.model,
+                    profile.reasoning.as_deref().unwrap_or("-")
+                );
+            }
+        }
+        println!();
+        println!("Choose a profile number to edit, or `q` to quit.");
+        let choice = prompt_line("> ")?;
+        if choice.eq_ignore_ascii_case("q") {
+            break;
+        }
+
+        let profile_index = choice
+            .parse::<usize>()
+            .map_err(|_| "settings expects a profile number or q".to_string())?;
+        if profile_index == 0 || profile_index > profile_names.len() {
+            return Err("profile selection out of range".to_string());
+        }
+        let profile_name = &profile_names[profile_index - 1];
+
+        loop {
+            let profile = cfg
+                .workers
+                .get(profile_name)
+                .ok_or_else(|| format!("missing profile: {profile_name}"))?;
+            println!();
+            println!("editing `{profile_name}`");
+            println!("  1. cli         = {}", profile.cli);
+            println!("  2. model       = {}", profile.model);
+            println!(
+                "  3. reasoning   = {}",
+                profile.reasoning.as_deref().unwrap_or("-")
+            );
+            println!("  4. description = {}", profile.description);
+            println!("Choose a field number, `b` to go back, or `q` to quit.");
+            let field_choice = prompt_line("> ")?;
+            if field_choice.eq_ignore_ascii_case("q") {
+                return Ok(());
+            }
+            if field_choice.eq_ignore_ascii_case("b") {
+                break;
+            }
+
+            let field = match field_choice.as_str() {
+                "1" => SettingsField::Cli,
+                "2" => SettingsField::Model,
+                "3" => SettingsField::Reasoning,
+                "4" => SettingsField::Description,
+                _ => return Err("field selection must be 1, 2, 3, 4, b, or q".to_string()),
+            };
+
+            println!("Enter the new value. Use `-` to clear reasoning.");
+            let new_value = prompt_line("> ")?;
+            update_profile_field(&mut cfg, profile_name, field, &new_value)?;
+            save_config(&path, &cfg)?;
+            println!("saved {}", path.display());
+        }
+    }
+    Ok(())
+}
+
 fn run_start(args: &[String]) -> Result<(), String> {
     let run_id = args
         .first()
@@ -134,6 +221,58 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .transpose()?;
     ensure_team_sessions(&run_id, TeamMode::Default, requested_width)?;
     run_ops_open(std::slice::from_ref(&run_id))
+}
+
+fn prompt_line(prompt: &str) -> Result<String, String> {
+    print!("{prompt}");
+    std::io::stdout().flush().map_err(|err| err.to_string())?;
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(|err| err.to_string())?;
+    Ok(input.trim().to_string())
+}
+
+fn update_profile_field(
+    cfg: &mut Config,
+    profile_name: &str,
+    field: SettingsField,
+    value: &str,
+) -> Result<(), String> {
+    let profile = cfg
+        .workers
+        .get_mut(profile_name)
+        .ok_or_else(|| format!("missing profile: {profile_name}"))?;
+    match field {
+        SettingsField::Cli => {
+            if value.trim().is_empty() {
+                return Err("cli must not be empty".to_string());
+            }
+            profile.cli = value.trim().to_string();
+        }
+        SettingsField::Model => {
+            if value.trim().is_empty() {
+                return Err("model must not be empty".to_string());
+            }
+            profile.model = value.trim().to_string();
+        }
+        SettingsField::Reasoning => {
+            if value.trim() == "-" || value.trim().is_empty() {
+                profile.reasoning = None;
+            } else if matches!(value.trim(), "low" | "medium" | "high") {
+                profile.reasoning = Some(value.trim().to_string());
+            } else {
+                return Err("reasoning must be low, medium, high, or -".to_string());
+            }
+        }
+        SettingsField::Description => {
+            if value.trim().is_empty() {
+                return Err("description must not be empty".to_string());
+            }
+            profile.description = value.trim().to_string();
+        }
+    }
+    Ok(())
 }
 
 fn run_open(args: &[String]) -> Result<(), String> {
@@ -239,7 +378,7 @@ fn ensure_team_sessions(
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, run_id)?;
 
-    let orchestrator = worker_adapter_config(&cfg, "orchestrator")?;
+    let orchestrator = worker_adapter_config(&cfg, "lead")?;
     ensure_adapter_session(&store, &orchestrator, run_id, "codex-lead", None)?;
 
     let snapshot = store.read_snapshot(run_id)?;
@@ -260,7 +399,7 @@ fn ensure_explicit_team_sessions(
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, run_id)?;
 
-    let orchestrator = worker_adapter_config(&cfg, "orchestrator")?;
+    let orchestrator = worker_adapter_config(&cfg, "lead")?;
     ensure_adapter_session(&store, &orchestrator, run_id, "codex-lead", None)?;
 
     let mut stem_counts = BTreeMap::<String, usize>::new();
@@ -288,23 +427,23 @@ fn plan_team_roster(
 
     if let Some(width) = requested_width {
         return (1..=width)
-            .map(|index| (format!("worker-{index}"), "worker".to_string()))
+            .map(|index| (format!("build-{index}"), "build".to_string()))
             .collect();
     }
 
     let pressure = snapshot.tasks.pending + snapshot.tasks.blocked + snapshot.tasks.in_progress;
     let mut roster = vec![
-        ("explore-1".to_string(), "worker".to_string()),
-        ("worker-1".to_string(), "worker".to_string()),
+        ("explore-1".to_string(), "explore".to_string()),
+        ("build-1".to_string(), "build".to_string()),
     ];
 
     if pressure >= 2 || mode == TeamMode::Ralph {
-        roster.push(("worker-2".to_string(), "worker".to_string()));
+        roster.push(("build-2".to_string(), "build".to_string()));
     }
     if pressure >= 5 || mode == TeamMode::Ralph {
-        roster.push(("worker-3".to_string(), "worker".to_string()));
+        roster.push(("review-1".to_string(), "review".to_string()));
     }
-    roster.push(("verifier-1".to_string(), "verifier".to_string()));
+    roster.push(("verify-1".to_string(), "verify".to_string()));
 
     roster
 }
@@ -673,9 +812,9 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
         }));
     }
 
-    let verifier_result = if let Some(_verifier_cfg) = cfg.workers.get("verifier") {
-        let verifier_adapter = worker_adapter_config(&cfg, "verifier")?;
-        let verifier_worker_id = format!("verifier-{invocation_id}");
+    let verifier_result = if let Some(_verifier_cfg) = cfg.workers.get("verify") {
+        let verifier_adapter = worker_adapter_config(&cfg, "verify")?;
+        let verifier_worker_id = format!("verify-{invocation_id}");
         let verifier_task_id = format!("task-{verifier_worker_id}");
         let verifier_prompt = serde_json::to_string_pretty(&json!({
             "run_id": run_id,
@@ -1905,9 +2044,12 @@ fn ensure_adapter_session(
 }
 
 fn worker_kind_for_type(worker_type: &str, worker_id: &str) -> WorkerKind {
-    if worker_type == "orchestrator" {
+    if worker_type == "lead" {
         WorkerKind::Orchestrator
-    } else if worker_type == "verifier" || worker_id.starts_with("verifier-") {
+    } else if worker_type == "verify"
+        || worker_id.starts_with("verify-")
+        || worker_id.starts_with("verifier-")
+    {
         WorkerKind::Verifier
     } else {
         WorkerKind::Worker
