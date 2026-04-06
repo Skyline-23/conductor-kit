@@ -217,7 +217,8 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
-    ensure_surface_only(&run_id)?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, &run_id)?;
     run_surface_ops_open(&run_id)
 }
 
@@ -1076,7 +1077,8 @@ fn run_open(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
-    ensure_surface_only(&run_id)?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, &run_id)?;
     run_surface_ops_open(&run_id)
 }
 
@@ -1184,14 +1186,6 @@ fn ensure_team_sessions(
     Ok(())
 }
 
-fn ensure_surface_only(run_id: &str) -> Result<(), String> {
-    let (_, cfg) = load_resolved_config()?;
-    let store = StateStore::new(resolve_state_root()?);
-    ensure_run_exists(&store, run_id)?;
-    ensure_surface_session(&store, &cfg, run_id)?;
-    Ok(())
-}
-
 fn ensure_explicit_team_sessions(
     run_id: &str,
     team_size: usize,
@@ -1259,7 +1253,26 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
 
 fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
     let tmux_session_name = format!("conductor-{run_id}-surface");
-    run_ops_open_with_filter(run_id, &tmux_session_name, Some("main"))
+    let (_, cfg) = load_resolved_config()?;
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let hud_cmd = build_hud_shell_command(
+        &cwd,
+        &conductor_bin,
+        &state_root,
+        config_path.as_deref(),
+        run_id,
+    );
+    let launch = resolve_surface_launch(&cfg, run_id)?;
+    let surface_cmd = build_launch_shell_command(&cwd, &launch);
+    let pane_specs = vec![("main".to_string(), "surface".to_string(), surface_cmd)];
+    if tmux_session_exists(&tmux_session_name)? {
+        run_tmux(["kill-session", "-t", &tmux_session_name])?;
+    }
+    ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
+    attach_tmux_ops_session(&tmux_session_name)
 }
 
 fn resolve_surface_launch(
@@ -3048,6 +3061,33 @@ fn build_hud_shell_command(
         "1000".to_string(),
     ];
     format!("cd {} && {}", shell_quote(cwd), command_parts.join(" "))
+}
+
+fn build_launch_shell_command(
+    cwd: &Path,
+    launch: &crate::runtime::adapters::WorkerAdapterLaunch,
+) -> String {
+    let mut env_parts = launch
+        .env
+        .iter()
+        .map(|(key, value)| format!("{key}={}", shell_quote_str(value)))
+        .collect::<Vec<_>>();
+    let mut command_parts = vec![shell_quote_str(&launch.program)];
+    command_parts.extend(launch.args.iter().map(|arg| shell_quote_str(arg)));
+    if let Some(payload) = &launch.stdin_payload {
+        env_parts.push(format!("CONDUCTOR_WORKER_STDIN={}", shell_quote_str(payload)));
+    }
+    let env_prefix = if env_parts.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", env_parts.join(" "))
+    };
+    format!(
+        "cd {} && {}{}",
+        shell_quote(cwd),
+        env_prefix,
+        command_parts.join(" ")
+    )
 }
 
 fn open_terminal_script(terminal_app: &str, command: &str) -> Result<(), String> {
