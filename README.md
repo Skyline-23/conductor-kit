@@ -89,6 +89,11 @@ The helper currently supports:
 - `conductor run-fanout`
 - `conductor hud-view`
 
+The default worker presets now include:
+- `orchestrator`
+- `worker`
+- `verifier`
+
 ## Build
 
 ```bash

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Map;
 use std::collections::BTreeMap;
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
@@ -48,7 +49,7 @@ pub fn spawn_session(
     fs::create_dir_all(&session_dir).map_err(|err| err.to_string())?;
     let socket_root = std::env::temp_dir().join("conductor-kit-sessions");
     fs::create_dir_all(&socket_root).map_err(|err| err.to_string())?;
-    let socket_path = socket_root.join(format!("{run_id}-{worker_id}.sock"));
+    let socket_path = socket_root.join(socket_file_name(run_id, worker_id));
     let stdout_path = session_dir.join("stdout.log");
     let stderr_path = session_dir.join("stderr.log");
     let host_stdout_path = session_dir.join("host.stdout.log");
@@ -308,4 +309,12 @@ fn read_child_env() -> BTreeMap<String, String> {
                 .map(|suffix| (suffix.to_string(), value))
         })
         .collect()
+}
+
+fn socket_file_name(run_id: &str, worker_id: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    run_id.hash(&mut hasher);
+    worker_id.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("ck-{hash:016x}.sock")
 }

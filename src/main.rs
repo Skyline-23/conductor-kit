@@ -10,7 +10,8 @@ use crate::runtime::sessions::{
 };
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
-    DispatchStatus, RunPhase, SessionStatus, WorkerKind, WorkerRecord, WorkerState,
+    DispatchStatus, EventEnvelope, EventKind, RunPhase, SCHEMA_VERSION, SessionStatus, WorkerKind,
+    WorkerRecord, WorkerState,
 };
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
@@ -493,7 +494,146 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
         }));
     }
 
-    let final_phase = if failures.is_empty() {
+    let verifier_result = if let Some(_verifier_cfg) = cfg.workers.get("verifier") {
+        let verifier_adapter = worker_adapter_config(&cfg, "verifier")?;
+        let verifier_worker_id = format!("verifier-{invocation_id}");
+        let verifier_task_id = format!("task-{verifier_worker_id}");
+        let verifier_prompt = serde_json::to_string_pretty(&json!({
+            "run_id": run_id,
+            "worker_type": worker_type,
+            "prompt": prompt,
+            "fanout_results": results,
+            "fanout_failures": failures
+        }))
+        .map_err(|err| err.to_string())?;
+        let task = store.create_task(
+            run_id,
+            &verifier_task_id,
+            "verify fanout results",
+            Some("Verifier pass over fan-out worker delivery results".to_string()),
+        )?;
+        let _ = acquire_claim(&store, run_id, &task.task_id, &verifier_worker_id, 10)?;
+        ensure_adapter_session(
+            &store,
+            &verifier_adapter,
+            run_id,
+            &verifier_worker_id,
+            Some(&task.task_id),
+            Some(&verifier_prompt),
+        )?;
+        let verifier_dispatch_id = format!("dispatch-{verifier_worker_id}-{invocation_id}");
+        let verifier_message_id = format!("message-{verifier_worker_id}-{invocation_id}");
+        let routed = route_prompt_to_worker(
+            &store,
+            run_id,
+            &verifier_worker_id,
+            "orchestrator-main",
+            &verifier_dispatch_id,
+            &verifier_message_id,
+            &verifier_prompt,
+        );
+        match routed {
+            Ok(routed) => {
+                let verification_ok = failures.is_empty() && routed.response.ok;
+                if verification_ok {
+                    let _ = store.complete_task(
+                        run_id,
+                        &verifier_task_id,
+                        "verification dispatch delivered",
+                        json!({
+                            "worker_id": verifier_worker_id,
+                            "session_id": routed.session_id,
+                            "dispatch_id": verifier_dispatch_id,
+                            "message_id": verifier_message_id
+                        }),
+                    )?;
+                    let _ = store.append_runtime_event(
+                        run_id,
+                        EventEnvelope {
+                            schema_version: SCHEMA_VERSION,
+                            event: EventKind::VerificationPassed,
+                            timestamp: Utc::now(),
+                            run_id: Some(run_id.to_string()),
+                            session_id: Some(routed.session_id.clone()),
+                            source: "orchestrator".to_string(),
+                            worker: Some(verifier_worker_id.clone()),
+                            task_id: Some(verifier_task_id.clone()),
+                            message_id: Some(verifier_message_id.clone()),
+                            reason: Some("verifier_dispatch_delivered".to_string()),
+                            context: serde_json::Map::new(),
+                        },
+                    )?;
+                } else {
+                    let _ =
+                        store.fail_task(run_id, &verifier_task_id, "verification gate failed")?;
+                    let _ = store.append_runtime_event(
+                        run_id,
+                        EventEnvelope {
+                            schema_version: SCHEMA_VERSION,
+                            event: EventKind::VerificationFailed,
+                            timestamp: Utc::now(),
+                            run_id: Some(run_id.to_string()),
+                            session_id: Some(routed.session_id.clone()),
+                            source: "orchestrator".to_string(),
+                            worker: Some(verifier_worker_id.clone()),
+                            task_id: Some(verifier_task_id.clone()),
+                            message_id: Some(verifier_message_id.clone()),
+                            reason: Some("verification_gate_failed".to_string()),
+                            context: serde_json::Map::new(),
+                        },
+                    )?;
+                }
+                Some(json!({
+                    "configured": true,
+                    "worker_id": verifier_worker_id,
+                    "task_id": verifier_task_id,
+                    "dispatch_id": verifier_dispatch_id,
+                    "message_id": verifier_message_id,
+                    "response": routed.response,
+                    "ok": verification_ok
+                }))
+            }
+            Err(err) => {
+                let _ = store.fail_task(run_id, &verifier_task_id, &err)?;
+                let _ = store.append_runtime_event(
+                    run_id,
+                    EventEnvelope {
+                        schema_version: SCHEMA_VERSION,
+                        event: EventKind::VerificationFailed,
+                        timestamp: Utc::now(),
+                        run_id: Some(run_id.to_string()),
+                        session_id: None,
+                        source: "orchestrator".to_string(),
+                        worker: Some(verifier_worker_id.clone()),
+                        task_id: Some(verifier_task_id.clone()),
+                        message_id: None,
+                        reason: Some(err.clone()),
+                        context: serde_json::Map::new(),
+                    },
+                )?;
+                failures.push(json!({
+                    "worker_id": verifier_worker_id,
+                    "task_id": verifier_task_id,
+                    "reason": err
+                }));
+                Some(json!({
+                    "configured": true,
+                    "worker_id": verifier_worker_id,
+                    "task_id": verifier_task_id,
+                    "ok": false
+                }))
+            }
+        }
+    } else {
+        None
+    };
+
+    let verifier_ok = verifier_result
+        .as_ref()
+        .and_then(|value| value.get("ok"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    let final_phase = if failures.is_empty() && verifier_ok {
         RunPhase::Complete
     } else {
         RunPhase::Failed
@@ -507,6 +647,7 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
         "worker_count": worker_ids.len(),
         "results": results,
         "failures": failures,
+        "verifier": verifier_result,
         "snapshot": snapshot
     }))
 }
@@ -1141,7 +1282,13 @@ fn ensure_adapter_session(
     prompt: Option<&str>,
 ) -> Result<String, String> {
     let session_id = format!("session-{worker_id}");
+    let desired_kind = worker_kind_for_type(adapter.worker_type.as_str(), worker_id);
     if store.session_file(run_id, &session_id).exists() {
+        let mut worker = store.read_worker(run_id, worker_id)?;
+        if worker.worker_kind != desired_kind {
+            worker.worker_kind = desired_kind;
+            let _ = store.upsert_worker(worker)?;
+        }
         return Ok(session_id);
     }
     let launch = resolve_worker_adapter(adapter, run_id, worker_id, task_id, prompt)?;
@@ -1161,7 +1308,22 @@ fn ensure_adapter_session(
             &SessionCommand::SendStdin { data: payload },
         )?;
     }
+    let mut worker = store.read_worker(run_id, worker_id)?;
+    if worker.worker_kind != desired_kind {
+        worker.worker_kind = desired_kind;
+        let _ = store.upsert_worker(worker)?;
+    }
     Ok(result.session.session_id)
+}
+
+fn worker_kind_for_type(worker_type: &str, worker_id: &str) -> WorkerKind {
+    if worker_type == "orchestrator" {
+        WorkerKind::Orchestrator
+    } else if worker_type == "verifier" || worker_id.starts_with("verifier-") {
+        WorkerKind::Verifier
+    } else {
+        WorkerKind::Worker
+    }
 }
 
 fn route_prompt_to_worker(

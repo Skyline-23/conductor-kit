@@ -40,6 +40,14 @@
       "description": "General worker process for fan-out tasks",
       "launch_mode": "stdin_json",
       "base_args": []
+    },
+    "verifier": {
+      "cli": "codex",
+      "model": "gpt-5.2-codex",
+      "reasoning": "medium",
+      "description": "Verification worker for fan-out result review",
+      "launch_mode": "stdin_json",
+      "base_args": []
     }
   }
 }
