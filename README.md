@@ -85,6 +85,9 @@ The helper currently supports:
 - `conductor status`
 - `conductor doctor`
 - `conductor config-path`
+- `conductor run-orchestrate`
+- `conductor run-fanout`
+- `conductor hud-view`
 
 ## Build
 
