@@ -1,6 +1,8 @@
 mod runtime;
 
 use crate::runtime::state_store::StateStore;
+use crate::runtime::types::{DispatchStatus, WorkerKind, WorkerRecord, WorkerState};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -95,6 +97,13 @@ fn main() {
         "doctor" => run_doctor(),
         "runtime-init" => run_runtime_init(&args[2..]),
         "runtime-snapshot" => run_runtime_snapshot(&args[2..]),
+        "runtime-refresh" => run_runtime_refresh(&args[2..]),
+        "worker-upsert" => run_worker_upsert(&args[2..]),
+        "task-create" => run_task_create(&args[2..]),
+        "dispatch-queue" => run_dispatch_queue(&args[2..]),
+        "dispatch-update" => run_dispatch_update(&args[2..]),
+        "mailbox-send" => run_mailbox_send(&args[2..]),
+        "mailbox-update" => run_mailbox_update(&args[2..]),
         _ => {
             print_help();
             Err("unknown command".to_string())
@@ -193,6 +202,164 @@ fn run_runtime_snapshot(args: &[String]) -> Result<(), String> {
         store.capture_snapshot(run_id)?
     };
     print_json(&snapshot)
+}
+
+fn run_runtime_refresh(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "runtime-refresh requires <run_id>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let snapshot = store.refresh_snapshot(run_id)?;
+    print_json(&snapshot)
+}
+
+fn run_worker_upsert(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "worker-upsert requires <run_id> <worker_id> <state>",
+    )?;
+    let worker_id = required_arg(
+        args,
+        1,
+        "worker-upsert requires <run_id> <worker_id> <state>",
+    )?;
+    let state = parse_worker_state(required_arg(
+        args,
+        2,
+        "worker-upsert requires <run_id> <worker_id> <state>",
+    )?)?;
+    let store = StateStore::new(resolve_state_root()?);
+    let now = Utc::now();
+    let worker = WorkerRecord {
+        worker_id: worker_id.to_string(),
+        run_id: run_id.to_string(),
+        worker_kind: WorkerKind::Worker,
+        session_ref: None,
+        state,
+        current_task_id: args.get(3).cloned(),
+        current_summary: args.get(4).cloned(),
+        terminal_label: Some(worker_id.to_string()),
+        last_heartbeat_at: Some(now),
+        last_stdout_at: None,
+        last_event_at: Some(now),
+        reason: None,
+    };
+    let worker = store.upsert_worker(worker)?;
+    print_json(&worker)
+}
+
+fn run_task_create(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "task-create requires <run_id> <task_id> <title>")?;
+    let task_id = required_arg(args, 1, "task-create requires <run_id> <task_id> <title>")?;
+    let title = required_arg(args, 2, "task-create requires <run_id> <task_id> <title>")?;
+    let description = args.get(3).cloned();
+    let store = StateStore::new(resolve_state_root()?);
+    let task = store.create_task(run_id, task_id, title, description)?;
+    print_json(&task)
+}
+
+fn run_dispatch_queue(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "dispatch-queue requires <run_id> <request_id> <target>",
+    )?;
+    let request_id = required_arg(
+        args,
+        1,
+        "dispatch-queue requires <run_id> <request_id> <target>",
+    )?;
+    let target = required_arg(
+        args,
+        2,
+        "dispatch-queue requires <run_id> <request_id> <target>",
+    )?;
+    let store = StateStore::new(resolve_state_root()?);
+    let record = store.queue_dispatch(run_id, request_id, target, serde_json::Map::new())?;
+    print_json(&record)
+}
+
+fn run_dispatch_update(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "dispatch-update requires <run_id> <request_id> <status>",
+    )?;
+    let request_id = required_arg(
+        args,
+        1,
+        "dispatch-update requires <run_id> <request_id> <status>",
+    )?;
+    let status = parse_dispatch_status(required_arg(
+        args,
+        2,
+        "dispatch-update requires <run_id> <request_id> <status>",
+    )?)?;
+    let reason = args.get(3).cloned();
+    let store = StateStore::new(resolve_state_root()?);
+    let record = store.update_dispatch_status(run_id, request_id, status, reason)?;
+    print_json(&record)
+}
+
+fn run_mailbox_send(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "mailbox-send requires <run_id> <message_id> <from_worker> <to_worker> <body>",
+    )?;
+    let message_id = required_arg(
+        args,
+        1,
+        "mailbox-send requires <run_id> <message_id> <from_worker> <to_worker> <body>",
+    )?;
+    let from_worker = required_arg(
+        args,
+        2,
+        "mailbox-send requires <run_id> <message_id> <from_worker> <to_worker> <body>",
+    )?;
+    let to_worker = required_arg(
+        args,
+        3,
+        "mailbox-send requires <run_id> <message_id> <from_worker> <to_worker> <body>",
+    )?;
+    let body = required_arg(
+        args,
+        4,
+        "mailbox-send requires <run_id> <message_id> <from_worker> <to_worker> <body>",
+    )?;
+    let store = StateStore::new(resolve_state_root()?);
+    let message = store.create_mailbox_message(run_id, message_id, from_worker, to_worker, body)?;
+    print_json(&message)
+}
+
+fn run_mailbox_update(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "mailbox-update requires <run_id> <worker_id> <message_id> <notified|delivered>",
+    )?;
+    let worker_id = required_arg(
+        args,
+        1,
+        "mailbox-update requires <run_id> <worker_id> <message_id> <notified|delivered>",
+    )?;
+    let message_id = required_arg(
+        args,
+        2,
+        "mailbox-update requires <run_id> <worker_id> <message_id> <notified|delivered>",
+    )?;
+    let mode = required_arg(
+        args,
+        3,
+        "mailbox-update requires <run_id> <worker_id> <message_id> <notified|delivered>",
+    )?;
+    let delivered = match mode {
+        "notified" => false,
+        "delivered" => true,
+        _ => return Err("mailbox-update status must be notified or delivered".to_string()),
+    };
+    let store = StateStore::new(resolve_state_root()?);
+    let message = store.update_mailbox_status(run_id, worker_id, message_id, delivered)?;
+    print_json(&message)
 }
 
 fn resolve_config_path() -> Result<PathBuf, String> {
@@ -325,6 +492,39 @@ fn validate_config(cfg: &Config) -> Vec<String> {
     issues
 }
 
+fn required_arg<'a>(args: &'a [String], index: usize, error: &str) -> Result<&'a str, String> {
+    args.get(index)
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| error.to_string())
+}
+
+fn parse_worker_state(value: &str) -> Result<WorkerState, String> {
+    match value {
+        "idle" => Ok(WorkerState::Idle),
+        "working" => Ok(WorkerState::Working),
+        "blocked" => Ok(WorkerState::Blocked),
+        "done" => Ok(WorkerState::Done),
+        "failed" => Ok(WorkerState::Failed),
+        "stopped" => Ok(WorkerState::Stopped),
+        "unknown" => Ok(WorkerState::Unknown),
+        _ => Err(
+            "worker state must be idle, working, blocked, done, failed, stopped, or unknown"
+                .to_string(),
+        ),
+    }
+}
+
+fn parse_dispatch_status(value: &str) -> Result<DispatchStatus, String> {
+    match value {
+        "pending" => Ok(DispatchStatus::Pending),
+        "notified" => Ok(DispatchStatus::Notified),
+        "delivered" => Ok(DispatchStatus::Delivered),
+        "failed" => Ok(DispatchStatus::Failed),
+        _ => Err("dispatch status must be pending, notified, delivered, or failed".to_string()),
+    }
+}
+
 fn print_help() {
     println!(
         "\
@@ -338,6 +538,13 @@ Commands:
   doctor              Validate config
   runtime-init        Initialize runtime state for a run
   runtime-snapshot    Print runtime snapshot for a run
+  runtime-refresh     Rebuild and persist snapshot for a run
+  worker-upsert       Upsert worker state for a run
+  task-create         Create a task record
+  dispatch-queue      Create a dispatch record
+  dispatch-update     Update dispatch status
+  mailbox-send        Append a mailbox message
+  mailbox-update      Mark mailbox message notified or delivered
 "
     );
 }

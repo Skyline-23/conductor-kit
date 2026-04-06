@@ -1,10 +1,12 @@
 use crate::runtime::types::{
-    DispatchCounts, DispatchRecord, DispatchStatus, EventEnvelope, MailboxCounts, MailboxRecord,
-    ReadinessState, ReplayState, RunPhase, RunRecord, RunSnapshot, RuntimeSnapshot, SCHEMA_VERSION,
-    TaskCounts, TaskRecord, TaskStatus, WorkerProjection, WorkerRecord,
+    DispatchCounts, DispatchRecord, DispatchStatus, EventEnvelope, EventKind, MailboxCounts,
+    MailboxMessage, MailboxRecord, ReadinessState, ReplayState, RunPhase, RunRecord, RunSnapshot,
+    RuntimeSnapshot, SCHEMA_VERSION, TaskCounts, TaskRecord, TaskStatus, WorkerProjection,
+    WorkerRecord,
 };
 use chrono::{Duration, Utc};
 use serde::Serialize;
+use serde_json::{Map, Value};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -85,6 +87,272 @@ impl StateStore {
 
     pub fn read_snapshot(&self, run_id: &str) -> Result<RuntimeSnapshot, String> {
         self.read_json(&self.snapshot_file(run_id))
+    }
+
+    pub fn refresh_snapshot(&self, run_id: &str) -> Result<RuntimeSnapshot, String> {
+        let snapshot = self.capture_snapshot(run_id)?;
+        self.write_json(&self.snapshot_file(run_id), &snapshot)?;
+        self.append_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::SnapshotCaptured,
+                timestamp: Utc::now(),
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "runtime".to_string(),
+                worker: None,
+                task_id: None,
+                message_id: None,
+                reason: None,
+                context: Map::new(),
+            },
+        )?;
+        Ok(snapshot)
+    }
+
+    pub fn upsert_worker(&self, worker: WorkerRecord) -> Result<WorkerRecord, String> {
+        let run_id = worker.run_id.clone();
+        let worker_id = worker.worker_id.clone();
+        self.write_json(&self.worker_file(&run_id, &worker_id), &worker)?;
+        self.append_event(
+            &run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::WorkerStateChanged,
+                timestamp: Utc::now(),
+                run_id: Some(run_id.clone()),
+                session_id: None,
+                source: "runtime".to_string(),
+                worker: Some(worker_id),
+                task_id: worker.current_task_id.clone(),
+                message_id: None,
+                reason: worker.reason.clone(),
+                context: Map::new(),
+            },
+        )?;
+        self.refresh_snapshot(&run_id)?;
+        Ok(worker)
+    }
+
+    pub fn create_task(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        title: &str,
+        description: Option<String>,
+    ) -> Result<TaskRecord, String> {
+        let now = Utc::now();
+        let task = TaskRecord {
+            task_id: task_id.to_string(),
+            run_id: run_id.to_string(),
+            title: title.to_string(),
+            description,
+            status: TaskStatus::Pending,
+            owner: None,
+            claim: None,
+            depends_on: Vec::new(),
+            blocked_by: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            completed_at: None,
+            result: None,
+            error: None,
+            metadata: Map::new(),
+        };
+        self.write_json(&self.task_file(run_id, task_id), &task)?;
+        self.refresh_snapshot(run_id)?;
+        Ok(task)
+    }
+
+    pub fn queue_dispatch(
+        &self,
+        run_id: &str,
+        request_id: &str,
+        target: &str,
+        metadata: Map<String, Value>,
+    ) -> Result<DispatchRecord, String> {
+        let now = Utc::now();
+        let record = DispatchRecord {
+            request_id: request_id.to_string(),
+            run_id: run_id.to_string(),
+            target: target.to_string(),
+            status: DispatchStatus::Pending,
+            attempt_count: 0,
+            created_at: now,
+            updated_at: now,
+            notified_at: None,
+            delivered_at: None,
+            failed_at: None,
+            last_reason: None,
+            metadata,
+        };
+        self.write_json(&self.dispatch_file(run_id, request_id), &record)?;
+        self.append_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::DispatchQueued,
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "runtime".to_string(),
+                worker: None,
+                task_id: None,
+                message_id: None,
+                reason: None,
+                context: Map::new(),
+            },
+        )?;
+        self.refresh_snapshot(run_id)?;
+        Ok(record)
+    }
+
+    pub fn update_dispatch_status(
+        &self,
+        run_id: &str,
+        request_id: &str,
+        status: DispatchStatus,
+        reason: Option<String>,
+    ) -> Result<DispatchRecord, String> {
+        let mut record: DispatchRecord = self.read_json(&self.dispatch_file(run_id, request_id))?;
+        let now = Utc::now();
+        record.status = status.clone();
+        record.updated_at = now;
+        match status {
+            DispatchStatus::Pending => {}
+            DispatchStatus::Notified => {
+                record.attempt_count += 1;
+                record.notified_at = Some(now);
+            }
+            DispatchStatus::Delivered => {
+                record.delivered_at = Some(now);
+            }
+            DispatchStatus::Failed => {
+                record.failed_at = Some(now);
+            }
+        }
+        record.last_reason = reason.clone();
+        self.write_json(&self.dispatch_file(run_id, request_id), &record)?;
+        self.append_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: match status {
+                    DispatchStatus::Pending => EventKind::DispatchQueued,
+                    DispatchStatus::Notified => EventKind::DispatchNotified,
+                    DispatchStatus::Delivered => EventKind::DispatchDelivered,
+                    DispatchStatus::Failed => EventKind::DispatchFailed,
+                },
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "runtime".to_string(),
+                worker: None,
+                task_id: None,
+                message_id: None,
+                reason,
+                context: Map::new(),
+            },
+        )?;
+        self.refresh_snapshot(run_id)?;
+        Ok(record)
+    }
+
+    pub fn create_mailbox_message(
+        &self,
+        run_id: &str,
+        message_id: &str,
+        from_worker: &str,
+        to_worker: &str,
+        body: &str,
+    ) -> Result<MailboxMessage, String> {
+        let mailbox_path = self.mailbox_file(run_id, to_worker);
+        let mut mailbox = if mailbox_path.exists() {
+            self.read_json::<MailboxRecord>(&mailbox_path)?
+        } else {
+            MailboxRecord {
+                worker_id: to_worker.to_string(),
+                records: Vec::new(),
+            }
+        };
+        let now = Utc::now();
+        let message = MailboxMessage {
+            message_id: message_id.to_string(),
+            run_id: run_id.to_string(),
+            from_worker: from_worker.to_string(),
+            to_worker: to_worker.to_string(),
+            body: body.to_string(),
+            created_at: now,
+            notified_at: None,
+            delivered_at: None,
+        };
+        mailbox.records.push(message.clone());
+        self.write_json(&mailbox_path, &mailbox)?;
+        self.append_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::MailboxMessageCreated,
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "runtime".to_string(),
+                worker: Some(to_worker.to_string()),
+                task_id: None,
+                message_id: Some(message_id.to_string()),
+                reason: None,
+                context: Map::new(),
+            },
+        )?;
+        self.refresh_snapshot(run_id)?;
+        Ok(message)
+    }
+
+    pub fn update_mailbox_status(
+        &self,
+        run_id: &str,
+        worker_id: &str,
+        message_id: &str,
+        delivered: bool,
+    ) -> Result<MailboxMessage, String> {
+        let mailbox_path = self.mailbox_file(run_id, worker_id);
+        let mut mailbox: MailboxRecord = self.read_json(&mailbox_path)?;
+        let now = Utc::now();
+        let message = mailbox
+            .records
+            .iter_mut()
+            .find(|record| record.message_id == message_id)
+            .ok_or_else(|| format!("mailbox message not found: {message_id}"))?;
+        if delivered {
+            message.delivered_at = Some(now);
+        } else {
+            message.notified_at = Some(now);
+        }
+        let message = message.clone();
+        self.write_json(&mailbox_path, &mailbox)?;
+        self.append_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: if delivered {
+                    EventKind::MailboxMessageDelivered
+                } else {
+                    EventKind::MailboxMessageNotified
+                },
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "runtime".to_string(),
+                worker: Some(worker_id.to_string()),
+                task_id: None,
+                message_id: Some(message_id.to_string()),
+                reason: None,
+                context: Map::new(),
+            },
+        )?;
+        self.refresh_snapshot(run_id)?;
+        Ok(message)
     }
 
     pub fn capture_snapshot(&self, run_id: &str) -> Result<RuntimeSnapshot, String> {
@@ -202,12 +470,26 @@ impl StateStore {
             .join(format!("{worker_id}.json"))
     }
 
+    fn task_file(&self, run_id: &str, task_id: &str) -> PathBuf {
+        self.run_dir(run_id)
+            .join("tasks")
+            .join(format!("{task_id}.json"))
+    }
+
     fn dispatch_dir(&self, run_id: &str) -> PathBuf {
         self.run_dir(run_id).join("dispatch")
     }
 
+    fn dispatch_file(&self, run_id: &str, request_id: &str) -> PathBuf {
+        self.dispatch_dir(run_id).join(format!("{request_id}.json"))
+    }
+
     fn mailbox_dir(&self, run_id: &str) -> PathBuf {
         self.run_dir(run_id).join("mailbox")
+    }
+
+    fn mailbox_file(&self, run_id: &str, worker_id: &str) -> PathBuf {
+        self.mailbox_dir(run_id).join(format!("{worker_id}.json"))
     }
 
     fn read_workers(&self, run_id: &str) -> Result<Vec<WorkerRecord>, String> {
