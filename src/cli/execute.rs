@@ -3930,16 +3930,11 @@ fn send_prompt_to_tmux_pane(pane_id: &str, prompt: &str) -> Result<(), String> {
     if prompt.trim().is_empty() {
         return Ok(());
     }
-    let buffer_name = format!(
-        "conductor-{}",
-        pane_id.trim_start_matches('%').replace('%', "-")
-    );
-    run_tmux(["set-buffer", "-b", &buffer_name, prompt])?;
+    let prompt = prompt.replace('\n', " ");
+    run_tmux(["send-keys", "-t", pane_id, "-l", "--", &prompt])?;
     let script = format!(
-        "sleep 0.8; tmux paste-buffer -b {} -t {}; tmux delete-buffer -b {}; tmux send-keys -t {} Enter",
-        shell_quote_str(&buffer_name),
+        "sleep 0.1; tmux send-keys -t {} C-m; sleep 0.1; tmux send-keys -t {} C-m",
         shell_quote_str(pane_id),
-        shell_quote_str(&buffer_name),
         shell_quote_str(pane_id),
     );
     run_tmux(["run-shell", "-b", &script])
