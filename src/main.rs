@@ -1,5 +1,6 @@
 mod runtime;
 
+use crate::runtime::adapters::{WorkerAdapterConfig, resolve_worker_adapter};
 use crate::runtime::authority::renew_authority;
 use crate::runtime::claims::{acquire_claim, release_claim};
 use crate::runtime::hooks::{event_name_of, filter_events, watch_and_run_hooks};
@@ -115,6 +116,8 @@ fn main() {
         "worker-upsert" => run_worker_upsert(&args[2..]),
         "worker-exec" => run_worker_exec(&args[2..]),
         "worker-spawn-session" => run_worker_spawn_session(&args[2..]),
+        "worker-adapter-exec" => run_worker_adapter_exec(&args[2..]),
+        "worker-adapter-spawn-session" => run_worker_adapter_spawn_session(&args[2..]),
         "worker-send" => run_worker_send(&args[2..]),
         "worker-session-status" => run_worker_session_status(&args[2..]),
         "worker-stop-session" => run_worker_stop_session(&args[2..]),
@@ -393,6 +396,74 @@ fn run_worker_spawn_session(args: &[String]) -> Result<(), String> {
         &program_args,
         &conductor_bin,
     )?;
+    print_json(&result.session)
+}
+
+fn run_worker_adapter_exec(args: &[String]) -> Result<(), String> {
+    if args.len() < 4 {
+        return Err(
+            "worker-adapter-exec requires <worker_type> <run_id> <worker_id> <task_id|-> [prompt]"
+                .to_string(),
+        );
+    }
+    let worker_type = &args[0];
+    let run_id = &args[1];
+    let worker_id = &args[2];
+    let task_id = if args[3] == "-" {
+        None
+    } else {
+        Some(args[3].as_str())
+    };
+    let prompt = args.get(4).map(String::as_str);
+    let (_, cfg) = load_resolved_config()?;
+    let adapter = worker_adapter_config(&cfg, worker_type)?;
+    let launch = resolve_worker_adapter(&adapter, run_id, worker_id, task_id, prompt)?;
+    let store = StateStore::new(resolve_state_root()?);
+    let result = execute_worker(
+        WorkerLaunchSpec {
+            run_id: run_id.to_string(),
+            worker_id: worker_id.to_string(),
+            task_id: task_id.map(str::to_string),
+            program: launch.program,
+            args: launch.args,
+            cwd: launch.cwd,
+            stdin_payload: launch.stdin_payload,
+        },
+        &store,
+    )?;
+    print_json(&result)
+}
+
+fn run_worker_adapter_spawn_session(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err(
+            "worker-adapter-spawn-session requires <worker_type> <run_id> <worker_id> [prompt]"
+                .to_string(),
+        );
+    }
+    let worker_type = &args[0];
+    let run_id = &args[1];
+    let worker_id = &args[2];
+    let prompt = args.get(3).map(String::as_str);
+    let (_, cfg) = load_resolved_config()?;
+    let adapter = worker_adapter_config(&cfg, worker_type)?;
+    let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, prompt)?;
+    let store = StateStore::new(resolve_state_root()?);
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let result = spawn_session(
+        &store,
+        run_id,
+        worker_id,
+        &launch.program,
+        &launch.args,
+        &conductor_bin,
+    )?;
+    if let Some(payload) = launch.stdin_payload {
+        let _ = send_session_command(
+            Path::new(&result.session.socket_path),
+            &SessionCommand::SendStdin { data: payload },
+        )?;
+    }
     print_json(&result.session)
 }
 
@@ -895,6 +966,20 @@ fn validate_config(cfg: &Config) -> Vec<String> {
     issues
 }
 
+fn worker_adapter_config(cfg: &Config, worker_type: &str) -> Result<WorkerAdapterConfig, String> {
+    let worker = cfg
+        .workers
+        .get(worker_type)
+        .ok_or_else(|| format!("unknown worker type: {worker_type}"))?;
+    Ok(WorkerAdapterConfig {
+        worker_type: worker_type.to_string(),
+        cli: worker.cli.clone(),
+        model: worker.model.clone(),
+        reasoning: worker.reasoning.clone(),
+        description: worker.description.clone(),
+    })
+}
+
 fn required_arg<'a>(args: &'a [String], index: usize, error: &str) -> Result<&'a str, String> {
     args.get(index)
         .map(String::as_str)
@@ -964,6 +1049,8 @@ Commands:
   worker-upsert       Upsert worker state for a run
   worker-exec         Execute a worker command over stdio
   worker-spawn-session Start a long-lived worker session host
+  worker-adapter-exec Execute a configured worker adapter once
+  worker-adapter-spawn-session Start a configured worker adapter session
   worker-send         Send stdin to a worker session
   worker-session-status Query a worker session
   worker-stop-session Stop a worker session
