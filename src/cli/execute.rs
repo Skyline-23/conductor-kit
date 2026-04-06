@@ -1293,64 +1293,55 @@ fn run_surface_attached_tmux_session(
     main_title: &str,
     surface_cmd: &str,
 ) -> Result<(), String> {
-    let session_name_bg = session_name.to_string();
-    let hud_cmd_bg = hud_cmd.to_string();
-    let main_title_bg = main_title.to_string();
-    std::thread::spawn(move || {
-        for _ in 0..30 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            if !tmux_session_exists(&session_name_bg).unwrap_or(false) {
-                continue;
-            }
-            let _ = run_tmux(["set-option", "-t", &session_name_bg, "mouse", "on"]);
-            let _ = run_tmux(["set-option", "-t", &session_name_bg, "set-clipboard", "on"]);
-            let _ = run_tmux([
-                "split-window",
-                "-v",
-                "-l",
-                "1",
-                "-t",
-                &format!("{session_name_bg}:0"),
-                &hud_cmd_bg,
-            ]);
-            let _ = run_tmux([
-                "select-pane",
-                "-t",
-                &format!("{session_name_bg}:0.0"),
-                "-T",
-                &main_title_bg,
-            ]);
-            let _ = run_tmux([
-                "select-pane",
-                "-t",
-                &format!("{session_name_bg}:0.1"),
-                "-T",
-                "HUD",
-            ]);
-            if let Ok(main_pane_id) = run_tmux_capture([
-                "display-message",
-                "-p",
-                "-t",
-                &format!("{session_name_bg}:0.0"),
-                "#{pane_id}",
-            ]) {
-                let main_exit_hook = format!(
-                    "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
-                    main_pane_id.trim(),
-                    session_name_bg
-                );
-                let _ = run_tmux([
-                    "set-hook",
-                    "-t",
-                    &session_name_bg,
-                    "pane-exited",
-                    &main_exit_hook,
-                ]);
-            }
-            break;
-        }
-    });
-    run_tmux_interactive(["new-session", "-s", session_name, "-n", "ops", surface_cmd])
+    run_tmux([
+        "new-session",
+        "-d",
+        "-s",
+        session_name,
+        "-n",
+        "ops",
+        surface_cmd,
+    ])?;
+    run_tmux(["set-option", "-t", session_name, "mouse", "on"])?;
+    run_tmux(["set-option", "-t", session_name, "set-clipboard", "on"])?;
+    let main_pane_id = run_tmux_capture([
+        "display-message",
+        "-p",
+        "-t",
+        &format!("{session_name}:0.0"),
+        "#{pane_id}",
+    ])?;
+    run_tmux([
+        "split-window",
+        "-v",
+        "-l",
+        "1",
+        "-t",
+        &format!("{session_name}:0.0"),
+        hud_cmd,
+    ])?;
+    let hud_pane_id = run_tmux_capture([
+        "display-message",
+        "-p",
+        "-t",
+        &format!("{session_name}:0.1"),
+        "#{pane_id}",
+    ])?;
+    run_tmux(["select-pane", "-t", main_pane_id.trim(), "-T", main_title])?;
+    run_tmux(["select-pane", "-t", hud_pane_id.trim(), "-T", "HUD"])?;
+    let main_exit_hook = format!(
+        "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
+        main_pane_id.trim(),
+        session_name
+    );
+    run_tmux([
+        "set-hook",
+        "-t",
+        session_name,
+        "pane-exited",
+        &main_exit_hook,
+    ])?;
+    attach_tmux_ops_session(session_name)
 }
 
 fn resolve_surface_launch(
