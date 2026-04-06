@@ -1254,24 +1254,14 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
 fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
     let tmux_session_name = format!("conductor-{run_id}-surface");
     let (_, cfg) = load_resolved_config()?;
-    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
-    let state_root = resolve_state_root()?;
-    let config_path = resolve_config_path().ok();
-    let hud_cmd = build_hud_shell_command(
-        &cwd,
-        &conductor_bin,
-        &state_root,
-        config_path.as_deref(),
-        run_id,
-    );
     let launch = resolve_surface_launch(&cfg, run_id)?;
     let surface_cmd = build_launch_shell_command(&cwd, &launch);
     let pane_specs = vec![("main".to_string(), "surface".to_string(), surface_cmd)];
     if tmux_session_exists(&tmux_session_name)? {
         run_tmux(["kill-session", "-t", &tmux_session_name])?;
     }
-    ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
+    ensure_tmux_ops_session(&tmux_session_name, "", &pane_specs)?;
     attach_tmux_ops_session(&tmux_session_name)
 }
 
@@ -3134,7 +3124,9 @@ fn ensure_tmux_ops_session(
         main_cmd,
     ])?;
 
-    if !pane_specs.is_empty() {
+    let include_hud = !hud_cmd.trim().is_empty();
+
+    if include_hud {
         run_tmux([
             "split-window",
             "-h",
@@ -3168,7 +3160,7 @@ fn ensure_tmux_ops_session(
         main_title,
     ])?;
 
-    if !pane_specs.is_empty() {
+    if include_hud {
         run_tmux([
             "select-pane",
             "-t",
@@ -3178,11 +3170,12 @@ fn ensure_tmux_ops_session(
         ])?;
     }
 
+    let pane_title_offset = if include_hud { 2 } else { 1 };
     for (index, (worker_id, _, _)) in pane_specs.iter().skip(1).enumerate() {
         run_tmux([
             "select-pane",
             "-t",
-            &format!("{session_name}:0.{}", index + 2),
+            &format!("{session_name}:0.{}", index + pane_title_offset),
             "-T",
             worker_id,
         ])?;
