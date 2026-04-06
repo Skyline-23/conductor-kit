@@ -1,3 +1,6 @@
+mod runtime;
+
+use crate::runtime::state_store::StateStore;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -90,6 +93,8 @@ fn main() {
         "config-path" => run_config_path(),
         "status" => run_status(),
         "doctor" => run_doctor(),
+        "runtime-init" => run_runtime_init(&args[2..]),
+        "runtime-snapshot" => run_runtime_snapshot(&args[2..]),
         _ => {
             print_help();
             Err("unknown command".to_string())
@@ -149,6 +154,47 @@ fn run_doctor() -> Result<(), String> {
     }
 }
 
+fn run_runtime_init(args: &[String]) -> Result<(), String> {
+    let run_id = args
+        .first()
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("run-1");
+    let owner = args
+        .get(1)
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("orchestrator-1");
+    let store = StateStore::new(resolve_state_root()?);
+    let run = store.init_run(run_id, owner)?;
+    print_json(&json!({
+        "ok": true,
+        "state_dir": store.root().display().to_string(),
+        "run": run
+    }))
+}
+
+fn run_runtime_snapshot(args: &[String]) -> Result<(), String> {
+    let run_id = args
+        .first()
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "runtime-snapshot requires <run_id>".to_string())?;
+    let store = StateStore::new(resolve_state_root()?);
+    let snapshot = if store
+        .root()
+        .join("runs")
+        .join(run_id)
+        .join("snapshot.json")
+        .exists()
+    {
+        store.read_snapshot(run_id)?
+    } else {
+        store.capture_snapshot(run_id)?
+    };
+    print_json(&snapshot)
+}
+
 fn resolve_config_path() -> Result<PathBuf, String> {
     if let Ok(path) = env::var("CONDUCTOR_CONFIG") {
         let trimmed = path.trim();
@@ -166,6 +212,18 @@ fn resolve_config_path() -> Result<PathBuf, String> {
     Ok(Path::new(&home)
         .join(".conductor-kit")
         .join("conductor.json"))
+}
+
+fn resolve_state_root() -> Result<PathBuf, String> {
+    if let Ok(path) = env::var("CONDUCTOR_STATE_DIR") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    Ok(env::current_dir()
+        .map_err(|err| err.to_string())?
+        .join(".conductor"))
 }
 
 fn find_project_config(start: &Path) -> Option<PathBuf> {
@@ -226,7 +284,10 @@ fn validate_config(cfg: &Config) -> Vec<String> {
     if cfg.runtime.workers.max_workers < 1 {
         issues.push("runtime.workers.max_workers must be >= 1".to_string());
     }
-    if !matches!(cfg.runtime.workers.spawn_policy.as_str(), "ephemeral" | "persistent") {
+    if !matches!(
+        cfg.runtime.workers.spawn_policy.as_str(),
+        "ephemeral" | "persistent"
+    ) {
         issues.push("runtime.workers.spawn_policy must be ephemeral or persistent".to_string());
     }
     if !matches!(
@@ -254,7 +315,9 @@ fn validate_config(cfg: &Config) -> Vec<String> {
         }
         if let Some(reasoning) = &worker.reasoning {
             if !matches!(reasoning.as_str(), "low" | "medium" | "high") {
-                issues.push(format!("workers.{name}.reasoning must be low, medium, or high"));
+                issues.push(format!(
+                    "workers.{name}.reasoning must be low, medium, or high"
+                ));
             }
         }
     }
@@ -262,15 +325,28 @@ fn validate_config(cfg: &Config) -> Vec<String> {
     issues
 }
 
-fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
+fn print_help() {
+    println!(
+        "\
+conductor <command>
+
+Commands:
+  help                Show this help
+  version             Print version
+  config-path         Print resolved config path
+  status              Print config status payload
+  doctor              Validate config
+  runtime-init        Initialize runtime state for a run
+  runtime-snapshot    Print runtime snapshot for a run
+"
+    );
+}
+
+fn print_json<T>(value: &T) -> Result<(), String>
+where
+    T: Serialize,
+{
     let rendered = serde_json::to_string_pretty(value).map_err(|err| err.to_string())?;
     println!("{rendered}");
     Ok(())
-}
-
-fn print_help() {
-    println!(
-        "conductor {}\n\nUsage:\n  conductor <command>\n\nCommands:\n  help         Show this help text\n  version      Show version\n  config-path  Print the resolved config path\n  status       Print current runtime summary as JSON\n  doctor       Validate config and print findings as JSON",
-        env!("CARGO_PKG_VERSION")
-    );
 }
