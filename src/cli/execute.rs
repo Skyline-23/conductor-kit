@@ -1055,19 +1055,17 @@ fn run_hud_open(args: &[String]) -> Result<(), String> {
 }
 
 fn run_ops_open(args: &[String]) -> Result<(), String> {
-    let run_id = required_arg(args, 0, "ops-open requires <run_id> [terminal_app]")?;
-    let terminal_app = args
+    let run_id = required_arg(args, 0, "ops-open requires <run_id> [tmux_session_name]")?;
+    let tmux_session_name = args
         .get(1)
         .cloned()
-        .or_else(|| env::var("CONDUCTOR_TERMINAL_APP").ok())
-        .unwrap_or_else(|| "Terminal".to_string());
+        .unwrap_or_else(|| default_tmux_session_name(run_id));
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
     let state_root = resolve_state_root()?;
     let config_path = resolve_config_path().ok();
     let store = StateStore::new(state_root.clone());
     let snapshot = store.read_snapshot(run_id)?;
-
     let hud_cmd = build_hud_shell_command(
         &cwd,
         &conductor_bin,
@@ -1075,9 +1073,8 @@ fn run_ops_open(args: &[String]) -> Result<(), String> {
         config_path.as_deref(),
         run_id,
     );
-    open_terminal_script(&terminal_app, &hud_cmd)?;
 
-    let mut opened_sessions = Vec::new();
+    let mut pane_specs = Vec::new();
     for worker in snapshot.workers {
         let worker_record = store.read_worker(run_id, &worker.worker_id)?;
         if let Some(session_id) = worker_record.session_ref {
@@ -1089,21 +1086,50 @@ fn run_ops_open(args: &[String]) -> Result<(), String> {
                 run_id,
                 &session_id,
             );
-            open_terminal_script(&terminal_app, &attach_cmd)?;
-            opened_sessions.push(json!({
-                "worker_id": worker.worker_id,
-                "session_id": session_id
-            }));
+            pane_specs.push((worker.worker_id, session_id, attach_cmd));
         }
     }
 
-    print_json(&json!({
-        "ok": true,
-        "terminal_app": terminal_app,
-        "run_id": run_id,
-        "hud": true,
-        "sessions": opened_sessions
-    }))
+    if command_available("tmux") {
+        let created = ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
+        let attached = if env::var("CONDUCTOR_OPS_NO_ATTACH").ok().as_deref() == Some("1") {
+            false
+        } else {
+            attach_tmux_ops_session(&tmux_session_name)?;
+            true
+        };
+        print_json(&json!({
+            "ok": true,
+            "run_id": run_id,
+            "tmux_session": tmux_session_name,
+            "created": created,
+            "attached": attached,
+            "hud": true,
+            "sessions": pane_specs.iter().map(|(worker_id, session_id, _)| json!({
+                "worker_id": worker_id,
+                "session_id": session_id
+            })).collect::<Vec<_>>()
+        }))
+    } else {
+        let terminal_app = env::var("CONDUCTOR_TERMINAL_APP")
+            .ok()
+            .unwrap_or_else(|| "Terminal".to_string());
+        open_terminal_script(&terminal_app, &hud_cmd)?;
+        for (_, _, attach_cmd) in &pane_specs {
+            open_terminal_script(&terminal_app, attach_cmd)?;
+        }
+        print_json(&json!({
+            "ok": true,
+            "run_id": run_id,
+            "terminal_app": terminal_app,
+            "fallback": "terminal_windows",
+            "hud": true,
+            "sessions": pane_specs.iter().map(|(worker_id, session_id, _)| json!({
+                "worker_id": worker_id,
+                "session_id": session_id
+            })).collect::<Vec<_>>()
+        }))
+    }
 }
 
 fn run_worker_session_status(args: &[String]) -> Result<(), String> {
@@ -1742,6 +1768,110 @@ fn open_terminal_script(terminal_app: &str, command: &str) -> Result<(), String>
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
+}
+
+fn ensure_tmux_ops_session(
+    session_name: &str,
+    hud_cmd: &str,
+    pane_specs: &[(String, String, String)],
+) -> Result<bool, String> {
+    if tmux_session_exists(session_name)? {
+        return Ok(false);
+    }
+
+    run_tmux([
+        "new-session",
+        "-d",
+        "-s",
+        session_name,
+        "-n",
+        "ops",
+        hud_cmd,
+    ])?;
+
+    for (_, _, attach_cmd) in pane_specs {
+        run_tmux([
+            "split-window",
+            "-t",
+            &format!("{session_name}:0"),
+            attach_cmd,
+        ])?;
+        run_tmux(["select-layout", "-t", &format!("{session_name}:0"), "tiled"])?;
+    }
+
+    run_tmux([
+        "select-pane",
+        "-t",
+        &format!("{session_name}:0.0"),
+        "-T",
+        "HUD",
+    ])?;
+    for (index, (worker_id, _, _)) in pane_specs.iter().enumerate() {
+        run_tmux([
+            "select-pane",
+            "-t",
+            &format!("{session_name}:0.{}", index + 1),
+            "-T",
+            worker_id,
+        ])?;
+    }
+
+    Ok(true)
+}
+
+fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
+    if env::var_os("TMUX").is_some() {
+        run_tmux(["switch-client", "-t", session_name])
+    } else {
+        run_tmux(["attach-session", "-t", session_name])
+    }
+}
+
+fn tmux_session_exists(session_name: &str) -> Result<bool, String> {
+    let output = Command::new("tmux")
+        .args(["has-session", "-t", session_name])
+        .output()
+        .map_err(|err| err.to_string())?;
+    Ok(output.status.success())
+}
+
+fn run_tmux<I, S>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args_vec = args
+        .into_iter()
+        .map(|value| value.as_ref().to_string())
+        .collect::<Vec<_>>();
+    let output = Command::new("tmux")
+        .args(&args_vec)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            Err(format!("tmux command failed: {}", args_vec.join(" ")))
+        } else {
+            Err(stderr)
+        }
+    }
+}
+
+fn default_tmux_session_name(run_id: &str) -> String {
+    let sanitized = run_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    format!("conductor-{sanitized}")
 }
 
 fn shell_quote(value: &Path) -> String {
