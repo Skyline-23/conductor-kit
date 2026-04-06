@@ -221,7 +221,7 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .unwrap_or_else(default_run_id);
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
-    run_surface_ops_open(&run_id)
+    run_surface_ops_open(&run_id, false)
 }
 
 fn update_profile_field(
@@ -1081,7 +1081,8 @@ fn run_open(args: &[String]) -> Result<(), String> {
         .unwrap_or_else(default_run_id);
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
-    run_surface_ops_open(&run_id)
+    cleanup_default_surface_state(&store, &run_id)?;
+    run_surface_ops_open(&run_id, true)
 }
 
 fn run_attach_alias(args: &[String]) -> Result<(), String> {
@@ -1248,7 +1249,7 @@ fn ensure_explicit_team_sessions(
 
 fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Result<(), String> {
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
-    let launch = resolve_surface_launch(cfg, run_id)?;
+    let launch = resolve_surface_launch(cfg, run_id, false)?;
     let desired_kind = WorkerKind::Orchestrator;
     let worker_id = "main";
     if let Ok(existing) = store.read_session(run_id, &format!("session-{worker_id}")) {
@@ -1375,6 +1376,27 @@ fn stop_worker_session_if_present(store: &StateStore, run_id: &str, worker_id: &
     if let Ok(session) = store.read_session(run_id, &session_id) {
         let _ = send_session_command(Path::new(&session.socket_path), &SessionCommand::Stop);
     }
+}
+
+fn cleanup_default_surface_state(store: &StateStore, run_id: &str) -> Result<(), String> {
+    for worker_id in store.list_worker_ids(run_id)? {
+        if worker_id == "main" || worker_id == "orchestrator-main" {
+            continue;
+        }
+        stop_worker_session_if_present(store, run_id, &worker_id);
+        store.delete_worker(run_id, &worker_id)?;
+    }
+
+    for session_id in store.list_session_ids(run_id)? {
+        if session_id != "session-main" {
+            store.delete_session(run_id, &session_id)?;
+        }
+    }
+
+    stop_worker_session_if_present(store, run_id, "main");
+    store.delete_session(run_id, "session-main")?;
+    store.refresh_snapshot(run_id)?;
+    Ok(())
 }
 
 fn render_team_starter_prompt(
@@ -1533,7 +1555,7 @@ fn tallest_tmux_pane(pane_ids: &[String]) -> Result<Option<String>, String> {
     Ok(tallest.map(|(pane_id, _)| pane_id))
 }
 
-fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
+fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String> {
     let tmux_session_name = format!("conductor-{run_id}-surface");
     let (_, cfg) = load_resolved_config()?;
     let store = StateStore::new(resolve_state_root()?);
@@ -1556,7 +1578,7 @@ fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
         config_path.as_deref(),
         run_id,
     );
-    let launch = resolve_surface_launch(&cfg, run_id)?;
+    let launch = resolve_surface_launch(&cfg, run_id, resume_surface)?;
     let surface_cmd = build_launch_shell_command(&cwd, &launch);
     let pane_specs = vec![OpsPaneSpec {
         title: "main".to_string(),
@@ -1637,6 +1659,7 @@ fn run_surface_attached_tmux_session(
 fn resolve_surface_launch(
     cfg: &Config,
     run_id: &str,
+    resume_surface: bool,
 ) -> Result<crate::runtime::adapters::WorkerAdapterLaunch, String> {
     let surface = &cfg.surface;
     let mut adapter = WorkerAdapterConfig {
@@ -1654,7 +1677,12 @@ fn resolve_surface_launch(
         "CONDUCTOR_TMUX_SESSION".to_string(),
         format!("conductor-{run_id}-surface"),
     );
-    resolve_worker_adapter(&adapter, run_id, "main", None, None)
+    let mut launch = resolve_worker_adapter(&adapter, run_id, "main", None, None)?;
+    if resume_surface && adapter.cli == "codex" {
+        launch.args.splice(0..0, ["resume".to_string()]);
+        launch.stdin_payload = None;
+    }
+    Ok(launch)
 }
 
 fn plan_team_roster(
@@ -4261,11 +4289,14 @@ mod tests {
     use crate::cli::host_catalog::{HostCatalog, VendorCatalog};
     use crate::runtime::types::{
         AuthorityLease, DispatchCounts, MailboxCounts, ReadinessState, ReplayState, RunPhase,
-        RunSnapshot, RuntimeSnapshot, TaskCounts,
+        RunSnapshot, RuntimeSnapshot, SessionRecord, SessionStatus, TaskCounts, WorkerKind,
+        WorkerRecord, WorkerState,
     };
     use chrono::Utc;
     use std::collections::BTreeMap;
+    use std::fs;
     use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn sample_config_with_workers(workers: BTreeMap<String, WorkerConfig>) -> Config {
         Config {
@@ -4366,6 +4397,14 @@ mod tests {
         }
     }
 
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock drift")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{nanos}"))
+    }
+
     #[test]
     fn sync_profile_for_cli_replaces_mismatched_model_and_reasoning() {
         let mut host_catalog = HostCatalog::default();
@@ -4444,5 +4483,99 @@ mod tests {
         assert!(prompt.contains("explore-1"));
         assert!(prompt.contains("Profile: explore"));
         assert!(prompt.contains("inspect the repository and find the likely bug"));
+    }
+
+    #[test]
+    fn cleanup_default_surface_state_removes_stale_team_workers_and_sessions() {
+        let root = unique_temp_dir("conductor-cleanup");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "main".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("surface".to_string()),
+                terminal_label: Some("main".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: None,
+            })
+            .expect("failed to upsert main worker");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: None,
+                current_summary: Some("direct explore pane ready".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert stale worker");
+
+        let base_session = SessionRecord {
+            run_id: "demo-run".to_string(),
+            session_id: "session-main".to_string(),
+            worker_id: "main".to_string(),
+            socket_path: root.join("missing.sock").display().to_string(),
+            stdout_path: root.join("stdout.log").display().to_string(),
+            stderr_path: root.join("stderr.log").display().to_string(),
+            pid: std::process::id(),
+            child_pid: None,
+            program: "/bin/sh".to_string(),
+            args: Vec::new(),
+            status: SessionStatus::Stopped,
+            started_at: Utc::now(),
+            updated_at: Utc::now(),
+            exited_at: None,
+            exit_code: None,
+        };
+        store
+            .write_session(&base_session)
+            .expect("failed to write main session");
+        store
+            .write_session(&SessionRecord {
+                session_id: "session-explore-1".to_string(),
+                worker_id: "explore-1".to_string(),
+                ..base_session.clone()
+            })
+            .expect("failed to write stale worker session");
+
+        cleanup_default_surface_state(&store, "demo-run").expect("cleanup failed");
+
+        let worker_ids = store.list_worker_ids("demo-run").expect("list workers failed");
+        assert!(worker_ids.contains(&"main".to_string()));
+        assert!(worker_ids.contains(&"orchestrator-main".to_string()));
+        assert!(!worker_ids.contains(&"explore-1".to_string()));
+
+        let session_ids = store
+            .list_session_ids("demo-run")
+            .expect("list sessions failed");
+        assert!(!session_ids.contains(&"session-main".to_string()));
+        assert!(!session_ids.contains(&"session-explore-1".to_string()));
+    }
+
+    #[test]
+    fn resolve_surface_launch_uses_codex_resume_for_resume_open() {
+        let cfg = sample_config_with_workers(BTreeMap::new());
+        let launch =
+            resolve_surface_launch(&cfg, "demo-run", true).expect("surface launch should resolve");
+        assert!(launch.program.ends_with("codex"));
+        assert_eq!(launch.args, vec!["resume".to_string()]);
+        assert!(launch.stdin_payload.is_none());
     }
 }

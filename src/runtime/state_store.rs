@@ -573,6 +573,48 @@ impl StateStore {
         self.read_json(&self.session_file(run_id, session_id))
     }
 
+    pub fn delete_worker(&self, run_id: &str, worker_id: &str) -> Result<(), String> {
+        let path = self.worker_file(run_id, worker_id);
+        if path.exists() {
+            fs::remove_file(path).map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_session(&self, run_id: &str, session_id: &str) -> Result<(), String> {
+        let dir = self.session_dir(run_id, session_id);
+        if dir.exists() {
+            fs::remove_dir_all(dir).map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    pub fn list_worker_ids(&self, run_id: &str) -> Result<Vec<String>, String> {
+        self.list_json_stems(&self.run_dir(run_id).join("workers"))
+    }
+
+    pub fn list_session_ids(&self, run_id: &str) -> Result<Vec<String>, String> {
+        let dir = self.run_dir(run_id).join("sessions");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = fs::read_dir(dir)
+            .map_err(|err| err.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())?;
+        entries.sort_by_key(|entry| entry.path());
+        Ok(entries
+            .into_iter()
+            .filter_map(|entry| {
+                entry
+                    .file_type()
+                    .ok()
+                    .filter(|kind| kind.is_dir())
+                    .and_then(|_| entry.file_name().into_string().ok())
+            })
+            .collect())
+    }
+
     fn task_file(&self, run_id: &str, task_id: &str) -> PathBuf {
         self.run_dir(run_id)
             .join("tasks")
@@ -663,6 +705,33 @@ impl StateStore {
             }
         }
         Ok(items)
+    }
+
+    fn list_json_stems(&self, dir: &Path) -> Result<Vec<String>, String> {
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries = fs::read_dir(dir)
+            .map_err(|err| err.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|err| err.to_string())?;
+        entries.sort_by_key(|entry| entry.path());
+        Ok(entries
+            .into_iter()
+            .filter_map(|entry| {
+                entry
+                    .file_type()
+                    .ok()
+                    .filter(|kind| kind.is_file())
+                    .and_then(|_| {
+                        entry
+                            .path()
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .map(|stem| stem.to_string())
+                    })
+            })
+            .collect())
     }
 
     fn write_json<T>(&self, path: &Path, value: &T) -> Result<(), String>
