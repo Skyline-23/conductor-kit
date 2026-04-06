@@ -1,45 +1,41 @@
 {
-  "disabled": false,
   "defaults": {
     "idle_timeout_ms": 120000,
     "summary_only": true,
-    "max_parallel": 4,
-    "retry": 0,
-    "retry_backoff_ms": 500,
-    "log_prompt": false
+    "max_parallel": 4
   },
-
-  "roles": {
-    "sage": {
+  "runtime": {
+    "transport": {
+      "mode": "direct",
+      "preferred": ["stdio", "unix_socket"],
+      "allow_tmux_fallback": false
+    },
+    "loop": {
+      "persist_runs": true,
+      "resume_strategy": "ledger"
+    },
+    "memory": {
+      "enabled": true,
+      "ttl_hours": 24,
+      "invalidate_on_git_head_change": true
+    },
+    "workers": {
+      "max_workers": 4,
+      "spawn_policy": "ephemeral",
+      "continue_policy": "resume_when_possible"
+    }
+  },
+  "workers": {
+    "orchestrator": {
       "cli": "codex",
       "model": "gpt-5.2-codex",
       "reasoning": "medium",
-      "description": "Deep reasoning for complex problems"
+      "description": "Top-level coordinator for orchestration loops"
     },
-    "scout": {
+    "worker": {
       "cli": "gemini",
       "model": "gemini-3-flash",
-      "description": "Web search and research"
-    },
-    "pathfinder": {
-      "cli": "gemini",
-      "model": "gemini-3-flash",
-      "description": "Codebase exploration and navigation"
-    },
-    "pixelator": {
-      "cli": "gemini",
-      "model": "gemini-3-pro",
-      "description": "Web UI/UX design and frontend"
-    },
-    "author": {
-      "cli": "gemini",
-      "model": "gemini-3-flash",
-      "description": "Documentation and technical writing"
-    },
-    "vision": {
-      "cli": "gemini",
-      "model": "gemini-3-flash",
-      "description": "Image and screenshot analysis"
+      "description": "General worker process for fan-out tasks"
     }
   }
 }

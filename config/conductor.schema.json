@@ -4,102 +4,96 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "disabled": { "type": "boolean" },
     "defaults": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "idle_timeout_ms": { "type": "integer", "minimum": 0 },
-        "max_parallel": { "type": "integer", "minimum": 0 },
-        "retry": { "type": "integer", "minimum": 0 },
-        "retry_backoff_ms": { "type": "integer", "minimum": 0 },
-        "log_prompt": { "type": "boolean" },
-        "summary_only": { "type": "boolean" }
-      }
+        "summary_only": { "type": "boolean" },
+        "max_parallel": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["idle_timeout_ms", "summary_only", "max_parallel"]
     },
     "runtime": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "max_parallel": { "type": "integer", "minimum": 0 },
-        "queue": {
+        "transport": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "on_mode_change": { "type": "string" }
-          }
-        },
-        "approval": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "required": { "type": "boolean" },
-            "roles": {
-              "type": "array",
-              "items": { "type": "string" }
+            "mode": {
+              "type": "string",
+              "enum": ["direct"]
             },
-            "agents": {
+            "preferred": {
               "type": "array",
-              "items": { "type": "string" }
+              "items": {
+                "type": "string",
+                "enum": ["stdio", "unix_socket", "tcp"]
+              },
+              "minItems": 1
+            },
+            "allow_tmux_fallback": { "type": "boolean" }
+          },
+          "required": ["mode", "preferred", "allow_tmux_fallback"]
+        },
+        "loop": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "persist_runs": { "type": "boolean" },
+            "resume_strategy": {
+              "type": "string",
+              "enum": ["ledger"]
             }
-          }
+          },
+          "required": ["persist_runs", "resume_strategy"]
+        },
+        "memory": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "ttl_hours": { "type": "integer", "minimum": 1 },
+            "invalidate_on_git_head_change": { "type": "boolean" }
+          },
+          "required": ["enabled", "ttl_hours", "invalidate_on_git_head_change"]
+        },
+        "workers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_workers": { "type": "integer", "minimum": 1 },
+            "spawn_policy": {
+              "type": "string",
+              "enum": ["ephemeral", "persistent"]
+            },
+            "continue_policy": {
+              "type": "string",
+              "enum": ["resume_when_possible", "always_new"]
+            }
+          },
+          "required": ["max_workers", "spawn_policy", "continue_policy"]
         }
-      }
+      },
+      "required": ["transport", "loop", "memory", "workers"]
     },
-    "roles": {
+    "workers": {
       "type": "object",
       "minProperties": 1,
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "cli": { "type": "string" },
-          "args": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "model_flag": { "type": "string" },
+          "cli": { "type": "string", "enum": ["codex", "claude", "gemini"] },
           "model": { "type": "string" },
-          "models": {
-            "type": "array",
-            "items": {
-              "anyOf": [
-                { "type": "string" },
-                {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "name": { "type": "string" },
-                    "reasoning_effort": { "type": "string" },
-                    "reasoning": { "type": "string" }
-                  }
-                }
-              ]
-            }
-          },
-          "reasoning_flag": { "type": "string" },
-          "reasoning_key": { "type": "string" },
-          "reasoning": { "type": "string" },
-          "description": { "type": "string" },
-          "ready_cmd": { "type": "string" },
-          "ready_args": {
-            "type": "array",
-            "items": { "type": "string" }
-          },
-          "ready_timeout_ms": { "type": "integer", "minimum": 0 },
-          "env": {
-            "type": "object",
-            "additionalProperties": { "type": "string" }
-          },
-          "cwd": { "type": "string" },
-          "idle_timeout_ms": { "type": "integer", "minimum": 0 },
-          "max_parallel": { "type": "integer", "minimum": 0 },
-          "retry": { "type": "integer", "minimum": 0 },
-          "retry_backoff_ms": { "type": "integer", "minimum": 0 }
+          "reasoning": { "type": "string", "enum": ["low", "medium", "high"] },
+          "description": { "type": "string" }
         },
-        "required": ["cli"]
+        "required": ["cli", "model", "description"]
       }
     }
   },
-  "required": ["roles"]
+  "required": ["defaults", "runtime", "workers"]
 }
