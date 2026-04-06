@@ -4055,6 +4055,15 @@ fn current_tmux_session_hint() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            if env::var_os("TMUX").is_none() {
+                return None;
+            }
+            run_tmux_capture(["display-message", "-p", "#S"])
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
 }
 
 fn tmux_session_exists(session_name: &str) -> Result<bool, String> {
