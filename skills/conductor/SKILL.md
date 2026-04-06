@@ -7,6 +7,17 @@ description: Lean orchestration for multi-step coding work.
 
 Use conductor when the task is large enough to benefit from explicit orchestration.
 
+Primary entrypoints:
+- `conductor`
+- `conductor init`
+- `conductor resume`
+- `conductor team`
+- `conductor ralph`
+
+Command shortcuts:
+- `$team`
+- `$ralph`
+
 ## Intent
 
 Conductor is for:

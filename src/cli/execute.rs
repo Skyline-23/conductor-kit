@@ -39,6 +39,11 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
     let cmd = args.get(0).map(String::as_str).unwrap_or("help");
 
     match cmd {
+        "" => run_default(),
+        "init" => run_start(&args[1..]),
+        "resume" => run_open(&args[1..]),
+        "team" => run_team(&args[1..]),
+        "ralph" => run_ralph(&args[1..]),
         "start" => run_start(&args[1..]),
         "open" => run_open(&args[1..]),
         "attach" => run_attach_alias(&args[1..]),
@@ -91,6 +96,22 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
             print_help();
             Err("unknown command".to_string())
         }
+    }
+}
+
+fn run_default() -> Result<(), String> {
+    let run_id = default_run_id();
+    let store = StateStore::new(resolve_state_root()?);
+    if store
+        .root()
+        .join("runs")
+        .join(&run_id)
+        .join("run.json")
+        .exists()
+    {
+        run_open(&[])
+    } else {
+        run_start(&[])
     }
 }
 
@@ -163,6 +184,36 @@ fn run_attach_alias(args: &[String]) -> Result<(), String> {
     };
     let attach_args = vec![run_id, session_id];
     run_worker_attach(&attach_args)
+}
+
+fn run_team(args: &[String]) -> Result<(), String> {
+    let run_id = args
+        .first()
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(default_run_id);
+    let worker_count = args
+        .get(1)
+        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(3);
+    run_start(&[run_id, worker_count.to_string()])
+}
+
+fn run_ralph(args: &[String]) -> Result<(), String> {
+    let run_id = args
+        .first()
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(default_run_id);
+    let worker_count = args
+        .get(1)
+        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(4);
+    run_start(&[run_id, worker_count.to_string()])
 }
 
 fn run_config_path() -> Result<(), String> {

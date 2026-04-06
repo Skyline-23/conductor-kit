@@ -86,10 +86,15 @@ User overrides are expected at:
 
 When running inside this repository, the CLI also falls back to `./config/conductor.json`.
 
-The helper currently supports:
-- `conductor start`
-- `conductor open`
+The primary surface is:
+- `conductor`
+- `conductor init`
+- `conductor resume`
+- `conductor team`
+- `conductor ralph`
 - `conductor attach`
+
+Operator commands:
 - `conductor help`
 - `conductor status`
 - `conductor doctor`
