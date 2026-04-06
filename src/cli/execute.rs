@@ -1317,7 +1317,7 @@ fn open_direct_team_in_current_surface(
         &cwd,
     )?;
 
-    ensure_tmux_ops_session(tmux_session_name, "", &pane_specs)?;
+    rebuild_direct_team_surface(tmux_session_name, &pane_specs)?;
     Ok(())
 }
 
@@ -1406,6 +1406,131 @@ fn render_team_starter_prompt(
             "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} If the operator has not provided a concrete task yet, inspect the repository and produce an immediate situational summary."
         ),
     }
+}
+
+fn rebuild_direct_team_surface(
+    session_name: &str,
+    pane_specs: &[OpsPaneSpec],
+) -> Result<(), String> {
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_title}",
+    ])?;
+    let mut main_pane_id = None::<String>;
+    let mut extra_panes = Vec::new();
+    for line in panes.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let pane_id = parts.next().unwrap_or_default().trim().to_string();
+        let pane_title = parts.next().unwrap_or_default().trim().to_string();
+        if pane_title == "main" || pane_title == "conductor-kit" {
+            main_pane_id = Some(pane_id);
+        } else if !pane_id.is_empty() {
+            extra_panes.push(pane_id);
+        }
+    }
+    let Some(main_pane_id) = main_pane_id else {
+        return Err(format!("could not find the main pane in tmux session {session_name}"));
+    };
+
+    for pane_id in extra_panes {
+        let _ = run_tmux(["kill-pane", "-t", &pane_id]);
+    }
+    if pane_specs.is_empty() {
+        run_tmux(["select-pane", "-t", &main_pane_id])?;
+        return Ok(());
+    }
+
+    let window_width = run_tmux_capture([
+        "display-message",
+        "-p",
+        "-t",
+        &format!("{session_name}:0"),
+        "#{window_width}",
+    ])?
+    .trim()
+    .parse::<u64>()
+    .unwrap_or(0);
+    let worker_width = if window_width > 0 {
+        std::cmp::max(36_u64, (window_width * 38) / 100)
+    } else {
+        48
+    };
+
+    let first_pane_id = run_tmux_capture([
+        "split-window",
+        "-h",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-l",
+        &worker_width.to_string(),
+        "-t",
+        &main_pane_id,
+        &pane_specs[0].command,
+    ])?
+    .trim()
+    .to_string();
+    run_tmux(["select-pane", "-t", &first_pane_id, "-T", &pane_specs[0].title])?;
+    if let Some(prompt) = &pane_specs[0].starter_prompt {
+        send_prompt_to_tmux_pane(&first_pane_id, prompt)?;
+    }
+
+    let mut worker_pane_ids = vec![first_pane_id.clone()];
+    for spec in pane_specs.iter().skip(1) {
+        let split_target = tallest_tmux_pane(&worker_pane_ids)?.unwrap_or_else(|| first_pane_id.clone());
+        let current_target_height = tmux_pane_height(&split_target)?;
+        let desired_height = if current_target_height > 0 {
+            std::cmp::max(3_u64, current_target_height / 2)
+        } else {
+            8
+        };
+        let new_pane_id = run_tmux_capture([
+            "split-window",
+            "-v",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-l",
+            &desired_height.to_string(),
+            "-t",
+            &split_target,
+            &spec.command,
+        ])?
+        .trim()
+        .to_string();
+        run_tmux(["select-pane", "-t", &new_pane_id, "-T", &spec.title])?;
+        if let Some(prompt) = &spec.starter_prompt {
+            send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+        }
+        worker_pane_ids.push(new_pane_id);
+    }
+
+    run_tmux(["select-pane", "-t", &main_pane_id])?;
+    Ok(())
+}
+
+fn tmux_pane_height(pane_id: &str) -> Result<u64, String> {
+    run_tmux_capture(["display-message", "-p", "-t", pane_id, "#{pane_height}"])?
+        .trim()
+        .parse::<u64>()
+        .map_err(|err| err.to_string())
+}
+
+fn tallest_tmux_pane(pane_ids: &[String]) -> Result<Option<String>, String> {
+    let mut tallest = None::<(String, u64)>;
+    for pane_id in pane_ids {
+        let height = tmux_pane_height(pane_id)?;
+        match &tallest {
+            Some((_, current_height)) if *current_height >= height => {}
+            _ => tallest = Some((pane_id.clone(), height)),
+        }
+    }
+    Ok(tallest.map(|(pane_id, _)| pane_id))
 }
 
 fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
@@ -3562,6 +3687,7 @@ fn ensure_tmux_ops_session(
         run_tmux(["set-option", "-t", session_name, "mouse", "on"])?;
         run_tmux(["set-option", "-t", session_name, "set-clipboard", "on"])?;
         sync_existing_tmux_ops_session(session_name, pane_specs)?;
+        rebalance_tmux_team_layout(session_name)?;
         return Ok(false);
     }
 
@@ -3683,6 +3809,8 @@ fn ensure_tmux_ops_session(
         }
     }
 
+    rebalance_tmux_team_layout(session_name)?;
+
     Ok(true)
 }
 
@@ -3761,6 +3889,71 @@ fn send_prompt_to_tmux_pane(pane_id: &str, prompt: &str) -> Result<(), String> {
         shell_quote_str(pane_id),
     );
     run_tmux(["run-shell", "-b", &script])
+}
+
+fn rebalance_tmux_team_layout(session_name: &str) -> Result<(), String> {
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_title}",
+    ])?;
+
+    let mut main_pane_id = None::<String>;
+    let mut worker_count = 0usize;
+    for line in panes.lines() {
+        let mut parts = line.splitn(2, '\t');
+        let pane_id = parts.next().unwrap_or_default().trim().to_string();
+        let pane_title = parts.next().unwrap_or_default().trim().to_string();
+        if pane_title == "main" || pane_title == "conductor-kit" {
+            main_pane_id = Some(pane_id);
+            continue;
+        }
+        if pane_title.is_empty() || pane_title == "HUD" {
+            continue;
+        }
+        worker_count += 1;
+    }
+
+    if worker_count == 0 {
+        return Ok(());
+    }
+
+    let Some(main_pane_id) = main_pane_id else {
+        return Ok(());
+    };
+
+    let window_width = run_tmux_capture([
+        "display-message",
+        "-p",
+        "-t",
+        &format!("{session_name}:0"),
+        "#{window_width}",
+    ])?
+    .trim()
+    .parse::<u64>()
+    .unwrap_or(0);
+
+    if window_width > 0 {
+        let desired_width = std::cmp::max(40_u64, (window_width * 62) / 100);
+        run_tmux([
+            "set-option",
+            "-t",
+            &format!("{session_name}:0"),
+            "main-pane-width",
+            &desired_width.to_string(),
+        ])?;
+    }
+
+    run_tmux([
+        "select-layout",
+        "-t",
+        &format!("{session_name}:0"),
+        "main-vertical",
+    ])?;
+    run_tmux(["select-pane", "-t", &main_pane_id])?;
+    Ok(())
 }
 
 fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
