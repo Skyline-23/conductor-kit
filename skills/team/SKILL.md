@@ -7,6 +7,10 @@ description: Expand the current conductor run into an explicit multi-worker team
 
 Use `$team` when the current task needs parallel orchestration.
 
+Do this immediately:
+- run the matching `conductor team ...` command first
+- do not inspect the repo, reason about layout, or explain the command before running it
+
 Run:
 - `conductor team <count> <profile> [profile...]`
 - `conductor team <count> <profile> [profile...] --prompt "<current task>"`
@@ -15,6 +19,7 @@ Rules:
 - do not call built-in sub-agent or delegation tools
 - do not spawn agents directly from the host model
 - treat `$team` as a thin command shortcut, not an orchestration plan
+- do not replace the command with a prose explanation
 - keep the current surface session as the operator pane
 - require an explicit team width
 - require configured profile names from conductor settings

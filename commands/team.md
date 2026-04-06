@@ -3,9 +3,10 @@
 Use this command when the current task needs parallel orchestration.
 
 What it should do:
-- call `conductor team ...` directly
+- call `conductor team ...` directly and immediately
 - pass the current task summary with `--prompt "..."` when available
 - not use model-native sub-agents or delegation
+- not inspect code, read files, or explain the plan before running the command
 - keep the current Codex session as the operator surface
 - ensure a `conductor` run exists for the current project
 - require an explicit team size and agent profile list from `config/conductor.json`
