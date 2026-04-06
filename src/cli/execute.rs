@@ -1255,13 +1255,23 @@ fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
     let tmux_session_name = format!("conductor-{run_id}-surface");
     let (_, cfg) = load_resolved_config()?;
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let hud_cmd = build_hud_shell_command(
+        &cwd,
+        &conductor_bin,
+        &state_root,
+        config_path.as_deref(),
+        run_id,
+    );
     let launch = resolve_surface_launch(&cfg, run_id)?;
     let surface_cmd = build_launch_shell_command(&cwd, &launch);
     let pane_specs = vec![("main".to_string(), "surface".to_string(), surface_cmd)];
     if tmux_session_exists(&tmux_session_name)? {
         run_tmux(["kill-session", "-t", &tmux_session_name])?;
     }
-    ensure_tmux_ops_session(&tmux_session_name, "", &pane_specs)?;
+    ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
     attach_tmux_ops_session(&tmux_session_name)
 }
 
@@ -3129,7 +3139,9 @@ fn ensure_tmux_ops_session(
     if include_hud {
         run_tmux([
             "split-window",
-            "-h",
+            "-v",
+            "-l",
+            "6",
             "-t",
             &format!("{session_name}:0"),
             hud_cmd,
@@ -3137,20 +3149,29 @@ fn ensure_tmux_ops_session(
         for (_, _, attach_cmd) in pane_specs.iter().skip(1) {
             run_tmux([
                 "split-window",
-                "-v",
+                "-h",
                 "-t",
-                &format!("{session_name}:0.1"),
+                &format!("{session_name}:0.0"),
                 attach_cmd,
             ])?;
         }
     }
 
-    run_tmux([
-        "select-layout",
-        "-t",
-        &format!("{session_name}:0"),
-        "main-vertical",
-    ])?;
+    if include_hud && pane_specs.len() > 1 {
+        run_tmux([
+            "select-layout",
+            "-t",
+            &format!("{session_name}:0"),
+            "tiled",
+        ])?;
+        run_tmux([
+            "resize-pane",
+            "-t",
+            &format!("{session_name}:0.{}", pane_specs.len()),
+            "-y",
+            "6",
+        ])?;
+    }
 
     run_tmux([
         "select-pane",
@@ -3164,13 +3185,13 @@ fn ensure_tmux_ops_session(
         run_tmux([
             "select-pane",
             "-t",
-            &format!("{session_name}:0.1"),
+            &format!("{session_name}:0.{}", pane_specs.len()),
             "-T",
             "HUD",
         ])?;
     }
 
-    let pane_title_offset = if include_hud { 2 } else { 1 };
+    let pane_title_offset = 1;
     for (index, (worker_id, _, _)) in pane_specs.iter().skip(1).enumerate() {
         run_tmux([
             "select-pane",
