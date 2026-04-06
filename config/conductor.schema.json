@@ -88,7 +88,7 @@
         "properties": {
           "cli": { "type": "string", "enum": ["codex", "claude", "gemini"] },
           "model": { "type": "string" },
-          "reasoning": { "type": "string", "enum": ["low", "medium", "high"] },
+          "reasoning": { "type": "string", "minLength": 1 },
           "description": { "type": "string" },
           "delivery_mode": {
             "type": "string",

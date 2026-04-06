@@ -32,7 +32,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use serde::Serialize;
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -128,10 +128,24 @@ enum SettingsField {
     Description,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsDepth {
+    Entries,
+    Fields,
+    Choices,
+    Text,
+}
+
 #[derive(Clone)]
 enum SettingsEntry {
     Surface,
     Profile(String),
+}
+
+#[derive(Clone)]
+struct SettingsChoice {
+    label: String,
+    value: String,
 }
 
 struct SettingsApp {
@@ -140,7 +154,10 @@ struct SettingsApp {
     entries: Vec<SettingsEntry>,
     selected_entry: usize,
     selected_field: usize,
-    editing: bool,
+    depth: SettingsDepth,
+    choices: Vec<SettingsChoice>,
+    selected_choice: usize,
+    pending_choice: Option<String>,
     input: String,
     status: String,
     host_defaults: Option<HostModelDefaults>,
@@ -173,9 +190,12 @@ fn run_settings() -> Result<(), String> {
         entries: Vec::new(),
         selected_entry: 0,
         selected_field: 0,
-        editing: false,
+        depth: SettingsDepth::Entries,
+        choices: Vec::new(),
+        selected_choice: 0,
+        pending_choice: None,
         input: String::new(),
-        status: "Arrows move. Space edits. Enter saves. Esc cancels. q quits.".to_string(),
+        status: "Enter drills in. Space selects. Enter saves. Esc backs out. q quits.".to_string(),
         host_defaults: detect_host_model_defaults(),
     };
     app.entries = settings_entries(&app.cfg);
@@ -226,10 +246,8 @@ fn update_profile_field(
         SettingsField::Reasoning => {
             if value.trim() == "-" || value.trim().is_empty() {
                 profile.reasoning = None;
-            } else if matches!(value.trim(), "low" | "medium" | "high") {
-                profile.reasoning = Some(value.trim().to_string());
             } else {
-                return Err("reasoning must be low, medium, high, or -".to_string());
+                profile.reasoning = Some(value.trim().to_string());
             }
         }
         SettingsField::Description => {
@@ -321,34 +339,246 @@ fn current_field(app: &SettingsApp) -> (SettingsField, String, String) {
 
 fn edit_hint(field: SettingsField) -> &'static str {
     match field {
-        SettingsField::Reasoning => "Allowed: low, medium, high, or - to clear.",
+        SettingsField::Reasoning => "Select a reasoning value, or use - to clear it.",
         SettingsField::SurfaceCli | SettingsField::Cli => "Use the installed CLI name to launch.",
         SettingsField::Model => "Set the exact model name for this profile.",
         SettingsField::Description => "Use a short operator-facing description.",
     }
 }
 
-fn begin_settings_edit(app: &mut SettingsApp) {
+fn begin_settings_text_edit(app: &mut SettingsApp) {
     let (_, _, value) = current_field(app);
     app.input = value;
-    app.editing = true;
-    app.status = "Editing field. Enter saves, Esc cancels.".to_string();
+    app.depth = SettingsDepth::Text;
+    app.status = "Editing text. Enter saves. Esc cancels.".to_string();
 }
 
-fn apply_settings_edit(app: &mut SettingsApp) -> Result<(), String> {
+fn apply_settings_value(app: &mut SettingsApp, value: &str) -> Result<(), String> {
     let (field, label, _) = current_field(app);
-    let value = app.input.trim().to_string();
     match selected_entry(app).clone() {
-        SettingsEntry::Surface => update_surface_field(&mut app.cfg, field, &value)?,
-        SettingsEntry::Profile(name) => update_profile_field(&mut app.cfg, &name, field, &value)?,
+        SettingsEntry::Surface => update_surface_field(&mut app.cfg, field, value)?,
+        SettingsEntry::Profile(name) => update_profile_field(&mut app.cfg, &name, field, value)?,
     }
     save_config(&app.config_path, &app.cfg)?;
     app.entries = settings_entries(&app.cfg);
     normalize_selected_field(app);
-    app.editing = false;
+    app.depth = SettingsDepth::Fields;
+    app.choices.clear();
+    app.selected_choice = 0;
+    app.pending_choice = None;
     app.input.clear();
     app.status = format!("Saved {label} to {}", app.config_path.display());
     Ok(())
+}
+
+fn apply_settings_text(app: &mut SettingsApp) -> Result<(), String> {
+    let value = app.input.trim().to_string();
+    apply_settings_value(app, &value)
+}
+
+fn current_cli_for_entry(app: &SettingsApp) -> String {
+    match selected_entry(app) {
+        SettingsEntry::Surface => app.cfg.surface.cli.clone(),
+        SettingsEntry::Profile(name) => app
+            .cfg
+            .workers
+            .get(name)
+            .map(|worker| worker.cli.clone())
+            .unwrap_or_else(|| app.cfg.surface.cli.clone()),
+    }
+}
+
+fn cli_choices(current_value: &str) -> Vec<SettingsChoice> {
+    let mut values = BTreeSet::new();
+    for cli in ["codex", "claude", "gemini"] {
+        if command_available(cli) {
+            values.insert(cli.to_string());
+        }
+    }
+    if !current_value.trim().is_empty() {
+        values.insert(current_value.trim().to_string());
+    }
+    values
+        .into_iter()
+        .map(|value| SettingsChoice {
+            label: value.clone(),
+            value,
+        })
+        .collect()
+}
+
+fn discover_codex_models() -> Vec<String> {
+    let home = match env::var("HOME") {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let path = Path::new(&home).join(".codex").join("models_cache.json");
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return Vec::new(),
+    };
+    let parsed = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(parsed) => parsed,
+        Err(_) => return Vec::new(),
+    };
+    parsed["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|model| model["slug"].as_str().map(ToOwned::to_owned))
+        .collect()
+}
+
+fn codex_reasoning_levels(model_slug: Option<&str>) -> Vec<String> {
+    let home = match env::var("HOME") {
+        Ok(value) => value,
+        Err(_) => return vec!["low".to_string(), "medium".to_string(), "high".to_string()],
+    };
+    let path = Path::new(&home).join(".codex").join("models_cache.json");
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return vec!["low".to_string(), "medium".to_string(), "high".to_string()],
+    };
+    let parsed = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(parsed) => parsed,
+        Err(_) => return vec!["low".to_string(), "medium".to_string(), "high".to_string()],
+    };
+    let Some(models) = parsed["models"].as_array() else {
+        return vec!["low".to_string(), "medium".to_string(), "high".to_string()];
+    };
+    for model in models {
+        if model["slug"].as_str() == model_slug {
+            let levels = model["supported_reasoning_levels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|level| level["effort"].as_str().map(ToOwned::to_owned))
+                .collect::<Vec<_>>();
+            if !levels.is_empty() {
+                return levels;
+            }
+        }
+    }
+    vec!["low".to_string(), "medium".to_string(), "high".to_string()]
+}
+
+fn models_from_repo_configs(config_path: &Path, cli: &str) -> Vec<String> {
+    let Some(config_dir) = config_path.parent() else {
+        return Vec::new();
+    };
+    let entries = match fs::read_dir(config_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut models = BTreeSet::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+        let parsed = match serde_json::from_str::<Config>(&raw) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        for worker in parsed.workers.values() {
+            if worker.cli == cli && !worker.model.trim().is_empty() {
+                models.insert(worker.model.clone());
+            }
+        }
+    }
+    models.into_iter().collect()
+}
+
+fn model_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> {
+    let cli = current_cli_for_entry(app);
+    let mut values = BTreeSet::new();
+    if !current_value.trim().is_empty() {
+        values.insert(current_value.trim().to_string());
+    }
+    match cli.as_str() {
+        "codex" => {
+            for model in discover_codex_models() {
+                values.insert(model);
+            }
+            if let Some(defaults) = &app.host_defaults {
+                if let Some(model) = &defaults.codex {
+                    values.insert(model.clone());
+                }
+            }
+        }
+        "claude" => {
+            if let Some(defaults) = &app.host_defaults {
+                if let Some(model) = &defaults.claude {
+                    values.insert(model.clone());
+                }
+            }
+        }
+        "gemini" => {
+            if let Some(defaults) = &app.host_defaults {
+                if let Some(model) = &defaults.gemini {
+                    values.insert(model.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+    for model in models_from_repo_configs(&app.config_path, &cli) {
+        values.insert(model);
+    }
+    values
+        .into_iter()
+        .map(|value| SettingsChoice {
+            label: value.clone(),
+            value,
+        })
+        .collect()
+}
+
+fn reasoning_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> {
+    let cli = current_cli_for_entry(app);
+    let mut values = BTreeSet::new();
+    values.insert("-".to_string());
+    if !current_value.trim().is_empty() {
+        values.insert(current_value.trim().to_string());
+    }
+    if cli == "codex" {
+        let model = match selected_entry(app) {
+            SettingsEntry::Surface => None,
+            SettingsEntry::Profile(name) => app
+                .cfg
+                .workers
+                .get(name)
+                .map(|worker| worker.model.as_str()),
+        };
+        for value in codex_reasoning_levels(model) {
+            values.insert(value);
+        }
+    } else {
+        for value in ["low", "medium", "high", "max"] {
+            values.insert(value.to_string());
+        }
+    }
+    values
+        .into_iter()
+        .map(|value| SettingsChoice {
+            label: value.clone(),
+            value,
+        })
+        .collect()
+}
+
+fn choice_options(app: &SettingsApp) -> Vec<SettingsChoice> {
+    let (field, _, current_value) = current_field(app);
+    match field {
+        SettingsField::SurfaceCli | SettingsField::Cli => cli_choices(&current_value),
+        SettingsField::Model => model_choices(app, &current_value),
+        SettingsField::Reasoning => reasoning_choices(app, &current_value),
+        SettingsField::Description => Vec::new(),
+    }
 }
 
 fn host_defaults_line(defaults: &Option<HostModelDefaults>) -> String {
@@ -365,9 +595,7 @@ fn host_defaults_line(defaults: &Option<HostModelDefaults>) -> String {
 
 fn run_settings_tui(app: &mut SettingsApp) -> Result<(), String> {
     enable_raw_mode().map_err(|err| err.to_string())?;
-    let mut stdout = stdout();
-    execute!(stdout, TerminalClear(TerminalClearType::All)).map_err(|err| err.to_string())?;
-    let backend = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend).map_err(|err| err.to_string())?;
 
     let result = settings_tui_loop(&mut terminal, app);
@@ -375,7 +603,7 @@ fn run_settings_tui(app: &mut SettingsApp) -> Result<(), String> {
     disable_raw_mode().map_err(|err| err.to_string())?;
     execute!(
         terminal.backend_mut(),
-        TerminalClear(TerminalClearType::All)
+        TerminalClear(TerminalClearType::UntilNewLine)
     )
     .map_err(|err| err.to_string())?;
     terminal.show_cursor().map_err(|err| err.to_string())?;
@@ -402,20 +630,23 @@ fn settings_tui_loop(
             continue;
         }
 
-        if app.editing {
+        if app.depth == SettingsDepth::Text {
             match key.code {
                 KeyCode::Esc => {
-                    app.editing = false;
+                    app.depth = SettingsDepth::Fields;
                     app.input.clear();
                     app.status = "Edit canceled.".to_string();
                 }
                 KeyCode::Enter => {
-                    if let Err(err) = apply_settings_edit(app) {
+                    if let Err(err) = apply_settings_text(app) {
                         app.status = err;
                     }
                 }
                 KeyCode::Backspace => {
                     app.input.pop();
+                }
+                KeyCode::Char(' ') => {
+                    app.input.push(' ');
                 }
                 KeyCode::Char(ch) => {
                     app.input.push(ch);
@@ -427,36 +658,110 @@ fn settings_tui_loop(
 
         match key.code {
             KeyCode::Char('q') => return Ok(()),
-            KeyCode::Up => {
-                if app.selected_entry > 0 {
-                    app.selected_entry -= 1;
-                    normalize_selected_field(app);
+            KeyCode::Esc => match app.depth {
+                SettingsDepth::Entries => {}
+                SettingsDepth::Fields => {
+                    app.depth = SettingsDepth::Entries;
+                    app.status = "Back to entries.".to_string();
+                }
+                SettingsDepth::Choices => {
+                    app.depth = SettingsDepth::Fields;
+                    app.choices.clear();
+                    app.pending_choice = None;
+                    app.status = "Choice canceled.".to_string();
+                }
+                SettingsDepth::Text => {}
+            },
+            KeyCode::Up => match app.depth {
+                SettingsDepth::Entries => {
+                    if app.selected_entry > 0 {
+                        app.selected_entry -= 1;
+                        normalize_selected_field(app);
+                    }
+                }
+                SettingsDepth::Fields => {
+                    if app.selected_field > 0 {
+                        app.selected_field -= 1;
+                    }
+                }
+                SettingsDepth::Choices => {
+                    if app.selected_choice > 0 {
+                        app.selected_choice -= 1;
+                    }
+                }
+                SettingsDepth::Text => {}
+            },
+            KeyCode::Down => match app.depth {
+                SettingsDepth::Entries => {
+                    if app.selected_entry + 1 < app.entries.len() {
+                        app.selected_entry += 1;
+                        normalize_selected_field(app);
+                    }
+                }
+                SettingsDepth::Fields => {
+                    let field_count = entry_fields(app).len();
+                    if app.selected_field + 1 < field_count {
+                        app.selected_field += 1;
+                    }
+                }
+                SettingsDepth::Choices => {
+                    if app.selected_choice + 1 < app.choices.len() {
+                        app.selected_choice += 1;
+                    }
+                }
+                SettingsDepth::Text => {}
+            },
+            KeyCode::Char(' ') => {
+                if app.depth == SettingsDepth::Choices {
+                    if let Some(choice) = app.choices.get(app.selected_choice) {
+                        app.pending_choice = Some(choice.value.clone());
+                        app.status = format!("Selected {}. Press Enter to save.", choice.label);
+                    }
                 }
             }
-            KeyCode::Down => {
-                if app.selected_entry + 1 < app.entries.len() {
-                    app.selected_entry += 1;
-                    normalize_selected_field(app);
-                }
-            }
-            KeyCode::Left => {
-                if app.selected_field > 0 {
-                    app.selected_field -= 1;
-                }
-            }
-            KeyCode::Right => {
-                let field_count = entry_fields(app).len();
-                if app.selected_field + 1 < field_count {
-                    app.selected_field += 1;
-                }
-            }
-            KeyCode::Char(' ') => begin_settings_edit(app),
             _ => {}
+        }
+
+        if key.code == KeyCode::Enter {
+            match app.depth {
+                SettingsDepth::Entries => {
+                    app.depth = SettingsDepth::Fields;
+                    app.status = format!("Editing {}.", entry_label(selected_entry(app)));
+                }
+                SettingsDepth::Fields => {
+                    let (field, _, _) = current_field(app);
+                    if matches!(field, SettingsField::Description) {
+                        begin_settings_text_edit(app);
+                    } else {
+                        app.choices = choice_options(app);
+                        app.selected_choice = 0;
+                        app.pending_choice = None;
+                        app.depth = SettingsDepth::Choices;
+                        app.status = "Use arrows, Space selects, Enter saves.".to_string();
+                    }
+                }
+                SettingsDepth::Choices => {
+                    let value = app.pending_choice.clone().or_else(|| {
+                        app.choices
+                            .get(app.selected_choice)
+                            .map(|choice| choice.value.clone())
+                    });
+                    if let Some(value) = value {
+                        if let Err(err) = apply_settings_value(app, &value) {
+                            app.status = err;
+                        }
+                    }
+                }
+                SettingsDepth::Text => {}
+            }
         }
     }
 }
 
 fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
+    let panel = centered_rect(84, 72, frame.area());
+    frame.render_widget(Clear, panel);
+
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -464,7 +769,7 @@ fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
             Constraint::Min(10),
             Constraint::Length(2),
         ])
-        .split(frame.area());
+        .split(panel);
 
     let header = Paragraph::new(vec![
         Line::from(vec![
@@ -482,7 +787,11 @@ fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(24), Constraint::Min(30)])
+        .constraints([
+            Constraint::Length(20),
+            Constraint::Length(28),
+            Constraint::Min(24),
+        ])
         .split(areas[1]);
 
     let entry_items = app
@@ -494,7 +803,10 @@ fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
     entry_state.select(Some(app.selected_entry));
     let entry_list = List::new(entry_items)
         .block(Block::default().borders(Borders::ALL).title("Entries"))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_style(match app.depth {
+            SettingsDepth::Entries => Style::default().add_modifier(Modifier::REVERSED),
+            _ => Style::default().add_modifier(Modifier::BOLD),
+        })
         .highlight_symbol("> ");
     frame.render_stateful_widget(entry_list, body[0], &mut entry_state);
 
@@ -516,19 +828,65 @@ fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
     let field_title = format!("Fields  {}", entry_label(selected_entry(app)));
     let field_list = List::new(field_items)
         .block(Block::default().borders(Borders::ALL).title(field_title))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_style(match app.depth {
+            SettingsDepth::Fields | SettingsDepth::Choices | SettingsDepth::Text => {
+                Style::default().add_modifier(Modifier::REVERSED)
+            }
+            SettingsDepth::Entries => Style::default().add_modifier(Modifier::BOLD),
+        })
         .highlight_symbol("> ");
     frame.render_stateful_widget(field_list, body[1], &mut field_state);
 
+    let option_items = if app.depth == SettingsDepth::Choices {
+        app.choices
+            .iter()
+            .map(|choice| {
+                let marker = if app.pending_choice.as_deref() == Some(choice.value.as_str()) {
+                    "[x]"
+                } else {
+                    "[ ]"
+                };
+                ListItem::new(Line::from(format!("{marker} {}", choice.label)))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        let (field, label, value) = current_field(app);
+        vec![
+            ListItem::new(Line::from(format!("field: {label}"))),
+            ListItem::new(Line::from(format!("value: {value}"))),
+            ListItem::new(Line::from(edit_hint(field))),
+        ]
+    };
+    let mut option_state = ListState::default();
+    if !option_items.is_empty() {
+        option_state.select(Some(
+            app.selected_choice
+                .min(option_items.len().saturating_sub(1)),
+        ));
+    }
+    let option_title = match app.depth {
+        SettingsDepth::Choices => "Options",
+        SettingsDepth::Text => "Edit",
+        _ => "Details",
+    };
+    let option_list = List::new(option_items)
+        .block(Block::default().borders(Borders::ALL).title(option_title))
+        .highlight_style(match app.depth {
+            SettingsDepth::Choices => Style::default().add_modifier(Modifier::REVERSED),
+            _ => Style::default(),
+        })
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(option_list, body[2], &mut option_state);
+
     let footer = Paragraph::new(vec![
         Line::from(app.status.clone()),
-        Line::from("Arrows move, Space edits, Enter saves, Esc cancels, q quits."),
+        Line::from("Enter drills in, Space selects, Enter saves, Esc backs out, q quits."),
     ])
     .block(Block::default().borders(Borders::ALL).title("Status"))
     .wrap(Wrap { trim: true });
     frame.render_widget(footer, areas[2]);
 
-    if app.editing {
+    if app.depth == SettingsDepth::Text {
         let popup_area = centered_rect(70, 30, frame.area());
         let (field, label, _) = current_field(app);
         let popup = Paragraph::new(vec![
@@ -2859,10 +3217,8 @@ fn validate_config(cfg: &Config) -> Vec<String> {
             }
         }
         if let Some(reasoning) = &worker.reasoning {
-            if !matches!(reasoning.as_str(), "low" | "medium" | "high") {
-                issues.push(format!(
-                    "workers.{name}.reasoning must be low, medium, or high"
-                ));
+            if reasoning.trim().is_empty() {
+                issues.push(format!("workers.{name}.reasoning must not be empty"));
             }
         }
     }
