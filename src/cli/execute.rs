@@ -109,6 +109,7 @@ enum TeamMode {
 
 #[derive(Clone, Copy)]
 enum SettingsField {
+    SurfaceCli,
     Cli,
     Model,
     Reasoning,
@@ -137,7 +138,16 @@ fn run_settings() -> Result<(), String> {
         println!();
         println!("conductor settings");
         println!("config: {}", path.display());
+        if let Some(host_defaults) = detect_host_model_defaults() {
+            println!(
+                "detected host defaults: codex={}, claude={}, gemini={}",
+                host_defaults.codex.as_deref().unwrap_or("-"),
+                host_defaults.claude.as_deref().unwrap_or("-"),
+                host_defaults.gemini.as_deref().unwrap_or("-")
+            );
+        }
         println!();
+        println!("  s. surface      cli={}", cfg.surface.cli);
 
         let profile_names = cfg.workers.keys().cloned().collect::<Vec<_>>();
         for (index, name) in profile_names.iter().enumerate() {
@@ -153,15 +163,41 @@ fn run_settings() -> Result<(), String> {
             }
         }
         println!();
-        println!("Choose a profile number to edit, or `q` to quit.");
+        println!("Choose `s` for the surface, a profile number to edit, or `q` to quit.");
         let choice = prompt_line("> ")?;
         if choice.eq_ignore_ascii_case("q") {
             break;
         }
+        if choice.eq_ignore_ascii_case("s") {
+            loop {
+                println!();
+                println!("editing `surface`");
+                println!("  1. cli         = {}", cfg.surface.cli);
+                println!("  2. description = {}", cfg.surface.description);
+                println!("Choose a field number, `b` to go back, or `q` to quit.");
+                let field_choice = prompt_line("> ")?;
+                if field_choice.eq_ignore_ascii_case("q") {
+                    return Ok(());
+                }
+                if field_choice.eq_ignore_ascii_case("b") {
+                    break;
+                }
+                let field = match field_choice.as_str() {
+                    "1" => SettingsField::SurfaceCli,
+                    "2" => SettingsField::Description,
+                    _ => return Err("field selection must be 1, 2, b, or q".to_string()),
+                };
+                let new_value = prompt_line("> ")?;
+                update_surface_field(&mut cfg, field, &new_value)?;
+                save_config(&path, &cfg)?;
+                println!("saved {}", path.display());
+            }
+            continue;
+        }
 
         let profile_index = choice
             .parse::<usize>()
-            .map_err(|_| "settings expects a profile number or q".to_string())?;
+            .map_err(|_| "settings expects `s`, a profile number, or q".to_string())?;
         if profile_index == 0 || profile_index > profile_names.len() {
             return Err("profile selection out of range".to_string());
         }
@@ -244,6 +280,9 @@ fn update_profile_field(
         .get_mut(profile_name)
         .ok_or_else(|| format!("missing profile: {profile_name}"))?;
     match field {
+        SettingsField::SurfaceCli => {
+            return Err("surface cli must be edited from the surface menu".to_string());
+        }
         SettingsField::Cli => {
             if value.trim().is_empty() {
                 return Err("cli must not be empty".to_string());
@@ -271,6 +310,25 @@ fn update_profile_field(
             }
             profile.description = value.trim().to_string();
         }
+    }
+    Ok(())
+}
+
+fn update_surface_field(cfg: &mut Config, field: SettingsField, value: &str) -> Result<(), String> {
+    match field {
+        SettingsField::SurfaceCli => {
+            if value.trim().is_empty() {
+                return Err("surface cli must not be empty".to_string());
+            }
+            cfg.surface.cli = value.trim().to_string();
+        }
+        SettingsField::Description => {
+            if value.trim().is_empty() {
+                return Err("surface description must not be empty".to_string());
+            }
+            cfg.surface.description = value.trim().to_string();
+        }
+        _ => return Err("unsupported surface field".to_string()),
     }
     Ok(())
 }
@@ -378,8 +436,7 @@ fn ensure_team_sessions(
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, run_id)?;
 
-    let orchestrator = worker_adapter_config(&cfg, "lead")?;
-    ensure_adapter_session(&store, &orchestrator, run_id, "codex-lead", None)?;
+    ensure_surface_session(&store, &cfg, run_id)?;
 
     let snapshot = store.read_snapshot(run_id)?;
     for (worker_id, adapter_kind) in plan_team_roster(&snapshot, mode, requested_width) {
@@ -399,8 +456,7 @@ fn ensure_explicit_team_sessions(
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, run_id)?;
 
-    let orchestrator = worker_adapter_config(&cfg, "lead")?;
-    ensure_adapter_session(&store, &orchestrator, run_id, "codex-lead", None)?;
+    ensure_surface_session(&store, &cfg, run_id)?;
 
     let mut stem_counts = BTreeMap::<String, usize>::new();
     for index in 0..team_size {
@@ -414,6 +470,85 @@ fn ensure_explicit_team_sessions(
     }
 
     Ok(())
+}
+
+fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Result<(), String> {
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let launch = resolve_surface_launch(cfg, run_id)?;
+    let desired_kind = WorkerKind::Orchestrator;
+    let worker_id = "main";
+    if let Ok(existing) = store.read_session(run_id, &format!("session-{worker_id}")) {
+        let mut worker = store.read_worker(run_id, worker_id)?;
+        if worker.worker_kind != desired_kind {
+            worker.worker_kind = desired_kind.clone();
+            let _ = store.upsert_worker(worker)?;
+        }
+        if existing.status == SessionStatus::Running || existing.status == SessionStatus::Starting {
+            return Ok(());
+        }
+    }
+    let result = spawn_session(
+        store,
+        run_id,
+        worker_id,
+        &launch.program,
+        &launch.args,
+        &launch.env,
+        &conductor_bin,
+    )?;
+    let mut worker = store.read_worker(run_id, worker_id)?;
+    if worker.worker_kind != desired_kind {
+        worker.worker_kind = desired_kind.clone();
+        let _ = store.upsert_worker(worker)?;
+    }
+    let _ = result;
+    Ok(())
+}
+
+fn resolve_surface_launch(
+    cfg: &Config,
+    run_id: &str,
+) -> Result<crate::runtime::adapters::WorkerAdapterLaunch, String> {
+    let surface = &cfg.surface;
+    let adapter = WorkerAdapterConfig {
+        worker_type: "surface".to_string(),
+        cli: surface.cli.clone(),
+        model: String::new(),
+        reasoning: None,
+        description: surface.description.clone(),
+        delivery_mode: "session".to_string(),
+        launch_mode: "stdin_text".to_string(),
+        base_args: surface.base_args.clone().unwrap_or_default(),
+        env: surface.env.clone().unwrap_or_default(),
+    };
+    resolve_worker_adapter(&adapter, run_id, "main", None, None)
+}
+
+struct HostModelDefaults {
+    codex: Option<String>,
+    claude: Option<String>,
+    gemini: Option<String>,
+}
+
+fn detect_host_model_defaults() -> Option<HostModelDefaults> {
+    let home = env::var("HOME").ok()?;
+    Some(HostModelDefaults {
+        codex: read_codex_host_model(&Path::new(&home).join(".codex").join("config.toml")),
+        claude: None,
+        gemini: None,
+    })
+}
+
+fn read_codex_host_model(path: &Path) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    raw.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("model =") {
+            return None;
+        }
+        let value = trimmed.split_once('=')?.1.trim();
+        Some(value.trim_matches('"').to_string()).filter(|model| !model.is_empty())
+    })
 }
 
 fn plan_team_roster(
@@ -2044,7 +2179,7 @@ fn ensure_adapter_session(
 }
 
 fn worker_kind_for_type(worker_type: &str, worker_id: &str) -> WorkerKind {
-    if worker_type == "lead" {
+    if worker_type == "surface" {
         WorkerKind::Orchestrator
     } else if worker_type == "verify"
         || worker_id.starts_with("verify-")
@@ -2329,7 +2464,7 @@ fn default_tmux_session_name(run_id: &str) -> String {
 }
 
 fn pane_sort_key(worker_id: &str) -> (u8, String) {
-    if worker_id == "codex-lead" {
+    if worker_id == "main" {
         (0, worker_id.to_string())
     } else {
         (1, worker_id.to_string())

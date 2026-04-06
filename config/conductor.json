@@ -4,6 +4,11 @@
     "summary_only": true,
     "max_parallel": 4
   },
+  "surface": {
+    "cli": "codex",
+    "description": "Primary operator surface following the user's host defaults",
+    "base_args": []
+  },
   "runtime": {
     "transport": {
       "mode": "direct",
@@ -26,20 +31,6 @@
     }
   },
   "workers": {
-    "lead": {
-      "cli": "codex",
-      "model": "gpt-5.4",
-      "reasoning": "high",
-      "description": "Main operator and orchestration lead",
-      "delivery_mode": "session",
-      "launch_mode": "stdin_text",
-      "base_args": [
-        "-m",
-        "{model}",
-        "-c",
-        "model_reasoning_effort=\"{reasoning}\""
-      ]
-    },
     "explore": {
       "cli": "codex",
       "model": "gpt-5.3-codex-spark",

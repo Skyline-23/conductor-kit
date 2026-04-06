@@ -4,6 +4,11 @@
     "summary_only": true,
     "max_parallel": 4
   },
+  "surface": {
+    "cli": "claude",
+    "description": "Primary operator surface following the user's host defaults",
+    "base_args": []
+  },
   "runtime": {
     "transport": {
       "mode": "direct",
@@ -26,20 +31,6 @@
     }
   },
   "workers": {
-    "lead": {
-      "cli": "claude",
-      "model": "claude-sonnet-4-6",
-      "reasoning": "high",
-      "description": "Main operator and orchestration lead",
-      "delivery_mode": "session",
-      "launch_mode": "stdin_text",
-      "base_args": [
-        "--permission-mode",
-        "acceptEdits",
-        "--model",
-        "{model}"
-      ]
-    },
     "explore": {
       "cli": "claude",
       "model": "claude-sonnet-4-6",

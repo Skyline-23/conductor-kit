@@ -94,10 +94,10 @@ The primary surface is:
 - `conductor ralph`
 - `conductor attach`
 
-`conductor` and `conductor init` bring up the lead Codex session by default.
+`conductor` and `conductor init` bring up the primary surface session by default.
 `conductor team` requires an explicit team size and agent profile list from
 `config/conductor.json`, for example `conductor team 4 explore build review verify`, and
-expands to the OMX-style split view with the lead pane on the left and the HUD
+expands to the OMX-style split view with the main pane on the left and the HUD
 plus sub-workers stacked on the right.
 
 Use `conductor settings` to edit each profile's `cli`, `model`, `reasoning`,
@@ -112,15 +112,14 @@ Operator commands:
 - `conductor hud-watch`
 - `conductor worker-log`
 
-The default profiles now include:
-- `lead`
+The default team profiles now include:
 - `explore`
 - `build`
 - `review`
 - `verify`
 
-The shipped defaults use explicit Codex model lanes:
-- `lead` -> `codex` + `gpt-5.4`
+The shipped defaults use:
+- `surface` -> user-selected CLI with no forced model override
 - `explore` -> `codex` + `gpt-5.3-codex-spark`
 - `build` -> `codex` + `gpt-5.4-mini`
 - `review` -> `codex` + `gpt-5.4`

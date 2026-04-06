@@ -9,6 +9,7 @@ use crate::runtime::types::{DispatchStatus, RunPhase, WorkerState};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub defaults: Defaults,
+    pub surface: SurfaceConfig,
     pub runtime: RuntimeConfig,
     pub workers: BTreeMap<String, WorkerConfig>,
 }
@@ -18,6 +19,14 @@ pub struct Defaults {
     pub idle_timeout_ms: i64,
     pub summary_only: bool,
     pub max_parallel: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurfaceConfig {
+    pub cli: String,
+    pub description: String,
+    pub base_args: Option<Vec<String>>,
+    pub env: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

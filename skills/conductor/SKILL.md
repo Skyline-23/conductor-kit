@@ -14,7 +14,7 @@ Primary entrypoints:
 - `conductor team`
 - `conductor ralph`
 
-Default `conductor` usage should stay narrow. Start the lead Codex session
+Default `conductor` usage should stay narrow. Start the primary surface session
 first, then expand with `$team` or `$ralph` only when orchestration is needed.
 
 `$team` should require an explicit team size and configured agent profiles, such
