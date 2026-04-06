@@ -12,6 +12,8 @@ Do this immediately:
 - do not inspect the repo, reason about layout, or explain the command before running it
 
 Run:
+- `conductor team`
+- `conductor team --prompt "<current task>"`
 - `conductor team <count> <profile> [profile...]`
 - `conductor team <count> <profile> [profile...] --prompt "<current task>"`
 
@@ -21,8 +23,8 @@ Rules:
 - treat `$team` as a thin command shortcut, not an orchestration plan
 - do not replace the command with a prose explanation
 - keep the current surface session as the operator pane
-- require an explicit team width
-- require configured profile names from conductor settings
+- decide the team width and profile mix from the task when the operator does not provide one
+- only require explicit profile names when the operator overrides the inferred team shape
 - distribute the requested profiles across the requested width
 - keep work visible through tmux panes and the conductor HUD
 - pass the current task objective through `--prompt` whenever it is available

@@ -1118,55 +1118,13 @@ fn run_attach_alias(args: &[String]) -> Result<(), String> {
 }
 
 fn run_team(args: &[String]) -> Result<(), String> {
-    let (run_id, count_index) = match args.first().map(String::as_str) {
-        Some(first) if first.parse::<usize>().is_ok() => (default_run_id(), 0),
-        Some(first) if !first.trim().is_empty() => (first.to_string(), 1),
-        _ => {
-            return Err(
-                "team requires <count> <agent> [agent...] or <run_id> <count> <agent> [agent...]"
-                    .to_string(),
-            );
-        }
-    };
+    let (_, cfg) = load_resolved_config()?;
+    let available_profiles = configured_team_profiles(&cfg);
+    let (run_id, team_size, agent_names, prompt) = parse_team_invocation(args, &available_profiles)?;
 
-    let team_size = args
-        .get(count_index)
-        .ok_or_else(|| {
-            "team requires <count> <agent> [agent...] or <run_id> <count> <agent> [agent...]"
-                .to_string()
-        })?
-        .parse::<usize>()
-        .map_err(|err| err.to_string())?;
     if team_size == 0 {
         return Err("team count must be at least 1".to_string());
     }
-
-    let mut prompt_index = None;
-    for (index, value) in args.iter().enumerate().skip(count_index + 1) {
-        if value == "--prompt" {
-            prompt_index = Some(index);
-            break;
-        }
-    }
-
-    let agent_slice_end = prompt_index.unwrap_or(args.len());
-    let agent_names = args
-        .iter()
-        .skip(count_index + 1)
-        .take(agent_slice_end.saturating_sub(count_index + 1))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    if agent_names.is_empty() {
-        return Err("team requires at least one agent name".to_string());
-    }
-
-    let prompt = prompt_index
-        .and_then(|index| args.get(index + 1..))
-        .map(|parts| parts.join(" "))
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| env::var("CONDUCTOR_TEAM_PROMPT").ok())
-        .filter(|value| !value.trim().is_empty());
 
     let active_tmux_session = current_tmux_session_hint()
         .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false));
@@ -1184,6 +1142,151 @@ fn run_team(args: &[String]) -> Result<(), String> {
         let tmux_session_name = default_tmux_session_name(&run_id);
         run_ops_open_with_filter(&run_id, &tmux_session_name, None)
     }
+}
+
+fn configured_team_profiles(cfg: &Config) -> Vec<String> {
+    cfg.workers
+        .keys()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+}
+
+fn parse_team_invocation(
+    args: &[String],
+    available_profiles: &[String],
+) -> Result<(String, usize, Vec<String>, Option<String>), String> {
+    let mut positionals = Vec::new();
+    let mut prompt = None;
+    let mut index = 0;
+    while index < args.len() {
+        if args[index] == "--prompt" {
+            prompt = args.get(index + 1..).map(|parts| parts.join(" "));
+            break;
+        }
+        positionals.push(args[index].clone());
+        index += 1;
+    }
+
+    let prompt = prompt
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env::var("CONDUCTOR_TEAM_PROMPT").ok())
+        .filter(|value| !value.trim().is_empty());
+
+    let inferred = infer_team_shape(available_profiles, prompt.as_deref());
+    match positionals.as_slice() {
+        [] => Ok((
+            default_run_id(),
+            inferred.len(),
+            inferred,
+            prompt,
+        )),
+        [count] if count.parse::<usize>().is_ok() => {
+            let team_size = count.parse::<usize>().map_err(|err| err.to_string())?;
+            Ok((default_run_id(), team_size, infer_team_shape(available_profiles, prompt.as_deref()), prompt))
+        }
+        [run_id] => Ok((
+            run_id.to_string(),
+            inferred.len(),
+            inferred,
+            prompt,
+        )),
+        [run_id, count] if count.parse::<usize>().is_ok() => {
+            let team_size = count.parse::<usize>().map_err(|err| err.to_string())?;
+            Ok((
+                run_id.to_string(),
+                team_size,
+                infer_team_shape(available_profiles, prompt.as_deref()),
+                prompt,
+            ))
+        }
+        [count, profiles @ ..] if count.parse::<usize>().is_ok() => {
+            let team_size = count.parse::<usize>().map_err(|err| err.to_string())?;
+            let agent_names = profiles
+                .iter()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>();
+            let agent_names = if agent_names.is_empty() {
+                infer_team_shape(available_profiles, prompt.as_deref())
+            } else {
+                agent_names
+            };
+            Ok((default_run_id(), team_size, agent_names, prompt))
+        }
+        [run_id, count, profiles @ ..] if count.parse::<usize>().is_ok() => {
+            let team_size = count.parse::<usize>().map_err(|err| err.to_string())?;
+            let agent_names = profiles
+                .iter()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>();
+            let agent_names = if agent_names.is_empty() {
+                infer_team_shape(available_profiles, prompt.as_deref())
+            } else {
+                agent_names
+            };
+            Ok((run_id.to_string(), team_size, agent_names, prompt))
+        }
+        _ => Err(
+            "team accepts: no args, <count>, <run_id>, <run_id> <count>, <count> <profile>..., or <run_id> <count> <profile>..."
+                .to_string(),
+        ),
+    }
+}
+
+fn infer_team_shape(available_profiles: &[String], prompt: Option<&str>) -> Vec<String> {
+    let available = available_profiles
+        .iter()
+        .map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    let has = |name: &str| available.contains(&name);
+    let mut inferred = Vec::new();
+    let lower = prompt.unwrap_or("").to_ascii_lowercase();
+    let reconnaissance = matches_any(
+        &lower,
+        &["map", "structure", "repository", "repo", "codebase", "inspect", "analyze"],
+    );
+
+    if has("explore") {
+        inferred.push("explore".to_string());
+    }
+    if has("build")
+        && !reconnaissance
+        && !matches_any(&lower, &["review", "verify", "audit", "regression", "test-only"])
+    {
+        inferred.push("build".to_string());
+    }
+    if has("review")
+        && (reconnaissance
+            || matches_any(&lower, &["review", "risk", "regression", "investigate"])
+            || !has("build"))
+    {
+        inferred.push("review".to_string());
+    }
+    if has("verify")
+        && matches_any(&lower, &["verify", "validation", "test", "evidence", "confirm", "repro"])
+    {
+        inferred.push("verify".to_string());
+    }
+
+    if inferred.is_empty() {
+        for candidate in ["explore", "build", "review", "verify"] {
+            if has(candidate) {
+                inferred.push(candidate.to_string());
+            }
+        }
+    }
+
+    if inferred.is_empty() {
+        inferred.extend(available_profiles.iter().cloned());
+    }
+
+    inferred
+}
+
+fn matches_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
 }
 
 fn run_ralph(args: &[String]) -> Result<(), String> {
@@ -4603,6 +4706,41 @@ mod tests {
 
         let err = resolve_team_agent(&cfg, "codex").expect_err("vendor alias should fail");
         assert!(err.contains("unknown team agent profile 'codex'"));
+    }
+
+    #[test]
+    fn parse_team_invocation_infers_shape_when_no_explicit_shape_is_given() {
+        let available = vec![
+            "explore".to_string(),
+            "build".to_string(),
+            "review".to_string(),
+            "verify".to_string(),
+        ];
+        let (run_id, count, profiles, prompt) =
+            parse_team_invocation(&[], &available).expect("inference should parse");
+        assert_eq!(run_id, default_run_id());
+        assert_eq!(count, 2);
+        assert_eq!(profiles, vec!["explore", "build"]);
+        assert!(prompt.is_none());
+    }
+
+    #[test]
+    fn parse_team_invocation_infers_prompt_only_shape() {
+        let available = vec![
+            "explore".to_string(),
+            "build".to_string(),
+            "review".to_string(),
+            "verify".to_string(),
+        ];
+        let (run_id, count, profiles, prompt) = parse_team_invocation(
+            &["--prompt".to_string(), "map the repo".to_string()],
+            &available,
+        )
+        .expect("prompt-only invocation should parse");
+        assert_eq!(run_id, default_run_id());
+        assert_eq!(count, 2);
+        assert_eq!(profiles, vec!["explore", "review"]);
+        assert_eq!(prompt.as_deref(), Some("map the repo"));
     }
 
     #[test]
