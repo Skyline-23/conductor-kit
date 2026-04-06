@@ -45,6 +45,7 @@ pub fn spawn_session(
     worker_id: &str,
     program: &str,
     args: &[String],
+    cwd: Option<&Path>,
     child_env: &BTreeMap<String, String>,
     conductor_bin: &Path,
 ) -> Result<SessionSpawnResult, String> {
@@ -70,6 +71,10 @@ pub fn spawn_session(
     command.arg(&stderr_path);
     command.arg(program);
     command.args(args);
+    if let Some(path) = cwd {
+        command.env("CONDUCTOR_WORKER_CWD", path);
+        command.current_dir(path);
+    }
     for (key, value) in child_env {
         command.env(format!("CONDUCTOR_CHILD_{key}"), value);
     }
@@ -167,6 +172,12 @@ pub fn run_worker_host(
     program: &str,
     args: &[String],
 ) -> Result<(), String> {
+    if let Some(cwd) = std::env::var("CONDUCTOR_WORKER_CWD")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        std::env::set_current_dir(&cwd).map_err(|err| err.to_string())?;
+    }
     if socket_path.exists() {
         let _ = fs::remove_file(socket_path);
     }
@@ -188,6 +199,12 @@ pub fn run_worker_host(
         .map_err(|err| err.to_string())?;
     let mut builder = CommandBuilder::new(program);
     builder.args(args);
+    if let Some(cwd) = std::env::var("CONDUCTOR_WORKER_CWD")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    {
+        builder.cwd(&cwd);
+    }
     for (key, value) in read_child_env() {
         builder.env(key, value);
     }

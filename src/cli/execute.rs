@@ -1245,6 +1245,7 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
         worker_id,
         &launch.program,
         &launch.args,
+        launch.cwd.as_deref(),
         &launch.env,
         &conductor_bin,
     )?;
@@ -2118,6 +2119,7 @@ fn run_worker_spawn_session(args: &[String]) -> Result<(), String> {
         worker_id,
         program,
         &program_args,
+        None,
         &BTreeMap::new(),
         &conductor_bin,
     )?;
@@ -2185,6 +2187,7 @@ fn run_worker_adapter_spawn_session(args: &[String]) -> Result<(), String> {
         worker_id,
         &launch.program,
         &launch.args,
+        launch.cwd.as_deref(),
         &launch.env,
         &conductor_bin,
     )?;
@@ -3098,6 +3101,7 @@ fn ensure_adapter_session(
         worker_id,
         &launch.program,
         &launch.args,
+        launch.cwd.as_deref(),
         &launch.env,
         &conductor_bin,
     )?;
