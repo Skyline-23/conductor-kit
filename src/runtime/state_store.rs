@@ -97,6 +97,10 @@ impl StateStore {
         self.write_json(&self.run_file(&run.run_id), run)
     }
 
+    pub fn read_worker(&self, run_id: &str, worker_id: &str) -> Result<WorkerRecord, String> {
+        self.read_json(&self.worker_file(run_id, worker_id))
+    }
+
     pub fn read_task(&self, run_id: &str, task_id: &str) -> Result<TaskRecord, String> {
         self.read_json(&self.task_file(run_id, task_id))
     }
@@ -107,6 +111,10 @@ impl StateStore {
 
     pub fn append_runtime_event(&self, run_id: &str, event: EventEnvelope) -> Result<(), String> {
         self.append_event(run_id, event)
+    }
+
+    pub fn read_dispatch(&self, run_id: &str, request_id: &str) -> Result<DispatchRecord, String> {
+        self.read_json(&self.dispatch_file(run_id, request_id))
     }
 
     pub fn refresh_snapshot(&self, run_id: &str) -> Result<RuntimeSnapshot, String> {

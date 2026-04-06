@@ -7,7 +7,9 @@ use crate::runtime::sessions::{
     SessionCommand, run_worker_host, send_session_command, spawn_session,
 };
 use crate::runtime::state_store::StateStore;
-use crate::runtime::types::{DispatchStatus, RunPhase, WorkerKind, WorkerRecord, WorkerState};
+use crate::runtime::types::{
+    DispatchStatus, RunPhase, SessionStatus, WorkerKind, WorkerRecord, WorkerState,
+};
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -116,6 +118,8 @@ fn main() {
         "worker-session-status" => run_worker_session_status(&args[2..]),
         "worker-stop-session" => run_worker_stop_session(&args[2..]),
         "worker-host" => run_worker_host_command(&args[2..]),
+        "dispatch-route" => run_dispatch_route(&args[2..]),
+        "hud-view" => run_hud_view(&args[2..]),
         "task-create" => run_task_create(&args[2..]),
         "dispatch-queue" => run_dispatch_queue(&args[2..]),
         "dispatch-update" => run_dispatch_update(&args[2..]),
@@ -418,6 +422,26 @@ fn run_worker_session_status(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let session = store.read_session(run_id, session_id)?;
     let response = send_session_command(Path::new(&session.socket_path), &SessionCommand::Status)?;
+    let mut next = session;
+    next.updated_at = Utc::now();
+    next.status = match response.status.as_str() {
+        "running" => SessionStatus::Running,
+        "stopped" => SessionStatus::Stopped,
+        "exited" => SessionStatus::Exited,
+        _ => SessionStatus::Failed,
+    };
+    if let Some(message) = &response.message {
+        if let Some(code) = message.strip_prefix("exit_code=") {
+            next.exit_code = code.parse::<i32>().ok();
+        }
+    }
+    if matches!(
+        next.status,
+        SessionStatus::Exited | SessionStatus::Stopped | SessionStatus::Failed
+    ) {
+        next.exited_at = Some(Utc::now());
+    }
+    store.write_session(&next)?;
     print_json(&response)
 }
 
@@ -435,6 +459,17 @@ fn run_worker_stop_session(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let session = store.read_session(run_id, session_id)?;
     let response = send_session_command(Path::new(&session.socket_path), &SessionCommand::Stop)?;
+    let mut next = session;
+    next.updated_at = Utc::now();
+    next.status = SessionStatus::Stopped;
+    next.exited_at = Some(Utc::now());
+    next.exit_code = Some(-1);
+    store.write_session(&next)?;
+    let mut worker = store.read_worker(run_id, &next.worker_id)?;
+    worker.state = WorkerState::Stopped;
+    worker.last_event_at = Some(Utc::now());
+    worker.reason = Some("session_stopped".to_string());
+    store.upsert_worker(worker)?;
     print_json(&response)
 }
 
@@ -460,6 +495,102 @@ fn run_worker_host_command(args: &[String]) -> Result<(), String> {
         program,
         &program_args,
     )
+}
+
+fn run_dispatch_route(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "dispatch-route requires <run_id> <request_id> <message_id> <body>",
+    )?;
+    let request_id = required_arg(
+        args,
+        1,
+        "dispatch-route requires <run_id> <request_id> <message_id> <body>",
+    )?;
+    let message_id = required_arg(
+        args,
+        2,
+        "dispatch-route requires <run_id> <request_id> <message_id> <body>",
+    )?;
+    let body = required_arg(
+        args,
+        3,
+        "dispatch-route requires <run_id> <request_id> <message_id> <body>",
+    )?;
+    let store = StateStore::new(resolve_state_root()?);
+    let dispatch = store.read_dispatch(run_id, request_id)?;
+    let session = store.read_session(run_id, &format!("session-{}", dispatch.target))?;
+    let mailbox =
+        store.create_mailbox_message(run_id, message_id, "orchestrator", &dispatch.target, body)?;
+    store.update_dispatch_status(run_id, request_id, DispatchStatus::Notified, None)?;
+    store.update_mailbox_status(run_id, &dispatch.target, message_id, false)?;
+    let response = send_session_command(
+        Path::new(&session.socket_path),
+        &SessionCommand::SendStdin {
+            data: format!("{body}\n"),
+        },
+    )?;
+    if response.ok {
+        store.update_mailbox_status(run_id, &dispatch.target, message_id, true)?;
+        store.update_dispatch_status(run_id, request_id, DispatchStatus::Delivered, None)?;
+    } else {
+        store.update_dispatch_status(
+            run_id,
+            request_id,
+            DispatchStatus::Failed,
+            response.message.clone(),
+        )?;
+    }
+    print_json(&json!({
+        "dispatch": dispatch.request_id,
+        "target": dispatch.target,
+        "mailbox": mailbox.message_id,
+        "response": response
+    }))
+}
+
+fn run_hud_view(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "hud-view requires <run_id>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let snapshot = store.read_snapshot(run_id)?;
+    let run = &snapshot.run;
+    let authority = snapshot
+        .authority
+        .as_ref()
+        .map(|lease| lease.owner.clone())
+        .unwrap_or_else(|| "none".to_string());
+    println!("run      {}", run.run_id);
+    println!("phase    {:?}", run.phase);
+    println!("active   {}", run.active);
+    println!("owner    {}", authority);
+    println!(
+        "tasks    pending={} blocked={} in_progress={} completed={} failed={}",
+        snapshot.tasks.pending,
+        snapshot.tasks.blocked,
+        snapshot.tasks.in_progress,
+        snapshot.tasks.completed,
+        snapshot.tasks.failed
+    );
+    println!(
+        "dispatch pending={} notified={} delivered={} failed={}",
+        snapshot.dispatch.pending,
+        snapshot.dispatch.notified,
+        snapshot.dispatch.delivered,
+        snapshot.dispatch.failed
+    );
+    println!("mailbox  unread={}", snapshot.mailbox.unread);
+    println!("workers");
+    for worker in snapshot.workers {
+        println!(
+            "  {}  state={:?} task={} summary={}",
+            worker.worker_id,
+            worker.state,
+            worker.current_task_id.unwrap_or_else(|| "-".to_string()),
+            worker.current_summary.unwrap_or_else(|| "-".to_string())
+        );
+    }
+    Ok(())
 }
 
 fn run_task_create(args: &[String]) -> Result<(), String> {
@@ -779,6 +910,8 @@ Commands:
   worker-send         Send stdin to a worker session
   worker-session-status Query a worker session
   worker-stop-session Stop a worker session
+  dispatch-route      Deliver a queued dispatch to a worker session
+  hud-view            Print a compact runtime HUD view
   task-create         Create a task record
   dispatch-queue      Create a dispatch record
   dispatch-update     Update dispatch status
