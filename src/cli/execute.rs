@@ -3,6 +3,10 @@ use crate::cli::args::{
     parse_run_phase, parse_worker_state, required_arg, resolve_config_path, resolve_state_root,
     save_config,
 };
+use crate::cli::host_catalog::{
+    HostCatalog, load_or_refresh_host_catalog, model_matches_cli, normalize_reasoning_order,
+    preferred_model_for_cli, reasoning_levels_for,
+};
 use crate::cli::logging::{print_help, print_json};
 use crate::runtime::adapters::{WorkerAdapterConfig, resolve_worker_adapter};
 use crate::runtime::authority::renew_authority;
@@ -160,7 +164,7 @@ struct SettingsApp {
     pending_choice: Option<String>,
     input: String,
     status: String,
-    host_defaults: Option<HostModelDefaults>,
+    host_catalog: HostCatalog,
 }
 
 fn run_default() -> Result<(), String> {
@@ -181,6 +185,8 @@ fn run_default() -> Result<(), String> {
 
 fn run_settings() -> Result<(), String> {
     let (config_path, cfg) = load_resolved_config()?;
+    let state_root = resolve_state_root()?;
+    let host_catalog = load_or_refresh_host_catalog(&state_root);
     if !stdout().is_terminal() {
         return Err("settings requires an interactive terminal".to_string());
     }
@@ -196,8 +202,9 @@ fn run_settings() -> Result<(), String> {
         pending_choice: None,
         input: String::new(),
         status: "Enter drills in. Space selects. Enter saves. Esc backs out. q quits.".to_string(),
-        host_defaults: detect_host_model_defaults(),
+        host_catalog,
     };
+    normalize_loaded_profiles(&mut app);
     app.entries = settings_entries(&app.cfg);
     run_settings_tui(&mut app)
 }
@@ -258,6 +265,59 @@ fn update_profile_field(
         }
     }
     Ok(())
+}
+
+fn sync_profile_for_cli(app: &mut SettingsApp, profile_name: &str) {
+    let Some(profile) = app.cfg.workers.get_mut(profile_name) else {
+        return;
+    };
+    if !model_matches_cli(&profile.cli, &profile.model) {
+        if let Some(model) = preferred_model_for_cli(&app.host_catalog, &profile.cli) {
+            profile.model = model;
+        } else {
+            profile.model.clear();
+        }
+    }
+    if let Some(reasoning) = profile.reasoning.clone() {
+        let available = reasoning_levels_for(&app.host_catalog, &profile.cli, Some(&profile.model));
+        if !available.is_empty() && !available.iter().any(|level| level == &reasoning) {
+            profile.reasoning = available.first().cloned();
+        }
+    }
+}
+
+fn normalize_loaded_profiles(app: &mut SettingsApp) {
+    let profile_names = app.cfg.workers.keys().cloned().collect::<Vec<_>>();
+    let mut changed = false;
+    for profile_name in profile_names {
+        let before = app.cfg.workers.get(&profile_name).map(|worker| {
+            (
+                worker.cli.clone(),
+                worker.model.clone(),
+                worker.reasoning.clone(),
+                worker.description.clone(),
+            )
+        });
+        sync_profile_for_cli(app, &profile_name);
+        let after = app.cfg.workers.get(&profile_name).map(|worker| {
+            (
+                worker.cli.clone(),
+                worker.model.clone(),
+                worker.reasoning.clone(),
+                worker.description.clone(),
+            )
+        });
+        if before != after {
+            changed = true;
+        }
+    }
+    if changed {
+        let _ = save_config(&app.config_path, &app.cfg);
+        app.status = format!(
+            "Normalized mismatched model selections in {}.",
+            app.config_path.display()
+        );
+    }
 }
 
 fn settings_entries(cfg: &Config) -> Vec<SettingsEntry> {
@@ -357,7 +417,12 @@ fn apply_settings_value(app: &mut SettingsApp, value: &str) -> Result<(), String
     let (field, label, _) = current_field(app);
     match selected_entry(app).clone() {
         SettingsEntry::Surface => update_surface_field(&mut app.cfg, field, value)?,
-        SettingsEntry::Profile(name) => update_profile_field(&mut app.cfg, &name, field, value)?,
+        SettingsEntry::Profile(name) => {
+            update_profile_field(&mut app.cfg, &name, field, value)?;
+            if matches!(field, SettingsField::Cli) {
+                sync_profile_for_cli(app, &name);
+            }
+        }
     }
     save_config(&app.config_path, &app.cfg)?;
     app.entries = settings_entries(&app.cfg);
@@ -407,170 +472,22 @@ fn cli_choices(current_value: &str) -> Vec<SettingsChoice> {
         .collect()
 }
 
-fn push_unique(values: &mut Vec<String>, value: impl Into<String>) {
-    let value = value.into();
-    if value.trim().is_empty() || values.iter().any(|existing| existing == &value) {
-        return;
-    }
-    values.push(value);
-}
-
-fn model_matches_cli(cli: &str, model: &str) -> bool {
-    let model = model.trim().to_ascii_lowercase();
-    match cli {
-        "codex" => {
-            model.starts_with("gpt-")
-                || model.starts_with("o3")
-                || model.starts_with("o4")
-                || model.starts_with("codex")
-        }
-        "claude" => {
-            model.starts_with("claude") || model == "sonnet" || model == "opus" || model == "haiku"
-        }
-        "gemini" => model.starts_with("gemini"),
-        _ => false,
-    }
-}
-
-fn vendor_model_fallbacks(cli: &str) -> &'static [&'static str] {
-    match cli {
-        "codex" => &[],
-        "claude" => &[
-            "claude-sonnet-4-6",
-            "claude-opus-4-1",
-            "sonnet",
-            "opus",
-            "haiku",
-        ],
-        "gemini" => &["gemini-2.5-pro", "gemini-2.5-flash"],
-        _ => &[],
-    }
-}
-
-fn discover_codex_models() -> Vec<String> {
-    let home = match env::var("HOME") {
-        Ok(value) => value,
-        Err(_) => return Vec::new(),
-    };
-    let path = Path::new(&home).join(".codex").join("models_cache.json");
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(_) => return Vec::new(),
-    };
-    let parsed = match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(parsed) => parsed,
-        Err(_) => return Vec::new(),
-    };
-    parsed["models"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|model| model["slug"].as_str().map(ToOwned::to_owned))
-        .collect()
-}
-
-fn codex_reasoning_levels(model_slug: Option<&str>) -> Vec<String> {
-    let home = match env::var("HOME") {
-        Ok(value) => value,
-        Err(_) => return vec!["low".to_string(), "medium".to_string(), "high".to_string()],
-    };
-    let path = Path::new(&home).join(".codex").join("models_cache.json");
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(_) => return vec!["low".to_string(), "medium".to_string(), "high".to_string()],
-    };
-    let parsed = match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(parsed) => parsed,
-        Err(_) => return vec!["low".to_string(), "medium".to_string(), "high".to_string()],
-    };
-    let Some(models) = parsed["models"].as_array() else {
-        return vec!["low".to_string(), "medium".to_string(), "high".to_string()];
-    };
-    for model in models {
-        if model["slug"].as_str() == model_slug {
-            let levels = model["supported_reasoning_levels"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|level| level["effort"].as_str().map(ToOwned::to_owned))
-                .collect::<Vec<_>>();
-            if !levels.is_empty() {
-                return levels;
-            }
-        }
-    }
-    vec!["low".to_string(), "medium".to_string(), "high".to_string()]
-}
-
-fn models_from_repo_configs(config_path: &Path, cli: &str) -> Vec<String> {
-    let Some(config_dir) = config_path.parent() else {
-        return Vec::new();
-    };
-    let entries = match fs::read_dir(config_dir) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
-    };
-    let mut models = BTreeSet::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json") {
-            continue;
-        }
-        let raw = match fs::read_to_string(&path) {
-            Ok(raw) => raw,
-            Err(_) => continue,
-        };
-        let parsed = match serde_json::from_str::<Config>(&raw) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-        for worker in parsed.workers.values() {
-            if worker.cli == cli && !worker.model.trim().is_empty() {
-                models.insert(worker.model.clone());
-            }
-        }
-    }
-    models.into_iter().collect()
-}
-
 fn model_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> {
     let cli = current_cli_for_entry(app);
-    let mut values = Vec::new();
+    let vendor = app.host_catalog.vendor(&cli);
+    let mut values = vendor.models;
     if model_matches_cli(&cli, current_value) {
-        push_unique(&mut values, current_value.trim().to_string());
-    }
-    match cli.as_str() {
-        "codex" => {
-            for model in discover_codex_models() {
-                push_unique(&mut values, model);
-            }
-            if let Some(defaults) = &app.host_defaults {
-                if let Some(model) = &defaults.codex {
-                    push_unique(&mut values, model.clone());
-                }
-            }
+        if !values
+            .iter()
+            .any(|existing| existing == current_value.trim())
+        {
+            values.insert(0, current_value.trim().to_string());
         }
-        "claude" => {
-            if let Some(defaults) = &app.host_defaults {
-                if let Some(model) = &defaults.claude {
-                    push_unique(&mut values, model.clone());
-                }
-            }
-        }
-        "gemini" => {
-            if let Some(defaults) = &app.host_defaults {
-                if let Some(model) = &defaults.gemini {
-                    push_unique(&mut values, model.clone());
-                }
-            }
-        }
-        _ => {}
     }
-    for model in vendor_model_fallbacks(&cli) {
-        push_unique(&mut values, (*model).to_string());
-    }
-    for model in models_from_repo_configs(&app.config_path, &cli) {
-        push_unique(&mut values, model);
+    if let Some(default_model) = vendor.default_model {
+        if !values.iter().any(|existing| existing == &default_model) {
+            values.insert(0, default_model);
+        }
     }
     values
         .into_iter()
@@ -584,27 +501,28 @@ fn model_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> 
 fn reasoning_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> {
     let cli = current_cli_for_entry(app);
     let mut values = Vec::new();
-    push_unique(&mut values, "-");
-    if cli == "codex" {
-        let model = match selected_entry(app) {
-            SettingsEntry::Surface => None,
-            SettingsEntry::Profile(name) => app
-                .cfg
-                .workers
-                .get(name)
-                .map(|worker| worker.model.as_str()),
-        };
-        for value in codex_reasoning_levels(model) {
-            push_unique(&mut values, value);
-        }
-    } else {
-        for value in ["low", "medium", "high", "max"] {
-            push_unique(&mut values, value.to_string());
+    values.push("-".to_string());
+    let model = match selected_entry(app) {
+        SettingsEntry::Surface => None,
+        SettingsEntry::Profile(name) => app
+            .cfg
+            .workers
+            .get(name)
+            .map(|worker| worker.model.as_str()),
+    };
+    for value in reasoning_levels_for(&app.host_catalog, &cli, model) {
+        if !values.iter().any(|existing| existing == &value) {
+            values.push(value);
         }
     }
-    if !current_value.trim().is_empty() {
-        push_unique(&mut values, current_value.trim().to_string());
+    if !current_value.trim().is_empty()
+        && !values
+            .iter()
+            .any(|existing| existing == current_value.trim())
+    {
+        values.push(current_value.trim().to_string());
     }
+    let values = normalize_reasoning_order(values);
     values
         .into_iter()
         .map(|value| SettingsChoice {
@@ -653,18 +571,21 @@ fn settings_focus_style(active: bool) -> Style {
     }
 }
 
-fn host_default_spans(defaults: &Option<HostModelDefaults>) -> Vec<Span<'static>> {
-    let codex = defaults
-        .as_ref()
-        .and_then(|value| value.codex.clone())
+fn host_default_spans(catalog: &HostCatalog) -> Vec<Span<'static>> {
+    let codex = catalog
+        .codex
+        .default_model
+        .clone()
         .unwrap_or_else(|| "-".to_string());
-    let claude = defaults
-        .as_ref()
-        .and_then(|value| value.claude.clone())
+    let claude = catalog
+        .claude
+        .default_model
+        .clone()
         .unwrap_or_else(|| "-".to_string());
-    let gemini = defaults
-        .as_ref()
-        .and_then(|value| value.gemini.clone())
+    let gemini = catalog
+        .gemini
+        .default_model
+        .clone()
         .unwrap_or_else(|| "-".to_string());
 
     vec![
@@ -907,7 +828,7 @@ fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
             ),
         ]),
         Line::from(""),
-        Line::from(host_default_spans(&app.host_defaults)),
+        Line::from(host_default_spans(&app.host_catalog)),
     ])
     .block(
         Block::default()
@@ -1340,33 +1261,6 @@ fn resolve_surface_launch(
         env: surface.env.clone().unwrap_or_default(),
     };
     resolve_worker_adapter(&adapter, run_id, "main", None, None)
-}
-
-struct HostModelDefaults {
-    codex: Option<String>,
-    claude: Option<String>,
-    gemini: Option<String>,
-}
-
-fn detect_host_model_defaults() -> Option<HostModelDefaults> {
-    let home = env::var("HOME").ok()?;
-    Some(HostModelDefaults {
-        codex: read_codex_host_model(&Path::new(&home).join(".codex").join("config.toml")),
-        claude: None,
-        gemini: None,
-    })
-}
-
-fn read_codex_host_model(path: &Path) -> Option<String> {
-    let raw = fs::read_to_string(path).ok()?;
-    raw.lines().find_map(|line| {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("model =") {
-            return None;
-        }
-        let value = trimmed.split_once('=')?.1.trim();
-        Some(value.trim_matches('"').to_string()).filter(|model| !model.is_empty())
-    })
 }
 
 fn plan_team_roster(

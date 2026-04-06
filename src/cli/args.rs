@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::cli::host_catalog::{HostCatalog, preferred_model_for_cli};
 use crate::runtime::types::{DispatchStatus, RunPhase, WorkerState};
 
 fn default_worker(
@@ -111,12 +112,20 @@ pub struct StatusPayload {
 }
 
 pub fn default_config() -> Config {
+    let catalog = resolve_state_root()
+        .ok()
+        .map(|root| crate::cli::host_catalog::load_or_refresh_host_catalog(&root))
+        .unwrap_or_default();
+    default_config_from_catalog(&catalog)
+}
+
+fn default_config_from_catalog(catalog: &HostCatalog) -> Config {
     let mut workers = BTreeMap::new();
     workers.insert(
         "explore".to_string(),
         default_worker(
             "codex",
-            "gpt-5.3-codex-spark",
+            &pick_default_model(catalog, "codex", &["spark", "gpt-5.4"], "gpt-5.4"),
             Some("xhigh"),
             "Fast codebase exploration and triage lane",
         ),
@@ -125,7 +134,7 @@ pub fn default_config() -> Config {
         "build".to_string(),
         default_worker(
             "codex",
-            "gpt-5.4-mini",
+            &pick_default_model(catalog, "codex", &["mini", "gpt-5.4"], "gpt-5.4"),
             Some("high"),
             "Primary implementation lane",
         ),
@@ -134,7 +143,7 @@ pub fn default_config() -> Config {
         "review".to_string(),
         default_worker(
             "codex",
-            "gpt-5.4",
+            &pick_default_model(catalog, "codex", &["gpt-5.4"], "gpt-5.4"),
             Some("medium"),
             "Review and challenge lane",
         ),
@@ -143,7 +152,7 @@ pub fn default_config() -> Config {
         "verify".to_string(),
         default_worker(
             "codex",
-            "gpt-5.4-mini",
+            &pick_default_model(catalog, "codex", &["mini", "gpt-5.4"], "gpt-5.4"),
             Some("high"),
             "Verification and completion evidence lane",
         ),
@@ -184,6 +193,21 @@ pub fn default_config() -> Config {
         },
         workers,
     }
+}
+
+fn pick_default_model(
+    catalog: &HostCatalog,
+    cli: &str,
+    contains: &[&str],
+    fallback: &str,
+) -> String {
+    let vendor = catalog.vendor(cli);
+    for needle in contains {
+        if let Some(model) = vendor.models.iter().find(|model| model.contains(needle)) {
+            return model.clone();
+        }
+    }
+    preferred_model_for_cli(catalog, cli).unwrap_or_else(|| fallback.to_string())
 }
 
 pub fn required_arg<'a>(args: &'a [String], index: usize, error: &str) -> Result<&'a str, String> {
