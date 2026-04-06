@@ -217,12 +217,8 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
-    let requested_width = args
-        .get(1)
-        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
-        .transpose()?;
-    ensure_team_sessions(&run_id, TeamMode::Default, requested_width)?;
-    run_ops_open(std::slice::from_ref(&run_id))
+    ensure_surface_only(&run_id)?;
+    attach_surface_session(&run_id)
 }
 
 fn update_profile_field(
@@ -1080,7 +1076,8 @@ fn run_open(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
-    run_ops_open(std::slice::from_ref(&run_id))
+    ensure_surface_only(&run_id)?;
+    attach_surface_session(&run_id)
 }
 
 fn run_attach_alias(args: &[String]) -> Result<(), String> {
@@ -1187,6 +1184,14 @@ fn ensure_team_sessions(
     Ok(())
 }
 
+fn ensure_surface_only(run_id: &str) -> Result<(), String> {
+    let (_, cfg) = load_resolved_config()?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
+    ensure_surface_session(&store, &cfg, run_id)?;
+    Ok(())
+}
+
 fn ensure_explicit_team_sessions(
     run_id: &str,
     team_size: usize,
@@ -1223,8 +1228,15 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
             worker.worker_kind = desired_kind.clone();
             let _ = store.upsert_worker(worker)?;
         }
-        if existing.status == SessionStatus::Running || existing.status == SessionStatus::Starting {
-            return Ok(());
+        if existing.status == SessionStatus::Running || existing.status == SessionStatus::Starting
+        {
+            if existing.program == launch.program && existing.args == launch.args {
+                return Ok(());
+            }
+            let _ = send_session_command(
+                Path::new(&existing.socket_path),
+                &SessionCommand::Stop,
+            );
         }
     }
     let result = spawn_session(
@@ -1243,6 +1255,11 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
     }
     let _ = result;
     Ok(())
+}
+
+fn attach_surface_session(run_id: &str) -> Result<(), String> {
+    let session_id = "session-main".to_string();
+    run_worker_attach(&[run_id.to_string(), session_id])
 }
 
 fn resolve_surface_launch(
