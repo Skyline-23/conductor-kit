@@ -333,3 +333,54 @@ pub fn command_available(command: &str) -> bool {
         candidate.is_file()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::host_catalog::{HostCatalog, VendorCatalog};
+
+    #[test]
+    fn default_config_prefers_spark_for_explore_and_sets_reasoning() {
+        let mut catalog = HostCatalog::default();
+        catalog.codex = VendorCatalog {
+            default_model: Some("gpt-5.4".to_string()),
+            models: vec![
+                "gpt-5.4".to_string(),
+                "gpt-5.3-codex-spark".to_string(),
+                "gpt-5.4-mini".to_string(),
+            ],
+            reasoning_levels: BTreeMap::new(),
+        };
+
+        let cfg = default_config_from_catalog(&catalog);
+
+        let explore = cfg.workers.get("explore").expect("missing explore profile");
+        let build = cfg.workers.get("build").expect("missing build profile");
+        let review = cfg.workers.get("review").expect("missing review profile");
+        let verify = cfg.workers.get("verify").expect("missing verify profile");
+
+        assert_eq!(cfg.surface.cli, "codex");
+        assert_eq!(explore.cli, "codex");
+        assert_eq!(explore.model, "gpt-5.3-codex-spark");
+        assert_eq!(explore.reasoning.as_deref(), Some("xhigh"));
+        assert_eq!(build.model, "gpt-5.4-mini");
+        assert_eq!(build.reasoning.as_deref(), Some("high"));
+        assert_eq!(review.model, "gpt-5.4");
+        assert_eq!(review.reasoning.as_deref(), Some("medium"));
+        assert_eq!(verify.model, "gpt-5.4-mini");
+        assert_eq!(verify.reasoning.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn pick_default_model_falls_back_to_catalog_default() {
+        let mut catalog = HostCatalog::default();
+        catalog.codex = VendorCatalog {
+            default_model: Some("gpt-5.4".to_string()),
+            models: vec!["gpt-5.4".to_string()],
+            reasoning_levels: BTreeMap::new(),
+        };
+
+        let model = pick_default_model(&catalog, "codex", &["spark", "mini"], "fallback-model");
+        assert_eq!(model, "gpt-5.4");
+    }
+}
