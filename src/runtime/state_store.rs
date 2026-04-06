@@ -109,6 +109,49 @@ impl StateStore {
         self.write_json(&self.task_file(&task.run_id, &task.task_id), task)
     }
 
+    pub fn complete_task(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        summary: &str,
+        evidence: Value,
+    ) -> Result<TaskRecord, String> {
+        let mut task = self.read_task(run_id, task_id)?;
+        let now = Utc::now();
+        task.status = TaskStatus::Completed;
+        task.completed_at = Some(now);
+        task.updated_at = now;
+        task.owner = None;
+        task.claim = None;
+        task.error = None;
+        let mut result = Map::new();
+        result.insert("summary".to_string(), Value::String(summary.to_string()));
+        result.insert("evidence".to_string(), evidence);
+        task.result = Some(Value::Object(result));
+        self.write_task(&task)?;
+        self.refresh_snapshot(run_id)?;
+        Ok(task)
+    }
+
+    pub fn fail_task(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        error: &str,
+    ) -> Result<TaskRecord, String> {
+        let mut task = self.read_task(run_id, task_id)?;
+        let now = Utc::now();
+        task.status = TaskStatus::Failed;
+        task.completed_at = Some(now);
+        task.updated_at = now;
+        task.owner = None;
+        task.claim = None;
+        task.error = Some(error.to_string());
+        self.write_task(&task)?;
+        self.refresh_snapshot(run_id)?;
+        Ok(task)
+    }
+
     pub fn append_runtime_event(&self, run_id: &str, event: EventEnvelope) -> Result<(), String> {
         self.append_event(run_id, event)
     }

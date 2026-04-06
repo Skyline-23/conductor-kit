@@ -109,6 +109,7 @@ fn main() {
         "runtime-init" => run_runtime_init(&args[2..]),
         "runtime-snapshot" => run_runtime_snapshot(&args[2..]),
         "runtime-refresh" => run_runtime_refresh(&args[2..]),
+        "run-orchestrate" => run_orchestrate(&args[2..]),
         "authority-renew" => run_authority_renew(&args[2..]),
         "phase-set" => run_phase_set(&args[2..]),
         "task-claim" => run_task_claim(&args[2..]),
@@ -236,6 +237,177 @@ fn run_runtime_refresh(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let snapshot = store.refresh_snapshot(run_id)?;
     print_json(&snapshot)
+}
+
+fn run_orchestrate(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err(
+            "run-orchestrate requires <run_id> <worker_type> <prompt> [worker_id]".to_string(),
+        );
+    }
+    let run_id = &args[0];
+    let worker_type = &args[1];
+    let prompt = &args[2];
+    let worker_id = args
+        .get(3)
+        .cloned()
+        .unwrap_or_else(|| format!("{worker_type}-1"));
+
+    let state_root = resolve_state_root()?;
+    let store = StateStore::new(state_root);
+    if !store
+        .root()
+        .join("runs")
+        .join(run_id)
+        .join("run.json")
+        .exists()
+    {
+        let _ = store.init_run(run_id, "orchestrator-main")?;
+    }
+
+    let (_, cfg) = load_resolved_config()?;
+    let adapter = worker_adapter_config(&cfg, worker_type)?;
+    let task_id = format!("task-{worker_id}");
+    let session_id = format!("session-{worker_id}");
+
+    let _ = transition_phase(
+        &store,
+        run_id,
+        RunPhase::Discovering,
+        Some("orchestration_start".to_string()),
+    )?;
+    let task = match store.read_task(run_id, &task_id) {
+        Ok(existing) => existing,
+        Err(_) => store.create_task(run_id, &task_id, prompt, Some(prompt.clone()))?,
+    };
+    let _ = acquire_claim(&store, run_id, &task.task_id, &worker_id, 10)?;
+    let _ = transition_phase(
+        &store,
+        run_id,
+        RunPhase::Spawning,
+        Some("worker_session_start".to_string()),
+    )?;
+
+    let session_exists = store.session_file(run_id, &session_id).exists();
+    if !session_exists {
+        let launch = resolve_worker_adapter(
+            &adapter,
+            run_id,
+            &worker_id,
+            Some(&task.task_id),
+            Some(prompt),
+        )?;
+        let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+        let result = spawn_session(
+            &store,
+            run_id,
+            &worker_id,
+            &launch.program,
+            &launch.args,
+            &conductor_bin,
+        )?;
+        if let Some(payload) = launch.stdin_payload {
+            let _ = send_session_command(
+                Path::new(&result.session.socket_path),
+                &SessionCommand::SendStdin { data: payload },
+            )?;
+        }
+    }
+
+    let _ = transition_phase(
+        &store,
+        run_id,
+        RunPhase::Executing,
+        Some("dispatch_prompt".to_string()),
+    )?;
+    let dispatch_id = format!("dispatch-{worker_id}");
+    let message_id = format!("message-{worker_id}");
+    let _ = store.queue_dispatch(run_id, &dispatch_id, &worker_id, serde_json::Map::new())?;
+    let response = {
+        let dispatch = store.read_dispatch(run_id, &dispatch_id)?;
+        let session = store.read_session(run_id, &session_id)?;
+        let _ = store.create_mailbox_message(
+            run_id,
+            &message_id,
+            "orchestrator-main",
+            &dispatch.target,
+            prompt,
+        )?;
+        let _ =
+            store.update_dispatch_status(run_id, &dispatch_id, DispatchStatus::Notified, None)?;
+        let _ = store.update_mailbox_status(run_id, &dispatch.target, &message_id, false)?;
+        let response = send_session_command(
+            Path::new(&session.socket_path),
+            &SessionCommand::SendStdin {
+                data: format!("{prompt}\n"),
+            },
+        )?;
+        if response.ok {
+            let _ = store.update_mailbox_status(run_id, &dispatch.target, &message_id, true)?;
+            let _ = store.update_dispatch_status(
+                run_id,
+                &dispatch_id,
+                DispatchStatus::Delivered,
+                None,
+            )?;
+        } else {
+            let _ = store.update_dispatch_status(
+                run_id,
+                &dispatch_id,
+                DispatchStatus::Failed,
+                response.message.clone(),
+            )?;
+        }
+        response
+    };
+
+    let _ = transition_phase(
+        &store,
+        run_id,
+        RunPhase::Verifying,
+        Some("result_check".to_string()),
+    )?;
+    if response.ok {
+        let _ = store.complete_task(
+            run_id,
+            &task_id,
+            "orchestration dispatch delivered",
+            json!({
+                "session_id": session_id,
+                "dispatch_id": dispatch_id,
+                "message_id": message_id
+            }),
+        )?;
+    } else {
+        let _ = store.fail_task(
+            run_id,
+            &task_id,
+            response
+                .message
+                .as_deref()
+                .unwrap_or("dispatch routing failed"),
+        )?;
+    }
+    let _ = transition_phase(
+        &store,
+        run_id,
+        if response.ok {
+            RunPhase::Complete
+        } else {
+            RunPhase::Failed
+        },
+        Some("orchestration_end".to_string()),
+    )?;
+    let snapshot = store.read_snapshot(run_id)?;
+    print_json(&json!({
+        "ok": response.ok,
+        "run_id": run_id,
+        "worker_id": worker_id,
+        "task_id": task_id,
+        "session_id": session_id,
+        "response": response,
+        "snapshot": snapshot
+    }))
 }
 
 fn run_authority_renew(args: &[String]) -> Result<(), String> {
@@ -1042,6 +1214,7 @@ Commands:
   runtime-init        Initialize runtime state for a run
   runtime-snapshot    Print runtime snapshot for a run
   runtime-refresh     Rebuild and persist snapshot for a run
+  run-orchestrate     Run a minimal orchestration loop
   authority-renew     Renew authority lease for a run
   phase-set           Transition run phase
   task-claim          Acquire a task claim
