@@ -78,6 +78,9 @@ struct WorkerConfig {
     model: String,
     reasoning: Option<String>,
     description: String,
+    launch_mode: Option<String>,
+    base_args: Option<Vec<String>>,
+    env: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -304,6 +307,7 @@ fn run_orchestrate(args: &[String]) -> Result<(), String> {
             &worker_id,
             &launch.program,
             &launch.args,
+            &launch.env,
             &conductor_bin,
         )?;
         if let Some(payload) = launch.stdin_payload {
@@ -542,6 +546,7 @@ fn run_worker_exec(args: &[String]) -> Result<(), String> {
             args: program_args,
             cwd,
             stdin_payload,
+            env: BTreeMap::new(),
         },
         &store,
     )?;
@@ -566,6 +571,7 @@ fn run_worker_spawn_session(args: &[String]) -> Result<(), String> {
         worker_id,
         program,
         &program_args,
+        &BTreeMap::new(),
         &conductor_bin,
     )?;
     print_json(&result.session)
@@ -600,6 +606,7 @@ fn run_worker_adapter_exec(args: &[String]) -> Result<(), String> {
             args: launch.args,
             cwd: launch.cwd,
             stdin_payload: launch.stdin_payload,
+            env: launch.env,
         },
         &store,
     )?;
@@ -628,6 +635,7 @@ fn run_worker_adapter_spawn_session(args: &[String]) -> Result<(), String> {
         worker_id,
         &launch.program,
         &launch.args,
+        &launch.env,
         &conductor_bin,
     )?;
     if let Some(payload) = launch.stdin_payload {
@@ -1126,6 +1134,16 @@ fn validate_config(cfg: &Config) -> Vec<String> {
         if worker.description.trim().is_empty() {
             issues.push(format!("workers.{name}.description is required"));
         }
+        if let Some(launch_mode) = &worker.launch_mode {
+            if !matches!(
+                launch_mode.as_str(),
+                "stdin_json" | "stdin_text" | "argv_prompt" | "argv_json"
+            ) {
+                issues.push(format!(
+                    "workers.{name}.launch_mode must be stdin_json, stdin_text, argv_prompt, or argv_json"
+                ));
+            }
+        }
         if let Some(reasoning) = &worker.reasoning {
             if !matches!(reasoning.as_str(), "low" | "medium" | "high") {
                 issues.push(format!(
@@ -1149,6 +1167,12 @@ fn worker_adapter_config(cfg: &Config, worker_type: &str) -> Result<WorkerAdapte
         model: worker.model.clone(),
         reasoning: worker.reasoning.clone(),
         description: worker.description.clone(),
+        launch_mode: worker
+            .launch_mode
+            .clone()
+            .unwrap_or_else(|| "stdin_json".to_string()),
+        base_args: worker.base_args.clone().unwrap_or_default(),
+        env: worker.env.clone().unwrap_or_default(),
     })
 }
 

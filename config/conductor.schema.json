@@ -89,7 +89,19 @@
           "cli": { "type": "string", "enum": ["codex", "claude", "gemini"] },
           "model": { "type": "string" },
           "reasoning": { "type": "string", "enum": ["low", "medium", "high"] },
-          "description": { "type": "string" }
+          "description": { "type": "string" },
+          "launch_mode": {
+            "type": "string",
+            "enum": ["stdin_json", "stdin_text", "argv_prompt", "argv_json"]
+          },
+          "base_args": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
         },
         "required": ["cli", "model", "description"]
       }

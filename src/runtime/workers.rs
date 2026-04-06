@@ -5,6 +5,7 @@ use crate::runtime::types::{
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Instant;
@@ -18,6 +19,7 @@ pub struct WorkerLaunchSpec {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub stdin_payload: Option<String>,
+    pub env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,6 +94,7 @@ pub fn execute_worker(
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
+    command.envs(&spec.env);
     if let Some(cwd) = &spec.cwd {
         command.current_dir(cwd);
     }

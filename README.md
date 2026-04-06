@@ -65,6 +65,17 @@ The runtime nouns are:
 
 The default config lives at `config/conductor.json`.
 
+Worker adapters can now describe launch semantics per worker type:
+- `launch_mode`
+- `base_args`
+- `env`
+
+Supported launch modes:
+- `stdin_json`
+- `stdin_text`
+- `argv_prompt`
+- `argv_json`
+
 User overrides are expected at:
 - `~/.conductor-kit/conductor.json`
 - nearest `./.conductor-kit/conductor.json`

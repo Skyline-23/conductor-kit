@@ -6,6 +6,7 @@ use crate::runtime::types::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -39,6 +40,7 @@ pub fn spawn_session(
     worker_id: &str,
     program: &str,
     args: &[String],
+    child_env: &BTreeMap<String, String>,
     conductor_bin: &Path,
 ) -> Result<SessionSpawnResult, String> {
     let session_id = format!("session-{worker_id}");
@@ -63,6 +65,9 @@ pub fn spawn_session(
     command.arg(&stderr_path);
     command.arg(program);
     command.args(args);
+    for (key, value) in child_env {
+        command.env(format!("CONDUCTOR_CHILD_{key}"), value);
+    }
     command.stdin(Stdio::null());
     command.stdout(File::create(&host_stdout_path).map_err(|err| err.to_string())?);
     command.stderr(File::create(&host_stderr_path).map_err(|err| err.to_string())?);
@@ -166,6 +171,7 @@ pub fn run_worker_host(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .envs(read_child_env())
         .spawn()
         .map_err(|err| err.to_string())?;
 
@@ -293,4 +299,13 @@ fn wait_for_socket(socket_path: &Path) -> Result<(), String> {
 
 fn try_wait(child: &mut Child) -> Result<Option<std::process::ExitStatus>, String> {
     child.try_wait().map_err(|err| err.to_string())
+}
+
+fn read_child_env() -> BTreeMap<String, String> {
+    std::env::vars()
+        .filter_map(|(key, value)| {
+            key.strip_prefix("CONDUCTOR_CHILD_")
+                .map(|suffix| (suffix.to_string(), value))
+        })
+        .collect()
 }

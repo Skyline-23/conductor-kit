@@ -30,12 +30,16 @@
       "cli": "codex",
       "model": "gpt-5.2-codex",
       "reasoning": "medium",
-      "description": "Top-level coordinator for orchestration loops"
+      "description": "Top-level coordinator for orchestration loops",
+      "launch_mode": "stdin_json",
+      "base_args": []
     },
     "worker": {
       "cli": "gemini",
       "model": "gemini-3-flash",
-      "description": "General worker process for fan-out tasks"
+      "description": "General worker process for fan-out tasks",
+      "launch_mode": "stdin_json",
+      "base_args": []
     }
   }
 }
