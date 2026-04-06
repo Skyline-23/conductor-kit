@@ -1689,16 +1689,18 @@ fn build_attach_shell_command(
     run_id: &str,
     session_id: &str,
 ) -> String {
-    let mut parts = vec![format!("cd {}", shell_quote(cwd))];
-    parts.push(format!("CONDUCTOR_STATE_DIR={}", shell_quote(state_root)));
+    let mut env_parts = vec![format!("CONDUCTOR_STATE_DIR={}", shell_quote(state_root))];
     if let Some(path) = config_path {
-        parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
+        env_parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
     }
-    parts.push(shell_quote(conductor_bin));
-    parts.push("worker-attach".to_string());
-    parts.push(shell_quote_str(run_id));
-    parts.push(shell_quote_str(session_id));
-    parts.join(" ")
+    let command_parts = [
+        env_parts.join(" "),
+        shell_quote(conductor_bin),
+        "worker-attach".to_string(),
+        shell_quote_str(run_id),
+        shell_quote_str(session_id),
+    ];
+    format!("cd {} && {}", shell_quote(cwd), command_parts.join(" "))
 }
 
 fn build_hud_shell_command(
@@ -1708,16 +1710,18 @@ fn build_hud_shell_command(
     config_path: Option<&Path>,
     run_id: &str,
 ) -> String {
-    let mut parts = vec![format!("cd {}", shell_quote(cwd))];
-    parts.push(format!("CONDUCTOR_STATE_DIR={}", shell_quote(state_root)));
+    let mut env_parts = vec![format!("CONDUCTOR_STATE_DIR={}", shell_quote(state_root))];
     if let Some(path) = config_path {
-        parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
+        env_parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
     }
-    parts.push(shell_quote(conductor_bin));
-    parts.push("hud-watch".to_string());
-    parts.push(shell_quote_str(run_id));
-    parts.push("1000".to_string());
-    parts.join(" ")
+    let command_parts = [
+        env_parts.join(" "),
+        shell_quote(conductor_bin),
+        "hud-watch".to_string(),
+        shell_quote_str(run_id),
+        "1000".to_string(),
+    ];
+    format!("cd {} && {}", shell_quote(cwd), command_parts.join(" "))
 }
 
 fn open_terminal_script(terminal_app: &str, command: &str) -> Result<(), String> {
