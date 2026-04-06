@@ -88,6 +88,8 @@ The helper currently supports:
 - `conductor run-orchestrate`
 - `conductor run-fanout`
 - `conductor hud-view`
+- `conductor hud-watch`
+- `conductor worker-log`
 
 The default worker presets now include:
 - `orchestrator`

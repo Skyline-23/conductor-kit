@@ -125,11 +125,13 @@ fn main() {
         "worker-adapter-exec" => run_worker_adapter_exec(&args[2..]),
         "worker-adapter-spawn-session" => run_worker_adapter_spawn_session(&args[2..]),
         "worker-send" => run_worker_send(&args[2..]),
+        "worker-log" => run_worker_log(&args[2..]),
         "worker-session-status" => run_worker_session_status(&args[2..]),
         "worker-stop-session" => run_worker_stop_session(&args[2..]),
         "worker-host" => run_worker_host_command(&args[2..]),
         "dispatch-route" => run_dispatch_route(&args[2..]),
         "hud-view" => run_hud_view(&args[2..]),
+        "hud-watch" => run_hud_watch(&args[2..]),
         "events-list" => run_events_list(&args[2..]),
         "hook-run" => run_hook_run(&args[2..]),
         "task-create" => run_task_create(&args[2..]),
@@ -900,6 +902,47 @@ fn run_worker_send(args: &[String]) -> Result<(), String> {
     print_json(&response)
 }
 
+fn run_worker_log(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "worker-log requires <run_id> <session_id> [stdout|stderr|host_stdout|host_stderr] [lines]",
+    )?;
+    let session_id = required_arg(
+        args,
+        1,
+        "worker-log requires <run_id> <session_id> [stdout|stderr|host_stdout|host_stderr] [lines]",
+    )?;
+    let stream = args.get(2).map(String::as_str).unwrap_or("stdout");
+    let lines = args
+        .get(3)
+        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(40);
+    let store = StateStore::new(resolve_state_root()?);
+    let session = store.read_session(run_id, session_id)?;
+    let path = match stream {
+        "stdout" => PathBuf::from(&session.stdout_path),
+        "stderr" => PathBuf::from(&session.stderr_path),
+        "host_stdout" => store
+            .session_dir(run_id, session_id)
+            .join("host.stdout.log"),
+        "host_stderr" => store
+            .session_dir(run_id, session_id)
+            .join("host.stderr.log"),
+        _ => {
+            return Err(
+                "worker-log stream must be stdout, stderr, host_stdout, or host_stderr".to_string(),
+            );
+        }
+    };
+    let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let collected = raw.lines().collect::<Vec<_>>();
+    let start = collected.len().saturating_sub(lines);
+    println!("{}", collected[start..].join("\n"));
+    Ok(())
+}
+
 fn run_worker_session_status(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(
         args,
@@ -1081,6 +1124,74 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
             worker.current_task_id.unwrap_or_else(|| "-".to_string()),
             worker.current_summary.unwrap_or_else(|| "-".to_string())
         );
+    }
+    Ok(())
+}
+
+fn run_hud_watch(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "hud-watch requires <run_id> [interval_ms] [iterations]",
+    )?;
+    let interval_ms = args
+        .get(1)
+        .map(|value| value.parse::<u64>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(1000);
+    let iterations = args
+        .get(2)
+        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(0);
+    let store = StateStore::new(resolve_state_root()?);
+    let mut count = 0usize;
+    loop {
+        let snapshot = store.read_snapshot(run_id)?;
+        print!("\x1B[2J\x1B[H");
+        println!("run      {}", snapshot.run.run_id);
+        println!("phase    {:?}", snapshot.run.phase);
+        println!("active   {}", snapshot.run.active);
+        println!(
+            "owner    {}",
+            snapshot
+                .authority
+                .as_ref()
+                .map(|lease| lease.owner.clone())
+                .unwrap_or_else(|| "none".to_string())
+        );
+        println!(
+            "tasks    pending={} blocked={} in_progress={} completed={} failed={}",
+            snapshot.tasks.pending,
+            snapshot.tasks.blocked,
+            snapshot.tasks.in_progress,
+            snapshot.tasks.completed,
+            snapshot.tasks.failed
+        );
+        println!(
+            "dispatch pending={} notified={} delivered={} failed={}",
+            snapshot.dispatch.pending,
+            snapshot.dispatch.notified,
+            snapshot.dispatch.delivered,
+            snapshot.dispatch.failed
+        );
+        println!("mailbox  unread={}", snapshot.mailbox.unread);
+        println!("workers");
+        for worker in snapshot.workers {
+            println!(
+                "  {}  kind={:?} state={:?} task={} summary={}",
+                worker.worker_id,
+                worker.worker_kind,
+                worker.state,
+                worker.current_task_id.unwrap_or_else(|| "-".to_string()),
+                worker.current_summary.unwrap_or_else(|| "-".to_string())
+            );
+        }
+        count += 1;
+        if iterations > 0 && count >= iterations {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
     }
     Ok(())
 }
@@ -1601,10 +1712,12 @@ Commands:
   worker-adapter-exec Execute a configured worker adapter once
   worker-adapter-spawn-session Start a configured worker adapter session
   worker-send         Send stdin to a worker session
+  worker-log          Print recent session log output
   worker-session-status Query a worker session
   worker-stop-session Stop a worker session
   dispatch-route      Deliver a queued dispatch to a worker session
   hud-view            Print a compact runtime HUD view
+  hud-watch           Continuously render the runtime HUD
   events-list         Print runtime events
   hook-run            Run a hook command against matching events
   task-create         Create a task record
