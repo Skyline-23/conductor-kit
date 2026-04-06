@@ -6,6 +6,29 @@ use std::path::{Path, PathBuf};
 
 use crate::runtime::types::{DispatchStatus, RunPhase, WorkerState};
 
+fn default_worker(
+    cli: &str,
+    model: &str,
+    reasoning: Option<&str>,
+    description: &str,
+) -> WorkerConfig {
+    WorkerConfig {
+        cli: cli.to_string(),
+        model: model.to_string(),
+        reasoning: reasoning.map(ToOwned::to_owned),
+        description: description.to_string(),
+        delivery_mode: Some("session".to_string()),
+        launch_mode: Some("stdin_text".to_string()),
+        base_args: Some(vec![
+            "-m".to_string(),
+            "{model}".to_string(),
+            "-c".to_string(),
+            "model_reasoning_effort=\"{reasoning}\"".to_string(),
+        ]),
+        env: None,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub defaults: Defaults,
@@ -85,6 +108,82 @@ pub struct StatusPayload {
     pub workers: serde_json::Value,
     pub worker_types: Vec<String>,
     pub ok: bool,
+}
+
+pub fn default_config() -> Config {
+    let mut workers = BTreeMap::new();
+    workers.insert(
+        "explore".to_string(),
+        default_worker(
+            "codex",
+            "gpt-5.3-codex-spark",
+            Some("xhigh"),
+            "Fast codebase exploration and triage lane",
+        ),
+    );
+    workers.insert(
+        "build".to_string(),
+        default_worker(
+            "codex",
+            "gpt-5.4-mini",
+            Some("high"),
+            "Primary implementation lane",
+        ),
+    );
+    workers.insert(
+        "review".to_string(),
+        default_worker(
+            "codex",
+            "gpt-5.4",
+            Some("medium"),
+            "Review and challenge lane",
+        ),
+    );
+    workers.insert(
+        "verify".to_string(),
+        default_worker(
+            "codex",
+            "gpt-5.4-mini",
+            Some("high"),
+            "Verification and completion evidence lane",
+        ),
+    );
+
+    Config {
+        defaults: Defaults {
+            idle_timeout_ms: 120000,
+            summary_only: true,
+            max_parallel: 4,
+        },
+        surface: SurfaceConfig {
+            cli: "codex".to_string(),
+            description: "Primary operator surface following the user's host defaults".to_string(),
+            base_args: Some(Vec::new()),
+            env: None,
+        },
+        runtime: RuntimeConfig {
+            transport: TransportConfig {
+                mode: "direct".to_string(),
+                preferred: vec!["stdio".to_string(), "unix_socket".to_string()],
+                allow_tmux_fallback: false,
+            },
+            loop_config: LoopConfig {
+                persist_runs: true,
+                resume_strategy: "ledger".to_string(),
+            },
+            memory: MemoryConfig {
+                enabled: true,
+                ttl_hours: 24,
+                invalidate_on_git_head_change: true,
+            },
+            workers: WorkerRuntimeConfig {
+                max_workers: 6,
+                spawn_policy: "persistent".to_string(),
+                continue_policy: "resume_when_possible".to_string(),
+            },
+        },
+        workers,
+    }
 }
 
 pub fn required_arg<'a>(args: &'a [String], index: usize, error: &str) -> Result<&'a str, String> {
@@ -184,6 +283,9 @@ fn find_project_config(start: &Path) -> Option<PathBuf> {
 
 pub fn load_resolved_config() -> Result<(PathBuf, Config), String> {
     let path = resolve_config_path()?;
+    if !path.exists() {
+        return Ok((path, default_config()));
+    }
     let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
     let cfg = serde_json::from_str::<Config>(&raw).map_err(|err| err.to_string())?;
     Ok((path, cfg))

@@ -27,7 +27,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use serde::Serialize;
@@ -407,6 +407,46 @@ fn cli_choices(current_value: &str) -> Vec<SettingsChoice> {
         .collect()
 }
 
+fn push_unique(values: &mut Vec<String>, value: impl Into<String>) {
+    let value = value.into();
+    if value.trim().is_empty() || values.iter().any(|existing| existing == &value) {
+        return;
+    }
+    values.push(value);
+}
+
+fn model_matches_cli(cli: &str, model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    match cli {
+        "codex" => {
+            model.starts_with("gpt-")
+                || model.starts_with("o3")
+                || model.starts_with("o4")
+                || model.starts_with("codex")
+        }
+        "claude" => {
+            model.starts_with("claude") || model == "sonnet" || model == "opus" || model == "haiku"
+        }
+        "gemini" => model.starts_with("gemini"),
+        _ => false,
+    }
+}
+
+fn vendor_model_fallbacks(cli: &str) -> &'static [&'static str] {
+    match cli {
+        "codex" => &[],
+        "claude" => &[
+            "claude-sonnet-4-6",
+            "claude-opus-4-1",
+            "sonnet",
+            "opus",
+            "haiku",
+        ],
+        "gemini" => &["gemini-2.5-pro", "gemini-2.5-flash"],
+        _ => &[],
+    }
+}
+
 fn discover_codex_models() -> Vec<String> {
     let home = match env::var("HOME") {
         Ok(value) => value,
@@ -495,39 +535,42 @@ fn models_from_repo_configs(config_path: &Path, cli: &str) -> Vec<String> {
 
 fn model_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> {
     let cli = current_cli_for_entry(app);
-    let mut values = BTreeSet::new();
-    if !current_value.trim().is_empty() {
-        values.insert(current_value.trim().to_string());
+    let mut values = Vec::new();
+    if model_matches_cli(&cli, current_value) {
+        push_unique(&mut values, current_value.trim().to_string());
     }
     match cli.as_str() {
         "codex" => {
             for model in discover_codex_models() {
-                values.insert(model);
+                push_unique(&mut values, model);
             }
             if let Some(defaults) = &app.host_defaults {
                 if let Some(model) = &defaults.codex {
-                    values.insert(model.clone());
+                    push_unique(&mut values, model.clone());
                 }
             }
         }
         "claude" => {
             if let Some(defaults) = &app.host_defaults {
                 if let Some(model) = &defaults.claude {
-                    values.insert(model.clone());
+                    push_unique(&mut values, model.clone());
                 }
             }
         }
         "gemini" => {
             if let Some(defaults) = &app.host_defaults {
                 if let Some(model) = &defaults.gemini {
-                    values.insert(model.clone());
+                    push_unique(&mut values, model.clone());
                 }
             }
         }
         _ => {}
     }
+    for model in vendor_model_fallbacks(&cli) {
+        push_unique(&mut values, (*model).to_string());
+    }
     for model in models_from_repo_configs(&app.config_path, &cli) {
-        values.insert(model);
+        push_unique(&mut values, model);
     }
     values
         .into_iter()
@@ -540,11 +583,8 @@ fn model_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> 
 
 fn reasoning_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoice> {
     let cli = current_cli_for_entry(app);
-    let mut values = BTreeSet::new();
-    values.insert("-".to_string());
-    if !current_value.trim().is_empty() {
-        values.insert(current_value.trim().to_string());
-    }
+    let mut values = Vec::new();
+    push_unique(&mut values, "-");
     if cli == "codex" {
         let model = match selected_entry(app) {
             SettingsEntry::Surface => None,
@@ -555,12 +595,15 @@ fn reasoning_choices(app: &SettingsApp, current_value: &str) -> Vec<SettingsChoi
                 .map(|worker| worker.model.as_str()),
         };
         for value in codex_reasoning_levels(model) {
-            values.insert(value);
+            push_unique(&mut values, value);
         }
     } else {
         for value in ["low", "medium", "high", "max"] {
-            values.insert(value.to_string());
+            push_unique(&mut values, value.to_string());
         }
+    }
+    if !current_value.trim().is_empty() {
+        push_unique(&mut values, current_value.trim().to_string());
     }
     values
         .into_iter()
@@ -581,16 +624,80 @@ fn choice_options(app: &SettingsApp) -> Vec<SettingsChoice> {
     }
 }
 
-fn host_defaults_line(defaults: &Option<HostModelDefaults>) -> String {
-    match defaults {
-        Some(defaults) => format!(
-            "Detected host defaults  codex={}  claude={}  gemini={}",
-            defaults.codex.as_deref().unwrap_or("-"),
-            defaults.claude.as_deref().unwrap_or("-"),
-            defaults.gemini.as_deref().unwrap_or("-")
-        ),
-        None => "Detected host defaults unavailable".to_string(),
+fn settings_panel_style() -> Style {
+    Style::default()
+        .bg(Color::Rgb(17, 19, 33))
+        .fg(Color::Rgb(231, 234, 243))
+}
+
+fn settings_muted_style() -> Style {
+    Style::default().fg(Color::Rgb(145, 151, 174))
+}
+
+fn settings_accent_style() -> Style {
+    Style::default()
+        .fg(Color::Rgb(124, 242, 203))
+        .add_modifier(Modifier::BOLD)
+}
+
+fn settings_focus_style(active: bool) -> Style {
+    if active {
+        Style::default()
+            .bg(Color::Rgb(49, 56, 92))
+            .fg(Color::Rgb(245, 247, 250))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::Rgb(214, 218, 230))
+            .add_modifier(Modifier::BOLD)
     }
+}
+
+fn host_default_spans(defaults: &Option<HostModelDefaults>) -> Vec<Span<'static>> {
+    let codex = defaults
+        .as_ref()
+        .and_then(|value| value.codex.clone())
+        .unwrap_or_else(|| "-".to_string());
+    let claude = defaults
+        .as_ref()
+        .and_then(|value| value.claude.clone())
+        .unwrap_or_else(|| "-".to_string());
+    let gemini = defaults
+        .as_ref()
+        .and_then(|value| value.gemini.clone())
+        .unwrap_or_else(|| "-".to_string());
+
+    vec![
+        Span::styled(
+            " host defaults ",
+            Style::default()
+                .fg(Color::Rgb(12, 14, 24))
+                .bg(Color::Rgb(124, 242, 203))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            "codex",
+            Style::default()
+                .fg(Color::Rgb(120, 196, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!(" {codex}   ")),
+        Span::styled(
+            "claude",
+            Style::default()
+                .fg(Color::Rgb(255, 191, 114))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!(" {claude}   ")),
+        Span::styled(
+            "gemini",
+            Style::default()
+                .fg(Color::Rgb(194, 164, 255))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!(" {gemini}")),
+    ]
 }
 
 fn run_settings_tui(app: &mut SettingsApp) -> Result<(), String> {
@@ -759,146 +866,247 @@ fn settings_tui_loop(
 }
 
 fn draw_settings(frame: &mut ratatui::Frame<'_>, app: &SettingsApp) {
-    let panel = centered_rect(84, 72, frame.area());
-    frame.render_widget(Clear, panel);
+    frame.render_widget(Clear, frame.area());
+    let backdrop = Block::default().style(Style::default().bg(Color::Rgb(10, 11, 19)));
+    frame.render_widget(backdrop, frame.area());
+
+    let panel = centered_rect(96, 96, frame.area());
+    let shell = Block::default()
+        .borders(Borders::ALL)
+        .title(" conductor settings ")
+        .style(settings_panel_style())
+        .border_style(Style::default().fg(Color::Rgb(64, 72, 108)));
+    frame.render_widget(shell, panel);
+    let panel_inner = Layout::default()
+        .margin(1)
+        .constraints([Constraint::Min(1)])
+        .split(panel)[0];
 
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(5),
             Constraint::Length(3),
             Constraint::Min(10),
-            Constraint::Length(2),
+            Constraint::Length(3),
         ])
-        .split(panel);
+        .split(panel_inner);
 
     let header = Paragraph::new(vec![
         Line::from(vec![
             Span::styled(
-                "conductor settings",
-                Style::default().add_modifier(Modifier::BOLD),
+                "Conductor settings",
+                Style::default()
+                    .fg(Color::Rgb(245, 247, 250))
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("  {}", app.config_path.display())),
+            Span::raw("  "),
+            Span::styled(
+                app.config_path.display().to_string(),
+                settings_muted_style(),
+            ),
         ]),
-        Line::from(host_defaults_line(&app.host_defaults)),
+        Line::from(""),
+        Line::from(host_default_spans(&app.host_defaults)),
     ])
-    .block(Block::default().borders(Borders::ALL).title("Overview"))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Overview ")
+            .style(settings_panel_style())
+            .border_style(Style::default().fg(Color::Rgb(64, 72, 108))),
+    )
     .wrap(Wrap { trim: true });
     frame.render_widget(header, areas[0]);
 
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(20),
-            Constraint::Length(28),
-            Constraint::Min(24),
-        ])
-        .split(areas[1]);
-
-    let entry_items = app
-        .entries
-        .iter()
-        .map(|entry| ListItem::new(Line::from(entry_label(entry))))
-        .collect::<Vec<_>>();
-    let mut entry_state = ListState::default();
-    entry_state.select(Some(app.selected_entry));
-    let entry_list = List::new(entry_items)
-        .block(Block::default().borders(Borders::ALL).title("Entries"))
-        .highlight_style(match app.depth {
-            SettingsDepth::Entries => Style::default().add_modifier(Modifier::REVERSED),
-            _ => Style::default().add_modifier(Modifier::BOLD),
-        })
-        .highlight_symbol("> ");
-    frame.render_stateful_widget(entry_list, body[0], &mut entry_state);
-
-    let fields = entry_fields(app);
-    let field_items = fields
-        .iter()
-        .map(|(_, label, value)| {
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{label:<12}"),
-                    Style::default().add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(value.clone()),
-            ]))
-        })
-        .collect::<Vec<_>>();
-    let mut field_state = ListState::default();
-    field_state.select(Some(app.selected_field));
-    let field_title = format!("Fields  {}", entry_label(selected_entry(app)));
-    let field_list = List::new(field_items)
-        .block(Block::default().borders(Borders::ALL).title(field_title))
-        .highlight_style(match app.depth {
-            SettingsDepth::Fields | SettingsDepth::Choices | SettingsDepth::Text => {
-                Style::default().add_modifier(Modifier::REVERSED)
-            }
-            SettingsDepth::Entries => Style::default().add_modifier(Modifier::BOLD),
-        })
-        .highlight_symbol("> ");
-    frame.render_stateful_widget(field_list, body[1], &mut field_state);
-
-    let option_items = if app.depth == SettingsDepth::Choices {
-        app.choices
-            .iter()
-            .map(|choice| {
-                let marker = if app.pending_choice.as_deref() == Some(choice.value.as_str()) {
-                    "[x]"
-                } else {
-                    "[ ]"
-                };
-                ListItem::new(Line::from(format!("{marker} {}", choice.label)))
-            })
-            .collect::<Vec<_>>()
-    } else {
-        let (field, label, value) = current_field(app);
-        vec![
-            ListItem::new(Line::from(format!("field: {label}"))),
-            ListItem::new(Line::from(format!("value: {value}"))),
-            ListItem::new(Line::from(edit_hint(field))),
-        ]
+    let breadcrumb = match app.depth {
+        SettingsDepth::Entries => vec![
+            Span::styled("1 entries", settings_accent_style()),
+            Span::styled("  /  select a section", settings_muted_style()),
+        ],
+        SettingsDepth::Fields => vec![
+            Span::styled("1 entries", settings_muted_style()),
+            Span::styled("  /  ", settings_muted_style()),
+            Span::styled("2 fields", settings_accent_style()),
+            Span::styled(
+                format!("  /  {}", entry_label(selected_entry(app))),
+                settings_muted_style(),
+            ),
+        ],
+        SettingsDepth::Choices => {
+            let (_, label, _) = current_field(app);
+            vec![
+                Span::styled("1 entries", settings_muted_style()),
+                Span::styled("  /  ", settings_muted_style()),
+                Span::styled("2 fields", settings_muted_style()),
+                Span::styled("  /  ", settings_muted_style()),
+                Span::styled("3 options", settings_accent_style()),
+                Span::styled(format!("  /  {label}"), settings_muted_style()),
+            ]
+        }
+        SettingsDepth::Text => {
+            let (_, label, _) = current_field(app);
+            vec![
+                Span::styled("1 entries", settings_muted_style()),
+                Span::styled("  /  ", settings_muted_style()),
+                Span::styled("2 fields", settings_muted_style()),
+                Span::styled("  /  ", settings_muted_style()),
+                Span::styled("3 edit", settings_accent_style()),
+                Span::styled(format!("  /  {label}"), settings_muted_style()),
+            ]
+        }
     };
-    let mut option_state = ListState::default();
-    if !option_items.is_empty() {
-        option_state.select(Some(
-            app.selected_choice
-                .min(option_items.len().saturating_sub(1)),
-        ));
+    let trail = Paragraph::new(vec![Line::from(breadcrumb)])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Flow ")
+                .style(settings_panel_style())
+                .border_style(Style::default().fg(Color::Rgb(64, 72, 108))),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(trail, areas[1]);
+
+    let (list_title, list_items, selected_index, active_list) = match app.depth {
+        SettingsDepth::Entries => (
+            "Sections".to_string(),
+            app.entries
+                .iter()
+                .map(|entry| {
+                    let label = entry_label(entry);
+                    let desc = if matches!(entry, SettingsEntry::Surface) {
+                        "Primary operator surface".to_string()
+                    } else {
+                        "Team profile".to_string()
+                    };
+                    ListItem::new(vec![
+                        Line::from(vec![Span::styled(label, settings_accent_style())]),
+                        Line::from(vec![Span::styled(desc, settings_muted_style())]),
+                    ])
+                })
+                .collect::<Vec<_>>(),
+            app.selected_entry,
+            true,
+        ),
+        SettingsDepth::Fields => (
+            format!("Fields  {}", entry_label(selected_entry(app))),
+            entry_fields(app)
+                .iter()
+                .map(|(_, label, value)| {
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{label:<14}"), settings_accent_style()),
+                        Span::raw(value.clone()),
+                    ]))
+                })
+                .collect::<Vec<_>>(),
+            app.selected_field,
+            true,
+        ),
+        SettingsDepth::Choices => (
+            {
+                let (_, label, _) = current_field(app);
+                format!("Options  {label}")
+            },
+            app.choices
+                .iter()
+                .map(|choice| {
+                    let marker = if app.pending_choice.as_deref() == Some(choice.value.as_str()) {
+                        "[selected] "
+                    } else {
+                        ""
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(marker, Style::default().fg(Color::Rgb(124, 242, 203))),
+                        Span::raw(choice.label.clone()),
+                    ]))
+                })
+                .collect::<Vec<_>>(),
+            app.selected_choice,
+            true,
+        ),
+        SettingsDepth::Text => (
+            "Details".to_string(),
+            {
+                let (field, label, value) = current_field(app);
+                vec![
+                    ListItem::new(Line::from(vec![
+                        Span::styled("field  ", settings_muted_style()),
+                        Span::styled(label, settings_accent_style()),
+                    ])),
+                    ListItem::new(Line::from(vec![
+                        Span::styled("value  ", settings_muted_style()),
+                        Span::raw(value),
+                    ])),
+                    ListItem::new(Line::from("")),
+                    ListItem::new(Line::from(edit_hint(field))),
+                ]
+            },
+            0,
+            false,
+        ),
+    };
+    let mut list_state = ListState::default();
+    if !list_items.is_empty() {
+        list_state.select(Some(selected_index.min(list_items.len().saturating_sub(1))));
     }
-    let option_title = match app.depth {
-        SettingsDepth::Choices => "Options",
-        SettingsDepth::Text => "Edit",
-        _ => "Details",
-    };
-    let option_list = List::new(option_items)
-        .block(Block::default().borders(Borders::ALL).title(option_title))
-        .highlight_style(match app.depth {
-            SettingsDepth::Choices => Style::default().add_modifier(Modifier::REVERSED),
-            _ => Style::default(),
+    let list = List::new(list_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {list_title} "))
+                .style(settings_panel_style())
+                .border_style(Style::default().fg(Color::Rgb(64, 72, 108))),
+        )
+        .highlight_style(if active_list {
+            settings_focus_style(true)
+        } else {
+            Style::default().fg(Color::Rgb(222, 226, 239))
         })
-        .highlight_symbol("> ");
-    frame.render_stateful_widget(option_list, body[2], &mut option_state);
+        .highlight_symbol("  ");
+    frame.render_stateful_widget(list, areas[2], &mut list_state);
 
     let footer = Paragraph::new(vec![
-        Line::from(app.status.clone()),
-        Line::from("Enter drills in, Space selects, Enter saves, Esc backs out, q quits."),
+        Line::from(vec![
+            Span::styled("status  ", settings_muted_style()),
+            Span::raw(app.status.clone()),
+        ]),
+        Line::from(vec![
+            Span::styled("keys    ", settings_muted_style()),
+            Span::raw(
+                "Up/Down move  Enter drills in  Space selects  Enter saves  Esc backs out  q quits",
+            ),
+        ]),
     ])
-    .block(Block::default().borders(Borders::ALL).title("Status"))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" Status ")
+            .style(settings_panel_style())
+            .border_style(Style::default().fg(Color::Rgb(64, 72, 108))),
+    )
     .wrap(Wrap { trim: true });
-    frame.render_widget(footer, areas[2]);
+    frame.render_widget(footer, areas[3]);
 
     if app.depth == SettingsDepth::Text {
-        let popup_area = centered_rect(70, 30, frame.area());
+        let popup_area = centered_rect(64, 28, frame.area());
         let (field, label, _) = current_field(app);
         let popup = Paragraph::new(vec![
             Line::from(vec![Span::styled(
                 format!("{} / {}", entry_label(selected_entry(app)), label),
-                Style::default().add_modifier(Modifier::BOLD),
+                settings_accent_style(),
             )]),
+            Line::from(""),
             Line::from(edit_hint(field)),
             Line::from(""),
             Line::from(app.input.clone()),
         ])
-        .block(Block::default().borders(Borders::ALL).title("Edit"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Edit ")
+                .style(settings_panel_style())
+                .border_style(Style::default().fg(Color::Rgb(124, 242, 203))),
+        )
         .wrap(Wrap { trim: false });
         frame.render_widget(Clear, popup_area);
         frame.render_widget(popup, popup_area);
