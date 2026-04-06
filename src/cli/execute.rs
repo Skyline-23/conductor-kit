@@ -3273,7 +3273,7 @@ fn build_tmux_pane_shell_command(inner: String) -> String {
     } else {
         ""
     };
-    let wrapped = format!("{rc_source}{inner}");
+    let wrapped = format!("{rc_source}unset NO_COLOR; {inner}");
     format!(
         "{} -lc {}",
         shell_quote_str(shell_bin),
