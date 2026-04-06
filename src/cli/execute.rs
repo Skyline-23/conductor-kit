@@ -36,7 +36,7 @@ use std::thread;
 use std::time::Duration;
 
 pub fn execute_command(args: &[String]) -> Result<(), String> {
-    let cmd = args.get(0).map(String::as_str).unwrap_or("help");
+    let cmd = args.get(0).map(String::as_str).unwrap_or("");
 
     match cmd {
         "" => run_default(),
