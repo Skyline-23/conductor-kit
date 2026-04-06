@@ -6,7 +6,7 @@ use crate::runtime::claims::{acquire_claim, release_claim};
 use crate::runtime::hooks::{event_name_of, filter_events, watch_and_run_hooks};
 use crate::runtime::phases::transition_phase;
 use crate::runtime::sessions::{
-    SessionCommand, SessionResponse, run_worker_host, send_session_command, spawn_session,
+    SessionCommand, run_worker_host, send_session_command, spawn_session,
 };
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
@@ -79,6 +79,7 @@ struct WorkerConfig {
     model: String,
     reasoning: Option<String>,
     description: String,
+    delivery_mode: Option<String>,
     launch_mode: Option<String>,
     base_args: Option<Vec<String>>,
     env: Option<BTreeMap<String, String>>,
@@ -266,8 +267,6 @@ fn run_orchestrate(args: &[String]) -> Result<(), String> {
     let (_, cfg) = load_resolved_config()?;
     let adapter = worker_adapter_config(&cfg, worker_type)?;
     let task_id = format!("task-{worker_id}");
-    let session_id = format!("session-{worker_id}");
-
     let _ = transition_phase(
         &store,
         run_id,
@@ -286,15 +285,6 @@ fn run_orchestrate(args: &[String]) -> Result<(), String> {
         Some("worker_session_start".to_string()),
     )?;
 
-    ensure_adapter_session(
-        &store,
-        &adapter,
-        run_id,
-        &worker_id,
-        Some(&task.task_id),
-        Some(prompt),
-    )?;
-
     let _ = transition_phase(
         &store,
         run_id,
@@ -303,15 +293,19 @@ fn run_orchestrate(args: &[String]) -> Result<(), String> {
     )?;
     let dispatch_id = format!("dispatch-{worker_id}");
     let message_id = format!("message-{worker_id}");
-    let routed = route_prompt_to_worker(
+    let routed = dispatch_prompt_to_adapter(
         &store,
+        &adapter,
         run_id,
         &worker_id,
+        &task.task_id,
         "orchestrator-main",
         &dispatch_id,
         &message_id,
         prompt,
     )?;
+    let ok = routed.ok;
+    let session_id = routed.session_id.clone();
     let response = routed.response;
 
     let _ = transition_phase(
@@ -320,7 +314,7 @@ fn run_orchestrate(args: &[String]) -> Result<(), String> {
         RunPhase::Verifying,
         Some("result_check".to_string()),
     )?;
-    if response.ok {
+    if adapter.delivery_mode == "session" && ok {
         let _ = store.complete_task(
             run_id,
             &task_id,
@@ -331,20 +325,13 @@ fn run_orchestrate(args: &[String]) -> Result<(), String> {
                 "message_id": message_id
             }),
         )?;
-    } else {
-        let _ = store.fail_task(
-            run_id,
-            &task_id,
-            response
-                .message
-                .as_deref()
-                .unwrap_or("dispatch routing failed"),
-        )?;
+    } else if adapter.delivery_mode == "session" {
+        let _ = store.fail_task(run_id, &task_id, "dispatch routing failed")?;
     }
     let _ = transition_phase(
         &store,
         run_id,
-        if response.ok {
+        if ok {
             RunPhase::Complete
         } else {
             RunPhase::Failed
@@ -353,7 +340,7 @@ fn run_orchestrate(args: &[String]) -> Result<(), String> {
     )?;
     let snapshot = store.read_snapshot(run_id)?;
     print_json(&json!({
-        "ok": response.ok,
+        "ok": ok,
         "run_id": run_id,
         "worker_id": worker_id,
         "task_id": task_id,
@@ -415,14 +402,16 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
         Some("fanout_worker_sessions".to_string()),
     )?;
     for (worker_id, task_id) in &task_specs {
-        ensure_adapter_session(
-            &store,
-            &adapter,
-            run_id,
-            worker_id,
-            Some(task_id),
-            Some(prompt),
-        )?;
+        if adapter.delivery_mode == "session" {
+            ensure_adapter_session(
+                &store,
+                &adapter,
+                run_id,
+                worker_id,
+                Some(task_id),
+                Some(prompt),
+            )?;
+        }
     }
 
     let _ = transition_phase(
@@ -440,10 +429,12 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
             task_id.clone(),
             dispatch_id.clone(),
             message_id.clone(),
-            route_prompt_to_worker(
+            dispatch_prompt_to_adapter(
                 &store,
+                &adapter,
                 run_id,
                 worker_id,
+                task_id,
                 "orchestrator-main",
                 &dispatch_id,
                 &message_id,
@@ -461,7 +452,7 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
     let mut failures = Vec::new();
     let mut results = Vec::new();
     for (worker_id, task_id, dispatch_id, message_id, routed) in routed_results {
-        if routed.response.ok {
+        if adapter.delivery_mode == "session" && routed.ok {
             let _ = store.complete_task(
                 run_id,
                 &task_id,
@@ -473,17 +464,19 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
                     "message_id": message_id
                 }),
             )?;
-        } else {
-            let reason = routed
-                .response
-                .message
-                .clone()
-                .unwrap_or_else(|| "dispatch routing failed".to_string());
+        } else if adapter.delivery_mode == "session" {
+            let reason = "dispatch routing failed".to_string();
             let _ = store.fail_task(run_id, &task_id, &reason)?;
             failures.push(json!({
                 "worker_id": worker_id,
                 "task_id": task_id,
                 "reason": reason
+            }));
+        } else if !routed.ok {
+            failures.push(json!({
+                "worker_id": worker_id,
+                "task_id": task_id,
+                "reason": "worker execution failed"
             }));
         }
         results.push(json!({
@@ -515,20 +508,24 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
             Some("Verifier pass over fan-out worker delivery results".to_string()),
         )?;
         let _ = acquire_claim(&store, run_id, &task.task_id, &verifier_worker_id, 10)?;
-        ensure_adapter_session(
+        if verifier_adapter.delivery_mode == "session" {
+            ensure_adapter_session(
+                &store,
+                &verifier_adapter,
+                run_id,
+                &verifier_worker_id,
+                Some(&task.task_id),
+                Some(&verifier_prompt),
+            )?;
+        }
+        let verifier_dispatch_id = format!("dispatch-{verifier_worker_id}-{invocation_id}");
+        let verifier_message_id = format!("message-{verifier_worker_id}-{invocation_id}");
+        let routed = dispatch_prompt_to_adapter(
             &store,
             &verifier_adapter,
             run_id,
             &verifier_worker_id,
-            Some(&task.task_id),
-            Some(&verifier_prompt),
-        )?;
-        let verifier_dispatch_id = format!("dispatch-{verifier_worker_id}-{invocation_id}");
-        let verifier_message_id = format!("message-{verifier_worker_id}-{invocation_id}");
-        let routed = route_prompt_to_worker(
-            &store,
-            run_id,
-            &verifier_worker_id,
+            &verifier_task_id,
             "orchestrator-main",
             &verifier_dispatch_id,
             &verifier_message_id,
@@ -536,8 +533,8 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
         );
         match routed {
             Ok(routed) => {
-                let verification_ok = failures.is_empty() && routed.response.ok;
-                if verification_ok {
+                let verification_ok = failures.is_empty() && routed.ok;
+                if verifier_adapter.delivery_mode == "session" && verification_ok {
                     let _ = store.complete_task(
                         run_id,
                         &verifier_task_id,
@@ -556,7 +553,7 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
                             event: EventKind::VerificationPassed,
                             timestamp: Utc::now(),
                             run_id: Some(run_id.to_string()),
-                            session_id: Some(routed.session_id.clone()),
+                            session_id: routed.session_id.clone(),
                             source: "orchestrator".to_string(),
                             worker: Some(verifier_worker_id.clone()),
                             task_id: Some(verifier_task_id.clone()),
@@ -565,7 +562,7 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
                             context: serde_json::Map::new(),
                         },
                     )?;
-                } else {
+                } else if verifier_adapter.delivery_mode == "session" {
                     let _ =
                         store.fail_task(run_id, &verifier_task_id, "verification gate failed")?;
                     let _ = store.append_runtime_event(
@@ -575,12 +572,38 @@ fn run_fanout(args: &[String]) -> Result<(), String> {
                             event: EventKind::VerificationFailed,
                             timestamp: Utc::now(),
                             run_id: Some(run_id.to_string()),
-                            session_id: Some(routed.session_id.clone()),
+                            session_id: routed.session_id.clone(),
                             source: "orchestrator".to_string(),
                             worker: Some(verifier_worker_id.clone()),
                             task_id: Some(verifier_task_id.clone()),
                             message_id: Some(verifier_message_id.clone()),
                             reason: Some("verification_gate_failed".to_string()),
+                            context: serde_json::Map::new(),
+                        },
+                    )?;
+                } else {
+                    let event = if verification_ok {
+                        EventKind::VerificationPassed
+                    } else {
+                        EventKind::VerificationFailed
+                    };
+                    let _ = store.append_runtime_event(
+                        run_id,
+                        EventEnvelope {
+                            schema_version: SCHEMA_VERSION,
+                            event,
+                            timestamp: Utc::now(),
+                            run_id: Some(run_id.to_string()),
+                            session_id: routed.session_id.clone(),
+                            source: "orchestrator".to_string(),
+                            worker: Some(verifier_worker_id.clone()),
+                            task_id: Some(verifier_task_id.clone()),
+                            message_id: Some(verifier_message_id.clone()),
+                            reason: Some(if verification_ok {
+                                "verifier_execution_succeeded".to_string()
+                            } else {
+                                "verifier_execution_failed".to_string()
+                            }),
                             context: serde_json::Map::new(),
                         },
                     )?;
@@ -777,11 +800,13 @@ fn run_worker_exec(args: &[String]) -> Result<(), String> {
     let stdin_payload = env::var("CONDUCTOR_WORKER_STDIN").ok();
     let cwd = env::var("CONDUCTOR_WORKER_CWD").ok().map(PathBuf::from);
     let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
     let result = execute_worker(
         WorkerLaunchSpec {
             run_id: run_id.to_string(),
             worker_id: worker_id.to_string(),
             task_id,
+            worker_kind: WorkerKind::Worker,
             program,
             args: program_args,
             cwd,
@@ -837,11 +862,13 @@ fn run_worker_adapter_exec(args: &[String]) -> Result<(), String> {
     let adapter = worker_adapter_config(&cfg, worker_type)?;
     let launch = resolve_worker_adapter(&adapter, run_id, worker_id, task_id, prompt)?;
     let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
     let result = execute_worker(
         WorkerLaunchSpec {
             run_id: run_id.to_string(),
             worker_id: worker_id.to_string(),
             task_id: task_id.map(str::to_string),
+            worker_kind: WorkerKind::Worker,
             program: launch.program,
             args: launch.args,
             cwd: launch.cwd,
@@ -868,6 +895,7 @@ fn run_worker_adapter_spawn_session(args: &[String]) -> Result<(), String> {
     let adapter = worker_adapter_config(&cfg, worker_type)?;
     let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, prompt)?;
     let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, run_id)?;
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let result = spawn_session(
         &store,
@@ -1367,8 +1395,9 @@ fn run_mailbox_update(args: &[String]) -> Result<(), String> {
 
 #[derive(Debug, Serialize)]
 struct RoutedDispatch {
-    session_id: String,
-    response: SessionResponse,
+    session_id: Option<String>,
+    ok: bool,
+    response: serde_json::Value,
 }
 
 fn ensure_run_exists(store: &StateStore, run_id: &str) -> Result<(), String> {
@@ -1437,45 +1466,122 @@ fn worker_kind_for_type(worker_type: &str, worker_id: &str) -> WorkerKind {
     }
 }
 
-fn route_prompt_to_worker(
+fn dispatch_prompt_to_adapter(
     store: &StateStore,
+    adapter: &WorkerAdapterConfig,
     run_id: &str,
     worker_id: &str,
+    task_id: &str,
     source_worker: &str,
     dispatch_id: &str,
     message_id: &str,
     body: &str,
 ) -> Result<RoutedDispatch, String> {
-    let session_id = format!("session-{worker_id}");
+    let launch = resolve_worker_adapter(adapter, run_id, worker_id, Some(task_id), Some(body))?;
+    let worker_kind = worker_kind_for_type(adapter.worker_type.as_str(), worker_id);
     let _ = store.queue_dispatch(run_id, dispatch_id, worker_id, serde_json::Map::new())?;
     let dispatch = store.read_dispatch(run_id, dispatch_id)?;
-    let session = store.read_session(run_id, &session_id)?;
     let _ =
         store.create_mailbox_message(run_id, message_id, source_worker, &dispatch.target, body)?;
     let _ = store.update_dispatch_status(run_id, dispatch_id, DispatchStatus::Notified, None)?;
     let _ = store.update_mailbox_status(run_id, &dispatch.target, message_id, false)?;
-    let response = send_session_command(
-        Path::new(&session.socket_path),
-        &SessionCommand::SendStdin {
-            data: format!("{body}\n"),
-        },
-    )?;
-    if response.ok {
-        let _ = store.update_mailbox_status(run_id, &dispatch.target, message_id, true)?;
-        let _ =
-            store.update_dispatch_status(run_id, dispatch_id, DispatchStatus::Delivered, None)?;
-    } else {
-        let _ = store.update_dispatch_status(
-            run_id,
-            dispatch_id,
-            DispatchStatus::Failed,
-            response.message.clone(),
-        )?;
+    match launch.delivery_mode.as_str() {
+        "session" => {
+            let session_id = ensure_adapter_session(
+                store,
+                adapter,
+                run_id,
+                worker_id,
+                Some(task_id),
+                Some(body),
+            )?;
+            let session = store.read_session(run_id, &session_id)?;
+            let response = send_session_command(
+                Path::new(&session.socket_path),
+                &SessionCommand::SendStdin {
+                    data: format!("{body}\n"),
+                },
+            )?;
+            if response.ok {
+                let _ = store.update_mailbox_status(run_id, &dispatch.target, message_id, true)?;
+                let _ = store.update_dispatch_status(
+                    run_id,
+                    dispatch_id,
+                    DispatchStatus::Delivered,
+                    None,
+                )?;
+            } else {
+                let _ = store.update_dispatch_status(
+                    run_id,
+                    dispatch_id,
+                    DispatchStatus::Failed,
+                    response.message.clone(),
+                )?;
+            }
+            Ok(RoutedDispatch {
+                session_id: Some(session_id),
+                ok: response.ok,
+                response: serde_json::to_value(response).map_err(|err| err.to_string())?,
+            })
+        }
+        "oneshot" => {
+            let execution = execute_worker(
+                WorkerLaunchSpec {
+                    run_id: run_id.to_string(),
+                    worker_id: worker_id.to_string(),
+                    task_id: Some(task_id.to_string()),
+                    worker_kind,
+                    program: launch.program,
+                    args: launch.args,
+                    cwd: launch.cwd,
+                    stdin_payload: launch.stdin_payload,
+                    env: launch.env,
+                },
+                store,
+            );
+            match execution {
+                Ok(result) => {
+                    let _ =
+                        store.update_mailbox_status(run_id, &dispatch.target, message_id, true)?;
+                    let _ = store.update_dispatch_status(
+                        run_id,
+                        dispatch_id,
+                        if result.success {
+                            DispatchStatus::Delivered
+                        } else {
+                            DispatchStatus::Failed
+                        },
+                        if result.success {
+                            None
+                        } else {
+                            Some(result.stderr.clone())
+                        },
+                    )?;
+                    Ok(RoutedDispatch {
+                        session_id: None,
+                        ok: result.success,
+                        response: serde_json::to_value(result).map_err(|err| err.to_string())?,
+                    })
+                }
+                Err(err) => {
+                    let _ = store.update_dispatch_status(
+                        run_id,
+                        dispatch_id,
+                        DispatchStatus::Failed,
+                        Some(err.clone()),
+                    )?;
+                    Ok(RoutedDispatch {
+                        session_id: None,
+                        ok: false,
+                        response: serde_json::json!({
+                            "error": err
+                        }),
+                    })
+                }
+            }
+        }
+        other => Err(format!("unsupported delivery mode: {other}")),
     }
-    Ok(RoutedDispatch {
-        session_id,
-        response,
-    })
 }
 
 fn resolve_config_path() -> Result<PathBuf, String> {
@@ -1489,6 +1595,10 @@ fn resolve_config_path() -> Result<PathBuf, String> {
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
     if let Some(path) = find_project_config(&cwd) {
         return Ok(path);
+    }
+    let repo_default = cwd.join("config").join("conductor.json");
+    if repo_default.exists() {
+        return Ok(repo_default);
     }
 
     let home = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
@@ -1596,6 +1706,19 @@ fn validate_config(cfg: &Config) -> Vec<String> {
         if worker.description.trim().is_empty() {
             issues.push(format!("workers.{name}.description is required"));
         }
+        if !command_available(&worker.cli) {
+            issues.push(format!(
+                "workers.{name}.cli binary not found in PATH: {}",
+                worker.cli
+            ));
+        }
+        if let Some(delivery_mode) = &worker.delivery_mode {
+            if !matches!(delivery_mode.as_str(), "oneshot" | "session") {
+                issues.push(format!(
+                    "workers.{name}.delivery_mode must be oneshot or session"
+                ));
+            }
+        }
         if let Some(launch_mode) = &worker.launch_mode {
             if !matches!(
                 launch_mode.as_str(),
@@ -1629,12 +1752,27 @@ fn worker_adapter_config(cfg: &Config, worker_type: &str) -> Result<WorkerAdapte
         model: worker.model.clone(),
         reasoning: worker.reasoning.clone(),
         description: worker.description.clone(),
+        delivery_mode: worker
+            .delivery_mode
+            .clone()
+            .unwrap_or_else(|| "session".to_string()),
         launch_mode: worker
             .launch_mode
             .clone()
             .unwrap_or_else(|| "stdin_json".to_string()),
         base_args: worker.base_args.clone().unwrap_or_default(),
         env: worker.env.clone().unwrap_or_default(),
+    })
+}
+
+fn command_available(command: &str) -> bool {
+    let path_var = match env::var_os("PATH") {
+        Some(value) => value,
+        None => return false,
+    };
+    env::split_paths(&path_var).any(|dir| {
+        let candidate = dir.join(command);
+        candidate.is_file()
     })
 }
 

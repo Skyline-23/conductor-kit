@@ -66,6 +66,7 @@ The runtime nouns are:
 The default config lives at `config/conductor.json`.
 
 Worker adapters can now describe launch semantics per worker type:
+- `delivery_mode`
 - `launch_mode`
 - `base_args`
 - `env`
@@ -76,9 +77,15 @@ Supported launch modes:
 - `argv_prompt`
 - `argv_json`
 
+Supported delivery modes:
+- `oneshot`
+- `session`
+
 User overrides are expected at:
 - `~/.conductor-kit/conductor.json`
 - nearest `./.conductor-kit/conductor.json`
+
+When running inside this repository, the CLI also falls back to `./config/conductor.json`.
 
 The helper currently supports:
 - `conductor help`
@@ -95,6 +102,10 @@ The default worker presets now include:
 - `orchestrator`
 - `worker`
 - `verifier`
+
+The shipped presets are aimed at real local CLIs:
+- `orchestrator` and `verifier` use `codex exec`
+- `worker` uses `gemini -p`
 
 ## Build
 

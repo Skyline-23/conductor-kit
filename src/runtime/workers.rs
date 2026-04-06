@@ -15,6 +15,7 @@ pub struct WorkerLaunchSpec {
     pub run_id: String,
     pub worker_id: String,
     pub task_id: Option<String>,
+    pub worker_kind: WorkerKind,
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -76,7 +77,7 @@ pub fn execute_worker(
     let working = WorkerRecord {
         worker_id: spec.worker_id.clone(),
         run_id: spec.run_id.clone(),
-        worker_kind: WorkerKind::Worker,
+        worker_kind: spec.worker_kind.clone(),
         session_ref: None,
         state: WorkerState::Working,
         current_task_id: task_id.clone(),
@@ -91,7 +92,11 @@ pub fn execute_worker(
 
     let mut command = Command::new(&spec.program);
     command.args(&spec.args);
-    command.stdin(Stdio::piped());
+    command.stdin(if spec.stdin_payload.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
     command.envs(&spec.env);
@@ -137,7 +142,7 @@ pub fn execute_worker(
     let done_state = WorkerRecord {
         worker_id: spec.worker_id.clone(),
         run_id: spec.run_id.clone(),
-        worker_kind: WorkerKind::Worker,
+        worker_kind: spec.worker_kind,
         session_ref: None,
         state: if success {
             WorkerState::Done

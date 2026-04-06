@@ -90,6 +90,10 @@
           "model": { "type": "string" },
           "reasoning": { "type": "string", "enum": ["low", "medium", "high"] },
           "description": { "type": "string" },
+          "delivery_mode": {
+            "type": "string",
+            "enum": ["oneshot", "session"]
+          },
           "launch_mode": {
             "type": "string",
             "enum": ["stdin_json", "stdin_text", "argv_prompt", "argv_json"]

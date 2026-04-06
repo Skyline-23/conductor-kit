@@ -10,6 +10,7 @@ pub struct WorkerAdapterConfig {
     pub model: String,
     pub reasoning: Option<String>,
     pub description: String,
+    pub delivery_mode: String,
     pub launch_mode: String,
     pub base_args: Vec<String>,
     pub env: BTreeMap<String, String>,
@@ -17,6 +18,7 @@ pub struct WorkerAdapterConfig {
 
 #[derive(Debug, Clone)]
 pub struct WorkerAdapterLaunch {
+    pub delivery_mode: String,
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
@@ -52,13 +54,18 @@ pub fn resolve_worker_adapter(
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| config.cli.clone());
+    let program = resolve_program_path(&program).unwrap_or(program);
     let override_args = env::var(format!("{prefix}_ARGS"))
         .ok()
         .map(|value| shell_words(&value))
         .transpose()?
         .unwrap_or_default();
     let mut args = if override_args.is_empty() {
-        config.base_args.clone()
+        config
+            .base_args
+            .iter()
+            .map(|value| expand_template(value, config, run_id, worker_id, task_id))
+            .collect()
     } else {
         override_args
     };
@@ -95,7 +102,16 @@ pub fn resolve_worker_adapter(
         }
         other => return Err(format!("unsupported adapter launch mode: {other}")),
     };
-    let mut launch_env = config.env.clone();
+    let mut launch_env = config
+        .env
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                expand_template(value, config, run_id, worker_id, task_id),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     launch_env.insert("CONDUCTOR_RUN_ID".to_string(), run_id.to_string());
     launch_env.insert("CONDUCTOR_WORKER_ID".to_string(), worker_id.to_string());
     launch_env.insert(
@@ -108,6 +124,7 @@ pub fn resolve_worker_adapter(
         launch_env.insert("CONDUCTOR_TASK_ID".to_string(), task_id.to_string());
     }
     Ok(WorkerAdapterLaunch {
+        delivery_mode: config.delivery_mode.clone(),
         program,
         args,
         cwd,
@@ -141,4 +158,31 @@ fn shell_words(input: &str) -> Result<Vec<String>, String> {
         parts.push(current);
     }
     Ok(parts)
+}
+
+fn expand_template(
+    value: &str,
+    config: &WorkerAdapterConfig,
+    run_id: &str,
+    worker_id: &str,
+    task_id: Option<&str>,
+) -> String {
+    value
+        .replace("{worker_type}", &config.worker_type)
+        .replace("{model}", &config.model)
+        .replace("{cli}", &config.cli)
+        .replace("{run_id}", run_id)
+        .replace("{worker_id}", worker_id)
+        .replace("{task_id}", task_id.unwrap_or(""))
+}
+
+fn resolve_program_path(program: &str) -> Option<String> {
+    if program.contains('/') {
+        return Some(program.to_string());
+    }
+    let path_var = env::var_os("PATH")?;
+    env::split_paths(&path_var)
+        .map(|dir| dir.join(program))
+        .find(|candidate| candidate.is_file())
+        .map(|candidate| candidate.to_string_lossy().into_owned())
 }
