@@ -31,6 +31,7 @@ pub struct WorkerExecutionResult {
     pub args: Vec<String>,
     pub exit_code: Option<i32>,
     pub success: bool,
+    pub assistant_text: Option<String>,
     pub stdout: String,
     pub stderr: String,
     pub started_at: chrono::DateTime<Utc>,
@@ -138,6 +139,7 @@ pub fn execute_worker(
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let success = output.status.success();
+    let assistant_text = extract_assistant_text(spec.env.get("CONDUCTOR_CLI"), &stdout);
 
     let done_state = WorkerRecord {
         worker_id: spec.worker_id.clone(),
@@ -184,6 +186,9 @@ pub fn execute_worker(
                 "summary".to_string(),
                 Value::String("worker command completed".to_string()),
             );
+            if let Some(text) = &assistant_text {
+                result.insert("assistant_text".to_string(), Value::String(text.clone()));
+            }
             result.insert("stdout".to_string(), Value::String(stdout.clone()));
             result.insert("stderr".to_string(), Value::String(stderr.clone()));
             task.result = Some(Value::Object(result));
@@ -202,10 +207,47 @@ pub fn execute_worker(
         args: spec.args,
         exit_code: output.status.code(),
         success,
+        assistant_text,
         stdout,
         stderr,
         started_at,
         finished_at,
         duration_ms: start.elapsed().as_millis(),
+    })
+}
+
+fn extract_assistant_text(cli: Option<&String>, stdout: &str) -> Option<String> {
+    match cli.map(|value| value.as_str()) {
+        Some("gemini") => extract_gemini_text(stdout),
+        Some("codex") => extract_codex_text(stdout),
+        _ => None,
+    }
+}
+
+fn extract_gemini_text(stdout: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(stdout).ok()?;
+    value
+        .get("response")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn extract_codex_text(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|line| {
+        let value = serde_json::from_str::<Value>(line).ok()?;
+        if value.get("type").and_then(Value::as_str) != Some("item.completed") {
+            return None;
+        }
+        let item = value.get("item")?;
+        if item.get("type").and_then(Value::as_str) != Some("agent_message") {
+            return None;
+        }
+        item.get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(ToString::to_string)
     })
 }

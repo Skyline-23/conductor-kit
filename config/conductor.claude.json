@@ -45,21 +45,6 @@
       ]
     },
     "worker": {
-      "cli": "gemini",
-      "model": "gemini-2.5-flash",
-      "description": "General worker process for fan-out tasks",
-      "delivery_mode": "oneshot",
-      "launch_mode": "argv_prompt",
-      "base_args": [
-        "-m",
-        "{model}",
-        "--yolo",
-        "--output-format",
-        "json",
-        "-p"
-      ]
-    },
-    "claude_worker": {
       "cli": "claude",
       "model": "claude-sonnet-4-6",
       "description": "General worker process for fan-out tasks using Claude Code",
@@ -74,21 +59,17 @@
       ]
     },
     "verifier": {
-      "cli": "codex",
-      "model": "gpt-5.4",
-      "reasoning": "medium",
-      "description": "Verification worker for fan-out result review",
+      "cli": "claude",
+      "model": "claude-sonnet-4-6",
+      "description": "Verification worker for fan-out result review using Claude Code",
       "delivery_mode": "oneshot",
       "launch_mode": "argv_prompt",
       "base_args": [
-        "exec",
-        "--skip-git-repo-check",
-        "--json",
-        "--color",
-        "never",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "-m",
-        "{model}"
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "acceptEdits",
+        "-p"
       ]
     }
   }

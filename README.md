@@ -102,10 +102,15 @@ The default worker presets now include:
 - `orchestrator`
 - `worker`
 - `verifier`
+- `claude_worker`
 
 The shipped presets are aimed at real local CLIs:
 - `orchestrator` and `verifier` use `codex exec`
 - `worker` uses `gemini -p`
+- `claude_worker` uses `claude -p`
+
+If you want Claude to handle both worker and verifier paths, use:
+- `CONDUCTOR_CONFIG=config/conductor.claude.json`
 
 ## Build
 
