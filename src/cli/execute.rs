@@ -104,6 +104,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "dispatch-route" => run_dispatch_route(&args[1..]),
         "hud-view" => run_hud_view(&args[1..]),
         "hud-watch" => run_hud_watch(&args[1..]),
+        "hud-strip-once" => run_hud_strip_once(&args[1..]),
         "hud-strip-watch" => run_hud_strip_watch(&args[1..]),
         "events-list" => run_events_list(&args[1..]),
         "hook-run" => run_hook_run(&args[1..]),
@@ -1266,6 +1267,13 @@ fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
         config_path.as_deref(),
         run_id,
     );
+    let hud_status_cmd = build_hud_status_command(
+        &cwd,
+        &conductor_bin,
+        &state_root,
+        config_path.as_deref(),
+        run_id,
+    );
     let launch = resolve_surface_launch(&cfg, run_id)?;
     let surface_cmd = build_launch_shell_command(&cwd, &launch);
     let pane_specs = vec![("main".to_string(), "surface".to_string(), surface_cmd)];
@@ -1278,7 +1286,7 @@ fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
     {
         return run_surface_attached_tmux_session(
             &tmux_session_name,
-            &hud_cmd,
+            &hud_status_cmd,
             pane_specs[0].0.as_str(),
             pane_specs[0].2.as_str(),
         );
@@ -1289,7 +1297,7 @@ fn run_surface_ops_open(run_id: &str) -> Result<(), String> {
 
 fn run_surface_attached_tmux_session(
     session_name: &str,
-    hud_cmd: &str,
+    hud_status_cmd: &str,
     main_title: &str,
     surface_cmd: &str,
 ) -> Result<(), String> {
@@ -1311,24 +1319,20 @@ fn run_surface_attached_tmux_session(
         &format!("{session_name}:0.0"),
         "#{pane_id}",
     ])?;
+    run_tmux(["set-option", "-t", session_name, "status", "on"])?;
+    run_tmux(["set-option", "-t", session_name, "status-position", "bottom"])?;
+    run_tmux(["set-option", "-t", session_name, "status-justify", "left"])?;
+    run_tmux(["set-option", "-t", session_name, "status-left-length", "240"])?;
+    run_tmux(["set-option", "-t", session_name, "status-right", ""])?;
+    run_tmux(["set-option", "-t", session_name, "status-interval", "1"])?;
     run_tmux([
-        "split-window",
-        "-v",
-        "-l",
-        "1",
+        "set-option",
         "-t",
-        &format!("{session_name}:0.0"),
-        hud_cmd,
-    ])?;
-    let hud_pane_id = run_tmux_capture([
-        "display-message",
-        "-p",
-        "-t",
-        &format!("{session_name}:0.1"),
-        "#{pane_id}",
+        session_name,
+        "status-left",
+        &format!("#({hud_status_cmd})"),
     ])?;
     run_tmux(["select-pane", "-t", main_pane_id.trim(), "-T", main_title])?;
-    run_tmux(["select-pane", "-t", hud_pane_id.trim(), "-T", "HUD"])?;
     let main_exit_hook = format!(
         "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
         main_pane_id.trim(),
@@ -2771,18 +2775,30 @@ fn run_hud_strip_watch(args: &[String]) -> Result<(), String> {
     let mut count = 0usize;
     loop {
         let snapshot = store.read_snapshot(run_id)?;
-        print!("\x1B[2J\x1B[H");
-        println!("{}", render_hud_strip(&snapshot));
+        print!("\r\x1b[2K{}", render_hud_strip(&snapshot, true));
+        stdout().flush().map_err(|err| err.to_string())?;
         count += 1;
         if iterations > 0 && count >= iterations {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(interval_ms));
     }
+    println!();
     Ok(())
 }
 
-fn render_hud_strip(snapshot: &crate::runtime::types::RuntimeSnapshot) -> String {
+fn run_hud_strip_once(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "hud-strip-once requires <run_id>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let snapshot = store.read_snapshot(run_id)?;
+    println!("{}", render_hud_strip(&snapshot, false));
+    Ok(())
+}
+
+fn render_hud_strip(
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+    ansi: bool,
+) -> String {
     let authority = snapshot
         .authority
         .as_ref()
@@ -2798,20 +2814,37 @@ fn render_hud_strip(snapshot: &crate::runtime::types::RuntimeSnapshot) -> String
             )
         })
         .count();
-    format!(
-        "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  mail:{}",
-        snapshot.run.run_id,
-        snapshot.run.phase,
-        authority,
-        snapshot.tasks.pending,
-        snapshot.tasks.in_progress,
-        snapshot.tasks.blocked,
-        snapshot.tasks.completed,
-        snapshot.tasks.failed,
-        active_workers,
-        snapshot.workers.len(),
-        snapshot.mailbox.unread,
-    )
+    if ansi {
+        format!(
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  mail:{}",
+            snapshot.run.run_id,
+            snapshot.run.phase,
+            authority,
+            snapshot.tasks.pending,
+            snapshot.tasks.in_progress,
+            snapshot.tasks.blocked,
+            snapshot.tasks.completed,
+            snapshot.tasks.failed,
+            active_workers,
+            snapshot.workers.len(),
+            snapshot.mailbox.unread,
+        )
+    } else {
+        format!(
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  mail:{}",
+            snapshot.run.run_id,
+            snapshot.run.phase,
+            authority,
+            snapshot.tasks.pending,
+            snapshot.tasks.in_progress,
+            snapshot.tasks.blocked,
+            snapshot.tasks.completed,
+            snapshot.tasks.failed,
+            active_workers,
+            snapshot.workers.len(),
+            snapshot.mailbox.unread,
+        )
+    }
 }
 
 fn run_events_list(args: &[String]) -> Result<(), String> {
@@ -3186,18 +3219,49 @@ fn build_hud_shell_command(
         env_parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
     }
     env_parts.extend(terminal_passthrough_env(Vec::new()));
+    let env_prefix = if env_parts.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", env_parts.join(" "))
+    };
     let command_parts = [
-        env_parts.join(" "),
         shell_quote(conductor_bin),
         "hud-strip-watch".to_string(),
         shell_quote_str(run_id),
         "1000".to_string(),
     ];
     build_tmux_pane_shell_command(format!(
-        "cd {} && exec {}",
+        "cd {} && {}exec {}",
         shell_quote(cwd),
+        env_prefix,
         command_parts.join(" ")
     ))
+}
+
+fn build_hud_status_command(
+    cwd: &Path,
+    conductor_bin: &Path,
+    state_root: &Path,
+    config_path: Option<&Path>,
+    run_id: &str,
+) -> String {
+    let mut env_parts = vec![format!("CONDUCTOR_STATE_DIR={}", shell_quote(state_root))];
+    if let Some(path) = config_path {
+        env_parts.push(format!("CONDUCTOR_CONFIG={}", shell_quote(path)));
+    }
+    env_parts.extend(terminal_passthrough_env(Vec::new()));
+    let env_prefix = if env_parts.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", env_parts.join(" "))
+    };
+    format!(
+        "cd {} && {}{} hud-strip-once {}",
+        shell_quote(cwd),
+        env_prefix,
+        shell_quote(conductor_bin),
+        shell_quote_str(run_id),
+    )
 }
 
 fn build_launch_shell_command(
