@@ -120,4 +120,4 @@ Use a simple stable id format:
 - storage path may use `task-<id>.json`
 - runtime API payload should expose bare `task_id`
 
-This follows the useful OMX distinction between storage naming and API naming.
+This keeps the distinction between storage naming and API naming.

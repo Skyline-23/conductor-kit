@@ -33,7 +33,7 @@ Conductor V2 should be:
 - explicit state
 - observable by subscription
 
-This is the central inversion from OMX.
+This is the central inversion in this runtime design.
 
 ## Runtime Planes
 
@@ -69,7 +69,7 @@ Owns:
 
 The observer plane is read-only against runtime truth.
 
-This is the key separation OMX did not keep strongly enough.
+This is the key separation the runtime needs to keep.
 
 ## Worker Model
 
@@ -111,7 +111,7 @@ A delivery request with lifecycle:
 
 The actual handoff payload between orchestrator and workers or worker-to-worker.
 
-This separation is worth keeping from OMX because it prevents transport concerns from corrupting work ownership.
+This separation prevents transport concerns from corrupting work ownership.
 
 ## State Model
 

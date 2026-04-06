@@ -34,7 +34,7 @@ Everything else is intentionally stripped away. No giant prompt hierarchy. No tm
 - `docs/ARCHITECTURE.md`
   The new system model.
 - `docs/BLUEPRINT.md`
-  The full v2 redesign that replaces the broken OMX operating model.
+  The full v2 redesign of the runtime and operator surface.
 
 ## Runtime Model
 
@@ -97,7 +97,7 @@ The primary surface is:
 `conductor` and `conductor init` bring up the primary surface session by default.
 `conductor team` requires an explicit team size and agent profile list from
 `config/conductor.json`, for example `conductor team 4 explore build review verify`, and
-expands to the OMX-style split view with the main pane on the left and the HUD
+expands to the split view with the main pane on the left and the HUD
 plus sub-workers stacked on the right.
 
 Use `conductor settings` to edit each profile's `cli`, `model`, `reasoning`,

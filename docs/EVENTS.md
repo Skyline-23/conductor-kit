@@ -20,7 +20,7 @@ The event bus should carry:
 
 ## Event Envelope
 
-Borrowing from OMX hook/event contracts, each event should use a stable envelope.
+Each event should use a stable envelope.
 
 Suggested envelope:
 
@@ -106,7 +106,7 @@ The dispatch lifecycle should stay frozen:
 
 `pending -> notified -> delivered|failed`
 
-This matches the useful OMX concept and is simple enough to keep.
+This keeps the event model simple enough to maintain.
 
 ## Mailbox Lifecycle
 

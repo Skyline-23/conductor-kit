@@ -78,4 +78,4 @@ Structured project memory and operator notes should stay separate:
 - `project-memory.json`
 - `notes.jsonl`
 
-This preserves the OMX concept without forcing all memory into one blob.
+This preserves the storage model without forcing all memory into one blob.

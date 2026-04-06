@@ -18,7 +18,7 @@ Conductor should separate these state families:
 
 ## Scope Precedence
 
-Borrow the OMX scope rule directly:
+Use the scope rule directly:
 
 1. session-scoped state is authoritative when present
 2. root state is fallback only
@@ -99,7 +99,7 @@ State transitions must reject:
 
 ## Policy Versus Governance
 
-OMX separates transport/runtime policy from governance. Conductor should too.
+Transport/runtime policy should stay separate from governance.
 
 Policy examples:
 - spawn policy
@@ -117,7 +117,7 @@ These should not live in the same bucket.
 
 ## Memory Versus Notepad
 
-OMX distinguishes structured project memory from operator notes.
+Structured project memory should stay separate from operator notes.
 
 Conductor should keep that distinction:
 

@@ -52,7 +52,7 @@ Each run should have:
 
 ## Authority
 
-Borrowing from OMX runtime contracts, authority should be explicit and leased.
+Authority should be explicit and leased.
 
 Suggested fields:
 - `owner`
@@ -111,7 +111,7 @@ If the runtime restarts, it should reconstruct the current run from durable stat
 
 ## Scope Precedence
 
-OMX preserves scope precedence between root and session-scoped state. Conductor should do the same.
+Root and session-scoped state should preserve scope precedence.
 
 Policy:
 1. session-scoped state is authoritative when present

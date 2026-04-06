@@ -1,6 +1,6 @@
 # Team
 
-Use this command when the current task needs OMX-style parallel orchestration.
+Use this command when the current task needs parallel orchestration.
 
 What it should do:
 - keep the current Codex session as the operator surface

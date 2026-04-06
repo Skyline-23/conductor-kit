@@ -72,7 +72,7 @@ Hook handlers decide whether to send:
 
 ## Task-Size Gate
 
-One OMX concept worth keeping is the heavy-orchestration gate.
+One concept worth keeping is the heavy-orchestration gate.
 
 Not every request should trigger multi-worker orchestration.
 
@@ -90,7 +90,7 @@ This keeps the system responsive for trivial work without removing orchestration
 
 ## Guidance Surface
 
-OMX also keeps a unified guidance schema across:
+The runtime should also keep a unified guidance schema across:
 - root AGENTS
 - runtime overlays
 - worker overlays
