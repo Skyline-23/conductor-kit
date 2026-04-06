@@ -3159,6 +3159,7 @@ fn build_launch_shell_command(
 fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
     env_parts.push("CLICOLOR_FORCE=1".to_string());
     env_parts.push("FORCE_COLOR=1".to_string());
+    env_parts.push("TERM=xterm-256color".to_string());
     for key in [
         "COLORTERM",
         "TERM_PROGRAM",
@@ -3232,7 +3233,7 @@ fn ensure_tmux_ops_session(
             "split-window",
             "-v",
             "-l",
-            "2",
+            "1",
             "-t",
             &format!("{session_name}:0"),
             hud_cmd,
@@ -3260,7 +3261,7 @@ fn ensure_tmux_ops_session(
             "-t",
             &format!("{session_name}:0.{}", pane_specs.len()),
             "-y",
-            "2",
+            "1",
         ])?;
     }
 
