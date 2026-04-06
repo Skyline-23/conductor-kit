@@ -3225,6 +3225,25 @@ fn ensure_tmux_ops_session(
     ])?;
     run_tmux(["set-option", "-t", session_name, "mouse", "on"])?;
     run_tmux(["set-option", "-t", session_name, "set-clipboard", "on"])?;
+    let main_pane_id = run_tmux_capture([
+        "display-message",
+        "-p",
+        "-t",
+        &format!("{session_name}:0.0"),
+        "#{pane_id}",
+    ])?;
+    let main_exit_hook = format!(
+        "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
+        main_pane_id.trim(),
+        session_name
+    );
+    run_tmux([
+        "set-hook",
+        "-t",
+        session_name,
+        "pane-exited",
+        &main_exit_hook,
+    ])?;
 
     let include_hud = !hud_cmd.trim().is_empty();
 
@@ -3328,6 +3347,31 @@ where
         .map_err(|err| err.to_string())?;
     if output.status.success() {
         Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            Err(format!("tmux command failed: {}", args_vec.join(" ")))
+        } else {
+            Err(stderr)
+        }
+    }
+}
+
+fn run_tmux_capture<I, S>(args: I) -> Result<String, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args_vec = args
+        .into_iter()
+        .map(|value| value.as_ref().to_string())
+        .collect::<Vec<_>>();
+    let output = Command::new("tmux")
+        .args(&args_vec)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
