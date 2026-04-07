@@ -1603,9 +1603,10 @@ fn report_to_main(
     let mut worker = store.read_worker(&run_id, &worker_id)?;
     let now = Utc::now();
     worker.current_summary = Some(summary.to_string());
+    worker.state = WorkerState::Idle;
     worker.last_event_at = Some(now);
     worker.last_stdout_at = Some(now);
-    worker.reason = Some("reported_to_main".to_string());
+    worker.reason = Some("awaiting_operator_after_report".to_string());
     let worker = store.upsert_worker(worker)?;
 
     let message_id = format!("report-{}-{}", worker_id, now.timestamp_millis());
@@ -1634,7 +1635,9 @@ fn report_to_main(
         ]),
     };
     store.append_runtime_event(&run_id, event)?;
-    let _ = push_worker_report_to_main_pane(run_id, worker_id, summary);
+    if push_worker_report_to_main_pane(run_id, worker_id, summary).unwrap_or(false) {
+        let _ = store.update_mailbox_status(&run_id, "main", &message_id, true)?;
+    }
 
     Ok(json!({
         "run_id": run_id,
@@ -1645,12 +1648,12 @@ fn report_to_main(
     }))
 }
 
-fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str) -> Result<(), String> {
+fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str) -> Result<bool, String> {
     let session_name = current_tmux_session_hint()
         .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
         .unwrap_or_else(|| surface_tmux_session_name(run_id));
     if !tmux_session_exists(&session_name)? {
-        return Ok(());
+        return Ok(false);
     }
     let panes = run_tmux_capture([
         "list-panes",
@@ -1661,12 +1664,13 @@ fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str)
     ])?;
     let main_pane_id = find_main_pane_id(&session_name, &panes)?;
     let prompt = build_operator_report_prompt(worker_id, summary);
-    send_prompt_to_tmux_pane(&main_pane_id, &prompt)
+    send_prompt_to_tmux_pane(&main_pane_id, &prompt)?;
+    Ok(true)
 }
 
 fn build_operator_report_prompt(worker_id: &str, summary: &str) -> String {
     format!(
-        "Worker report from {worker_id}. Integrate this into the operator lane, update your plan if needed, and avoid redoing the lane work.\n\n{summary}"
+        "Worker report from {worker_id}:\n{summary}\n\nIntegrate it, decide the next step, and do not redo the lane work."
     )
 }
 
@@ -4938,6 +4942,11 @@ mod tests {
             worker.current_summary.as_deref(),
             Some("mapped the key docs and likely change files")
         );
+        assert_eq!(worker.state, WorkerState::Idle);
+        assert_eq!(
+            worker.reason.as_deref(),
+            Some("awaiting_operator_after_report")
+        );
 
         let snapshot = store
             .read_snapshot("demo-run")
@@ -4957,9 +4966,9 @@ mod tests {
     #[test]
     fn build_operator_report_prompt_mentions_the_worker_and_summary() {
         let prompt = build_operator_report_prompt("explore-1", "mapped the key docs");
-        assert!(prompt.contains("Worker report from explore-1"));
+        assert!(prompt.contains("Worker report from explore-1:"));
         assert!(prompt.contains("mapped the key docs"));
-        assert!(prompt.contains("operator lane"));
+        assert!(prompt.contains("do not redo the lane work"));
     }
 
     #[test]
