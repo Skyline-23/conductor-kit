@@ -2289,7 +2289,18 @@ fn relaunch_worker_lane(
     worker_id: &str,
     prompt: &str,
 ) -> Result<serde_json::Value, String> {
-    let payload = ask_worker(store, run_id, worker_id, prompt)?;
+    let mut payload = ask_worker(store, run_id, worker_id, prompt)?;
+    let delivered = payload
+        .get("delivered")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !delivered {
+        let respawned = respawn_direct_team_worker_pane(store, run_id, worker_id, prompt)?;
+        if respawned {
+            payload["delivered"] = json!(true);
+            payload["respawned"] = json!(true);
+        }
+    }
     if let Ok(mut worker) = store.read_worker(run_id, worker_id) {
         worker.reason = Some("operator_relaunch_requested".to_string());
         worker.last_event_at = Some(Utc::now());
@@ -2330,6 +2341,72 @@ fn settle_worker_lane(
     }
 
     Ok(false)
+}
+
+fn respawn_direct_team_worker_pane(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+    prompt: &str,
+) -> Result<bool, String> {
+    let worker = store.read_worker(run_id, worker_id)?;
+    let worker_stem = worker_id
+        .rsplit_once('-')
+        .map(|(stem, _)| stem)
+        .unwrap_or(worker_id);
+    let reason = worker.reason.as_deref().unwrap_or("");
+    let terminal_label = worker.terminal_label.as_deref().unwrap_or("");
+    if !reason.contains("direct") && terminal_label != worker_id {
+        return Ok(false);
+    }
+
+    let tmux_session_name = current_tmux_session_hint()
+        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
+        .unwrap_or_else(|| surface_tmux_session_name(run_id));
+    if !tmux_session_exists(&tmux_session_name)? {
+        return Ok(false);
+    }
+
+    let (_, cfg) = load_resolved_config()?;
+    let Some(worker_type) = cfg.workers.keys().find(|profile| sanitize_worker_stem(profile) == worker_stem) else {
+        return Ok(false);
+    };
+    let adapter = worker_adapter_config(&cfg, worker_type)?;
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, None)?;
+    let use_inline_prompt = launch_uses_inline_prompt(&launch);
+    let pane_command = build_direct_launch_shell_command(
+        &cwd,
+        &launch,
+        use_inline_prompt.then_some(prompt),
+    );
+    let new_pane_id = run_tmux_capture([
+        "split-window",
+        "-h",
+        "-d",
+        "-P",
+        "-F",
+        "#{pane_id}",
+        "-t",
+        &format!("{tmux_session_name}:0.0"),
+        &pane_command,
+    ])?;
+    let new_pane_id = new_pane_id.trim().to_string();
+    run_tmux(["select-pane", "-t", &new_pane_id, "-T", worker_id])?;
+    if !use_inline_prompt {
+        send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+    }
+
+    let mut next = worker;
+    next.state = WorkerState::Working;
+    next.last_event_at = Some(Utc::now());
+    next.last_heartbeat_at = Some(Utc::now());
+    next.reason = Some("direct_team_pane_respawned".to_string());
+    next.current_summary = Some(format!("direct {} pane relaunched", worker_type));
+    next.terminal_label = Some(worker_id.to_string());
+    store.upsert_worker(next)?;
+    rebalance_tmux_team_layout(&tmux_session_name)?;
+    Ok(true)
 }
 
 fn deliver_operator_followup(
