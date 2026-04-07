@@ -917,6 +917,24 @@ fn derive_operator_decision(
 
     if let Some(worker) = workers.iter().find(|worker| {
         matches!(worker.state, crate::runtime::types::WorkerState::Done)
+            && matches!(worker.worker_kind, crate::runtime::types::WorkerKind::Verifier)
+    }) {
+        let reason = worker
+            .current_summary
+            .as_deref()
+            .map(|summary| summary.trim())
+            .filter(|summary| !summary.is_empty())
+            .map(|summary| format!("verified lane is ready to accept or close: {summary}"))
+            .unwrap_or_else(|| "verified lane is ready to accept or close".to_string());
+        return OperatorDecision {
+            next_action: "accept-completion".to_string(),
+            focus_worker: Some(worker.worker_id.clone()),
+            reason,
+        };
+    }
+
+    if let Some(worker) = workers.iter().find(|worker| {
+        matches!(worker.state, crate::runtime::types::WorkerState::Done)
             && !matches!(worker.worker_kind, crate::runtime::types::WorkerKind::Verifier)
     }) {
         let reason = worker

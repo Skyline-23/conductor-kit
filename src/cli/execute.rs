@@ -66,6 +66,9 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "ralph" => run_ralph(&args[1..]),
         "report" => run_report(&args[1..]),
         "ask" => run_ask(&args[1..]),
+        "accept" => run_accept(&args[1..]),
+        "close" => run_close(&args[1..]),
+        "relaunch" => run_relaunch(&args[1..]),
         "start" => run_start(&args[1..]),
         "open" => run_open(&args[1..]),
         "attach" => run_attach_alias(&args[1..]),
@@ -1798,6 +1801,74 @@ fn run_ask(args: &[String]) -> Result<(), String> {
     print_json(&payload)
 }
 
+fn run_accept(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err(
+            "accept requires <worker_id> <reason> or <run_id> <worker_id> <reason>".to_string(),
+        );
+    }
+    let (run_id, worker_id, reason) = parse_worker_message_args(args, "accept")?;
+    if reason.trim().is_empty() {
+        return Err("accept reason must not be empty".to_string());
+    }
+    let store = StateStore::new(resolve_state_root()?);
+    let payload = accept_worker_lane(&store, &run_id, &worker_id, &reason)?;
+    print_json(&payload)
+}
+
+fn run_close(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err(
+            "close requires <worker_id> <reason> or <run_id> <worker_id> <reason>".to_string(),
+        );
+    }
+    let (run_id, worker_id, reason) = parse_worker_message_args(args, "close")?;
+    if reason.trim().is_empty() {
+        return Err("close reason must not be empty".to_string());
+    }
+    let store = StateStore::new(resolve_state_root()?);
+    let payload = close_worker_lane(&store, &run_id, &worker_id, &reason)?;
+    print_json(&payload)
+}
+
+fn run_relaunch(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err(
+            "relaunch requires <worker_id> <prompt> or <run_id> <worker_id> <prompt>".to_string(),
+        );
+    }
+    let (run_id, worker_id, prompt) = parse_worker_message_args(args, "relaunch")?;
+    if prompt.trim().is_empty() {
+        return Err("relaunch prompt must not be empty".to_string());
+    }
+    let store = StateStore::new(resolve_state_root()?);
+    let payload = relaunch_worker_lane(&store, &run_id, &worker_id, &prompt)?;
+    print_json(&payload)
+}
+
+fn parse_worker_message_args(
+    args: &[String],
+    command_name: &str,
+) -> Result<(String, String, String), String> {
+    if args.len() < 2 {
+        return Err(format!(
+            "{command_name} requires <worker_id> <text> or <run_id> <worker_id> <text>"
+        ));
+    }
+    let (run_id, worker_id, text) = if args.len() >= 3 {
+        let first = &args[0];
+        let second = &args[1];
+        if second.contains('-') || second == "main" || second == "surface" || second == "orchestrator-main" {
+            (first.clone(), second.clone(), args[2..].join(" "))
+        } else {
+            (default_run_id(), first.clone(), args[1..].join(" "))
+        }
+    } else {
+        (default_run_id(), args[0].clone(), args[1].clone())
+    };
+    Ok((run_id, worker_id, text))
+}
+
 fn run_team_nudge(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "team-nudge requires <run_id> <tmux_session_name>")?;
     let tmux_session_name =
@@ -2159,6 +2230,106 @@ fn ask_worker(
         "message_id": message.message_id,
         "delivered": delivered
     }))
+}
+
+fn accept_worker_lane(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+    reason: &str,
+) -> Result<serde_json::Value, String> {
+    let worker = store.read_worker(run_id, worker_id)?;
+    let now = Utc::now();
+    if let Some(task_id) = worker.current_task_id.as_deref() {
+        let _ = store.complete_task(
+            run_id,
+            task_id,
+            reason,
+            json!({
+                "accepted_by": "operator",
+                "worker_id": worker_id,
+                "reason": reason,
+            }),
+        );
+    }
+    let closed = settle_worker_lane(store, run_id, &worker, "accepted_by_operator", Some(reason))?;
+    let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: accepted ({reason})"));
+    Ok(json!({
+        "run_id": run_id,
+        "worker_id": worker_id,
+        "accepted": true,
+        "closed": closed,
+        "reason": reason,
+        "timestamp": now,
+    }))
+}
+
+fn close_worker_lane(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+    reason: &str,
+) -> Result<serde_json::Value, String> {
+    let worker = store.read_worker(run_id, worker_id)?;
+    let now = Utc::now();
+    let closed = settle_worker_lane(store, run_id, &worker, "closed_by_operator", Some(reason))?;
+    let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: closed ({reason})"));
+    Ok(json!({
+        "run_id": run_id,
+        "worker_id": worker_id,
+        "closed": closed,
+        "reason": reason,
+        "timestamp": now,
+    }))
+}
+
+fn relaunch_worker_lane(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+    prompt: &str,
+) -> Result<serde_json::Value, String> {
+    let payload = ask_worker(store, run_id, worker_id, prompt)?;
+    if let Ok(mut worker) = store.read_worker(run_id, worker_id) {
+        worker.reason = Some("operator_relaunch_requested".to_string());
+        worker.last_event_at = Some(Utc::now());
+        let _ = store.upsert_worker(worker);
+    }
+    let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: relaunched"));
+    Ok(payload)
+}
+
+fn settle_worker_lane(
+    store: &StateStore,
+    run_id: &str,
+    worker: &WorkerRecord,
+    reason_tag: &str,
+    summary_override: Option<&str>,
+) -> Result<bool, String> {
+    let now = Utc::now();
+    let mut next = worker.clone();
+    next.state = WorkerState::Stopped;
+    next.last_event_at = Some(now);
+    next.reason = Some(reason_tag.to_string());
+    if let Some(summary) = summary_override {
+        next.current_summary = Some(summary.to_string());
+    }
+    next.current_task_id = None;
+    store.upsert_worker(next)?;
+
+    if let Some(pane_id) = find_worker_tmux_pane_id(run_id, &worker.worker_id)? {
+        run_tmux(["kill-pane", "-t", &pane_id])?;
+        return Ok(true);
+    }
+
+    if let Some(session_id) = worker.session_ref.as_deref() {
+        if let Ok(session) = store.read_session(run_id, session_id) {
+            let response = send_session_command(Path::new(&session.socket_path), &SessionCommand::Stop)?;
+            return Ok(response.ok);
+        }
+    }
+
+    Ok(false)
 }
 
 fn deliver_operator_followup(
@@ -2730,14 +2901,17 @@ fn maybe_resume_context_prompt(
                     "\nSuggested command: conductor ask {focus_worker} \"narrow the blocker or confirm the missing dependency\""
                 ),
             },
-            "verify-completion" => format!(
-                "\nSuggested command: conductor ask {focus_worker} \"summarize the strongest completion evidence in one line\""
+            "accept-completion" | "verify-completion" => format!(
+                "\nSuggested command: conductor accept {focus_worker} \"accepted after verification\""
             ),
             "review-approval" => {
                 "\nSuggested command: conductor task-approval <run_id> <task_id> approved <reviewer> \"<reason>\"".to_string()
             }
             "relaunch-stalled" => format!(
-                "\nSuggested command: conductor ask {focus_worker} \"report progress now or declare blocked\""
+                "\nSuggested command: conductor relaunch {focus_worker} \"report progress now or declare blocked\""
+            ),
+            "reassign-or-close" => format!(
+                "\nSuggested command: conductor close {focus_worker} \"closing this lane after operator review\""
             ),
             _ => String::new(),
         }
@@ -6303,6 +6477,39 @@ mod tests {
     }
 
     #[test]
+    fn maybe_resume_context_prompt_suggests_accept_for_verified_completion() {
+        let root = unique_temp_dir("conductor-resume-accept");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "verify-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Verifier,
+                session_ref: None,
+                state: WorkerState::Done,
+                current_task_id: None,
+                current_summary: Some("done: verified the branch and it is clean".to_string()),
+                terminal_label: Some("verify-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("completion_reported_to_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        let prompt = maybe_resume_context_prompt(&store, "demo-run", true)
+            .expect("resume prompt should exist");
+        assert!(prompt.contains("Suggested command: conductor accept verify-1"));
+    }
+
+    #[test]
     fn maybe_resume_context_prompt_lists_blocked_lanes_before_done_lanes() {
         let root = unique_temp_dir("conductor-resume-order");
         fs::create_dir_all(&root).expect("failed to create temp root");
@@ -6355,6 +6562,49 @@ mod tests {
             .find("build-1 (Done)")
             .expect("done line should exist");
         assert!(blocked_index < done_index);
+    }
+
+    #[test]
+    fn settle_worker_lane_stops_tmux_workers_without_a_session() {
+        let root = unique_temp_dir("conductor-close-worker");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "review-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Done,
+                current_task_id: None,
+                current_summary: Some("done: found the main risks".to_string()),
+                terminal_label: Some("review-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("completion_reported_to_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+
+        let closed = settle_worker_lane(
+            &store,
+            "demo-run",
+            &store.read_worker("demo-run", "review-1").expect("worker"),
+            "closed_by_operator",
+            Some("operator closed the lane"),
+        )
+        .expect("lane settlement should succeed");
+
+        assert!(!closed);
+        let worker = store
+            .read_worker("demo-run", "review-1")
+            .expect("worker should remain readable");
+        assert_eq!(worker.state, WorkerState::Stopped);
+        assert_eq!(worker.reason.as_deref(), Some("closed_by_operator"));
+        assert_eq!(worker.current_task_id, None);
     }
 
     #[test]
