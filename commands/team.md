@@ -7,12 +7,14 @@ What it should do:
 - pass the current task summary with `--prompt "..."` when available
 - not use model-native sub-agents or delegation
 - not inspect code, read files, or explain the plan before running the command
+- stop local lane work after the command returns and stay in the operator lane
 - keep the current Codex session as the operator surface
 - ensure a `conductor` run exists for the current project
 - infer the team size and profile mix from the current task when the operator does not provide an explicit shape
 - open the tmux ops layout if it is not already open
 - mix the requested agent profiles round-robin across the requested team width
 - keep state visible through the HUD and worker panes around the main surface
+- wait for worker reports instead of continuing the same exploration or implementation work in the main pane
 
 Default shape:
 - `conductor team`
