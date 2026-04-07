@@ -1529,39 +1529,35 @@ fn render_team_starter_prompt(
     team_prompt: Option<&str>,
 ) -> String {
     let role_intent = match worker_type {
-        "explore" => "Find files, boundaries, touch points, and fast situational clarity.",
-        "build" => "Locate the implementation surface and drive the smallest correct change path.",
-        "review" => "Challenge the likely risks, regressions, and missing checks.",
-        "verify" => "Prepare and run the validation path, commands, and completion evidence.",
+        "explore" => "Map the codebase fast. Find entry points, boundaries, touch points, and likely files.",
+        "build" => "Find the implementation surface. Point to the smallest correct change path.",
+        "review" => "Challenge the plan. Find risks, regressions, contradictions, and missing checks.",
+        "verify" => "Prepare validation. Identify commands, evidence, and obvious gaps before completion.",
         _ => "Contribute useful progress from your assigned lane.",
+    };
+    let first_step = match worker_type {
+        "explore" => "Start with file discovery and structure mapping. Stay read-only.",
+        "build" => "Start with the concrete edit surface, CLI entry point, and owning modules.",
+        "review" => "Start with docs/config/contracts and the highest-risk implementation seams.",
+        "verify" => "Start with tests, commands, and completion evidence already present in the repo.",
+        _ => "Start with the smallest concrete next step in your lane.",
     };
     let current_task = match team_prompt {
         Some(prompt) => format!("Current task: {prompt}"),
         None => "Current task: no explicit task yet; inspect the repository and produce a fast situational summary.".to_string(),
     };
     format!(
-        "Role & Intent: You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_intent}\n\
-Operating Principles:\n\
+        "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}.\n\
+Mission: {role_intent}\n\
+{current_task}\n\
+First move: {first_step}\n\
+Rules:\n\
 - stay in your lane\n\
-- report upward to the operator\n\
-- do not recursively orchestrate other workers\n\
-- produce useful progress quickly instead of waiting for perfect coverage\n\
-Execution Protocol:\n\
-1. Acknowledge your lane and inspect only the surfaces that matter.\n\
-2. Produce the first useful finding fast.\n\
-3. Report it with `conductor report {worker_id} \"<short result>\"`.\n\
-4. Continue only if more work in your lane is still justified.\n\
-Constraints & Safety:\n\
 - do not use built-in sub-agent or delegation tools\n\
 - do not act like the operator lane\n\
-- do not claim completion without evidence\n\
-Verification & Completion:\n\
-- before claiming completion, gather the evidence or commands that support it\n\
-- when blocked, report the blocker upward immediately\n\
-Recovery & Lifecycle:\n\
-- if the task changes, wait for a new operator instruction\n\
-- if you are done, send a final concise report upward and stop extending scope\n\
-{current_task}"
+- report upward fast with `conductor report {worker_id} \"<short result>\"`\n\
+- if blocked, report the blocker upward immediately\n\
+- if done, send one final concise report and stop extending scope"
     )
 }
 
