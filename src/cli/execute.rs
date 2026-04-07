@@ -127,6 +127,12 @@ enum TeamMode {
     Ralph,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DefaultEntryAction {
+    Start,
+    AttachSurface,
+}
+
 #[derive(Clone, Copy)]
 enum SettingsField {
     SurfaceCli,
@@ -174,16 +180,25 @@ struct SettingsApp {
 fn run_default() -> Result<(), String> {
     let run_id = default_run_id();
     let store = StateStore::new(resolve_state_root()?);
-    if store
+    let run_exists = store
         .root()
         .join("runs")
         .join(&run_id)
         .join("run.json")
-        .exists()
-    {
-        run_open(&[])
+        .exists();
+    let surface_exists = tmux_session_exists(&surface_tmux_session_name(&run_id)).unwrap_or(false);
+    match decide_default_entry_action(run_exists, surface_exists) {
+        DefaultEntryAction::Start => run_start(&[]),
+        DefaultEntryAction::AttachSurface => attach_tmux_ops_session(&surface_tmux_session_name(&run_id)),
+    }
+}
+
+fn decide_default_entry_action(run_exists: bool, surface_exists: bool) -> DefaultEntryAction {
+    if surface_exists {
+        DefaultEntryAction::AttachSurface
     } else {
-        run_start(&[])
+        let _ = run_exists;
+        DefaultEntryAction::Start
     }
 }
 
@@ -1633,7 +1648,7 @@ fn report_to_main(
 fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str) -> Result<(), String> {
     let session_name = current_tmux_session_hint()
         .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
-        .unwrap_or_else(|| format!("conductor-{}-surface", sanitize_tmux_name(run_id)));
+        .unwrap_or_else(|| surface_tmux_session_name(run_id));
     if !tmux_session_exists(&session_name)? {
         return Ok(());
     }
@@ -1775,7 +1790,7 @@ fn tallest_tmux_pane(pane_ids: &[String]) -> Result<Option<String>, String> {
 }
 
 fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String> {
-    let tmux_session_name = format!("conductor-{run_id}-surface");
+    let tmux_session_name = surface_tmux_session_name(run_id);
     let (_, cfg) = load_resolved_config()?;
     let store = StateStore::new(resolve_state_root()?);
     stop_worker_session_if_present(&store, run_id, "main");
@@ -1902,7 +1917,7 @@ fn resolve_surface_launch(
     };
     adapter.env.insert(
         "CONDUCTOR_TMUX_SESSION".to_string(),
-        format!("conductor-{run_id}-surface"),
+        surface_tmux_session_name(run_id),
     );
     let mut launch = resolve_worker_adapter(&adapter, run_id, "main", None, None)?;
     if resume_surface && adapter.cli == "codex" {
@@ -4399,6 +4414,10 @@ fn default_tmux_session_name(run_id: &str) -> String {
     format!("conductor-{}", sanitize_tmux_name(run_id))
 }
 
+fn surface_tmux_session_name(run_id: &str) -> String {
+    format!("conductor-{}-surface", sanitize_tmux_name(run_id))
+}
+
 fn sanitize_tmux_name(value: &str) -> String {
     value
         .chars()
@@ -4829,6 +4848,30 @@ mod tests {
         assert!(prompt.contains("Profile: explore"));
         assert!(prompt.contains("inspect the repository and find the likely bug"));
         assert!(prompt.contains("conductor report explore-1"));
+    }
+
+    #[test]
+    fn default_entry_attaches_existing_surface_sessions() {
+        assert!(matches!(
+            decide_default_entry_action(true, true),
+            DefaultEntryAction::AttachSurface
+        ));
+        assert!(matches!(
+            decide_default_entry_action(false, true),
+            DefaultEntryAction::AttachSurface
+        ));
+    }
+
+    #[test]
+    fn default_entry_starts_when_no_surface_exists() {
+        assert!(matches!(
+            decide_default_entry_action(true, false),
+            DefaultEntryAction::Start
+        ));
+        assert!(matches!(
+            decide_default_entry_action(false, false),
+            DefaultEntryAction::Start
+        ));
     }
 
     #[test]
