@@ -1558,9 +1558,10 @@ Rules:\n\
 - stay in your lane\n\
 - do not use built-in sub-agent or delegation tools\n\
 - do not act like the operator lane\n\
-- report upward fast with `conductor report {worker_id} \"<short result>\"`\n\
+- report progress upward fast with `conductor report {worker_id} \"<short result>\"`\n\
+- after reporting progress, continue assigned work or the next feasible task in your lane\n\
 - if blocked, report the blocker upward immediately\n\
-- if done, send one final concise report and stop extending scope"
+- if done, send one final concise report with evidence and then wait"
     )
 }
 
@@ -1585,8 +1586,18 @@ fn classify_worker_report(summary: &str) -> (WorkerState, &'static str) {
     let normalized = summary.trim_start().to_ascii_lowercase();
     if normalized.starts_with("blocked:") || normalized.starts_with("blocked ") {
         (WorkerState::Blocked, "blocked_reported_to_operator")
+    } else if normalized.starts_with("done:")
+        || normalized.starts_with("done ")
+        || normalized.starts_with("complete:")
+        || normalized.starts_with("complete ")
+        || normalized.starts_with("completed:")
+        || normalized.starts_with("completed ")
+        || normalized.starts_with("final:")
+        || normalized.starts_with("final ")
+    {
+        (WorkerState::Done, "completion_reported_to_operator")
     } else {
-        (WorkerState::Idle, "awaiting_operator_after_report")
+        (WorkerState::Working, "reported_progress_continuing")
     }
 }
 
@@ -5314,6 +5325,7 @@ mod tests {
         assert!(prompt.contains("Profile: explore"));
         assert!(prompt.contains("inspect the repository and find the likely bug"));
         assert!(prompt.contains("conductor report explore-1"));
+        assert!(prompt.contains("continue assigned work or the next feasible task"));
     }
 
     #[test]
@@ -5404,10 +5416,10 @@ mod tests {
             worker.current_summary.as_deref(),
             Some("mapped the key docs and likely change files")
         );
-        assert_eq!(worker.state, WorkerState::Idle);
+        assert_eq!(worker.state, WorkerState::Working);
         assert_eq!(
             worker.reason.as_deref(),
-            Some("awaiting_operator_after_report")
+            Some("reported_progress_continuing")
         );
 
         let snapshot = store
@@ -5460,7 +5472,11 @@ mod tests {
         );
         assert_eq!(
             classify_worker_report("mapped the key docs and likely change files"),
-            (WorkerState::Idle, "awaiting_operator_after_report")
+            (WorkerState::Working, "reported_progress_continuing")
+        );
+        assert_eq!(
+            classify_worker_report("done: mapped the key docs and likely change files"),
+            (WorkerState::Done, "completion_reported_to_operator")
         );
     }
 
@@ -5520,7 +5536,7 @@ mod tests {
             })
             .expect("failed to upsert worker");
 
-        report_to_main(&store, "demo-run", "explore-1", "mapped the key docs")
+        report_to_main(&store, "demo-run", "explore-1", "done: mapped the key docs")
             .expect("report should succeed");
 
         let events = store
