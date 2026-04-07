@@ -469,6 +469,21 @@ impl StateStore {
         Ok(message)
     }
 
+    pub fn read_mailbox(
+        &self,
+        run_id: &str,
+        worker_id: &str,
+    ) -> Result<MailboxRecord, String> {
+        let mailbox_path = self.mailbox_file(run_id, worker_id);
+        if !mailbox_path.exists() {
+            return Ok(MailboxRecord {
+                worker_id: worker_id.to_string(),
+                records: Vec::new(),
+            });
+        }
+        self.read_json(&mailbox_path)
+    }
+
     pub fn capture_snapshot(&self, run_id: &str) -> Result<RuntimeSnapshot, String> {
         let run: RunRecord = self.read_json(&self.run_file(run_id))?;
         let workers = self.read_workers(run_id)?;

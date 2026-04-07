@@ -115,6 +115,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "dispatch-route" => run_dispatch_route(&args[1..]),
         "hud-view" => run_hud_view(&args[1..]),
         "hud-watch" => run_hud_watch(&args[1..]),
+        "inbox" => run_inbox(&args[1..]),
         "hud-strip-once" => run_hud_strip_once(&args[1..]),
         "hud-strip-watch" => run_hud_strip_watch(&args[1..]),
         "events-list" => run_events_list(&args[1..]),
@@ -4624,6 +4625,35 @@ fn run_next(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_inbox(args: &[String]) -> Result<(), String> {
+    let run_id = args.first().cloned().unwrap_or_else(default_run_id);
+    let limit = args
+        .get(1)
+        .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
+        .transpose()?
+        .unwrap_or(8);
+    let store = StateStore::new(resolve_state_root()?);
+    let mailbox = store.read_mailbox(&run_id, "main")?;
+    let mut records = mailbox.records;
+    records.sort_by_key(|record| record.created_at);
+    let start = records.len().saturating_sub(limit);
+    let payload = records[start..]
+        .iter()
+        .map(|record| {
+            json!({
+                "message_id": record.message_id,
+                "from": record.from_worker,
+                "to": record.to_worker,
+                "body": record.body,
+                "created_at": record.created_at,
+                "notified_at": record.notified_at,
+                "delivered_at": record.delivered_at
+            })
+        })
+        .collect::<Vec<_>>();
+    print_json(&payload)
+}
+
 fn run_hud_watch(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(
         args,
@@ -7335,6 +7365,21 @@ mod tests {
             .expect("explore worker should be readable");
         assert_eq!(explore_worker.state, WorkerState::Working);
         assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
+    }
+
+    #[test]
+    fn read_mailbox_returns_empty_records_for_missing_operator_inbox() {
+        let root = unique_temp_dir("conductor-inbox-empty");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+
+        let mailbox = store
+            .read_mailbox("demo-run", "main")
+            .expect("mailbox should be readable");
+        assert!(mailbox.records.is_empty());
     }
 
     #[test]
