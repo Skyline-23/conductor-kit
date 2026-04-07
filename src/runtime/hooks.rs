@@ -43,6 +43,7 @@ pub fn event_name_of(event: &EventEnvelope) -> &'static str {
     match event.event {
         crate::runtime::types::EventKind::AuthorityAcquired => "authority_acquired",
         crate::runtime::types::EventKind::AuthorityRenewed => "authority_renewed",
+        crate::runtime::types::EventKind::ClaimReclaimed => "claim_reclaimed",
         crate::runtime::types::EventKind::WorkerSpawned => "worker_spawned",
         crate::runtime::types::EventKind::WorkerSessionStarted => "worker_session_started",
         crate::runtime::types::EventKind::WorkerSessionStopped => "worker_session_stopped",

@@ -92,3 +92,46 @@ pub fn release_claim(
     store.refresh_snapshot(run_id)?;
     Ok(task)
 }
+
+pub fn reclaim_expired_claims(
+    store: &StateStore,
+    run_id: &str,
+) -> Result<Vec<TaskRecord>, String> {
+    let now = Utc::now();
+    let mut reclaimed = Vec::new();
+    for mut task in store.list_tasks(run_id)? {
+        let Some(claim) = &task.claim else {
+            continue;
+        };
+        if task.status != TaskStatus::InProgress || claim.leased_until > now {
+            continue;
+        }
+        let owner = claim.owner.clone();
+        task.claim = None;
+        task.owner = None;
+        task.status = TaskStatus::Pending;
+        task.updated_at = now;
+        store.write_task(&task)?;
+        store.append_runtime_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::ClaimReclaimed,
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "claims".to_string(),
+                worker: Some(owner),
+                task_id: Some(task.task_id.clone()),
+                message_id: None,
+                reason: Some("claim_reclaimed".to_string()),
+                context: Map::new(),
+            },
+        )?;
+        reclaimed.push(task);
+    }
+    if !reclaimed.is_empty() {
+        store.refresh_snapshot(run_id)?;
+    }
+    Ok(reclaimed)
+}

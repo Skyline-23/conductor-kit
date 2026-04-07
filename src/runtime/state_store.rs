@@ -1,7 +1,7 @@
 use crate::runtime::types::{
     ApprovalStatus, DispatchCounts, DispatchRecord, DispatchStatus, EventEnvelope, EventKind,
-    MailboxCounts, MailboxMessage, MailboxRecord, ReadinessState, ReplayState, RunPhase,
-    RunRecord, RunSnapshot, RuntimeSnapshot, SCHEMA_VERSION, SessionRecord, TaskCounts,
+    MailboxCounts, MailboxMessage, MailboxRecord, MonitorState, ReadinessState, ReplayState,
+    RunPhase, RunRecord, RunSnapshot, RuntimeSnapshot, SCHEMA_VERSION, SessionRecord, TaskCounts,
     TaskRecord, TaskStatus, WorkerProjection, WorkerRecord,
 };
 use chrono::{Duration, Utc};
@@ -106,6 +106,10 @@ impl StateStore {
 
     pub fn read_task(&self, run_id: &str, task_id: &str) -> Result<TaskRecord, String> {
         self.read_json(&self.task_file(run_id, task_id))
+    }
+
+    pub fn list_tasks(&self, run_id: &str) -> Result<Vec<TaskRecord>, String> {
+        self.read_tasks(run_id)
     }
 
     pub fn write_task(&self, task: &TaskRecord) -> Result<(), String> {
@@ -472,6 +476,7 @@ impl StateStore {
         let dispatch = self.read_dispatch_records(run_id)?;
         let mailbox = self.read_mailboxes(run_id)?;
         let pending_events = self.count_events(run_id)?;
+        let events = self.read_events(run_id)?;
 
         let mut task_counts = TaskCounts::zero();
         for task in &tasks {
@@ -539,6 +544,22 @@ impl StateStore {
             .iter()
             .filter(|task| task.approval_status == Some(ApprovalStatus::Pending))
             .count();
+        let all_workers_idle = workers
+            .iter()
+            .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
+            .all(|worker| {
+                matches!(
+                    worker.state,
+                    crate::runtime::types::WorkerState::Idle
+                        | crate::runtime::types::WorkerState::Done
+                        | crate::runtime::types::WorkerState::Stopped
+                        | crate::runtime::types::WorkerState::Unknown
+                )
+            });
+        let reclaimed_claims = events
+            .iter()
+            .filter(|event| event.event == EventKind::ClaimReclaimed)
+            .count();
 
         let readiness = ReadinessState {
             ready: run.authority.is_some() && !stale_operator,
@@ -560,7 +581,7 @@ impl StateStore {
             },
             pending_approvals,
             stale_operator,
-            silent_workers,
+            silent_workers: silent_workers.clone(),
         };
 
         Ok(RuntimeSnapshot {
@@ -582,6 +603,12 @@ impl StateStore {
                 pending_events,
             },
             readiness,
+            monitor: MonitorState {
+                leader_stale: stale_operator,
+                all_workers_idle,
+                non_reporting_workers: silent_workers.clone(),
+                reclaimed_claims,
+            },
         })
     }
 

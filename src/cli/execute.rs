@@ -10,7 +10,7 @@ use crate::cli::host_catalog::{
 use crate::cli::logging::{print_help, print_json};
 use crate::runtime::adapters::{WorkerAdapterConfig, resolve_worker_adapter};
 use crate::runtime::authority::renew_authority;
-use crate::runtime::claims::{acquire_claim, release_claim};
+use crate::runtime::claims::{acquire_claim, reclaim_expired_claims, release_claim};
 use crate::runtime::hooks::{event_name_of, filter_events, watch_and_run_hooks};
 use crate::runtime::phases::transition_phase;
 use crate::runtime::sessions::{
@@ -88,6 +88,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "authority-renew" => run_authority_renew(&args[1..]),
         "phase-set" => run_phase_set(&args[1..]),
         "task-claim" => run_task_claim(&args[1..]),
+        "task-reclaim-expired" => run_task_reclaim_expired(&args[1..]),
         "task-release" => run_task_release(&args[1..]),
         "task-approval" => run_task_approval(&args[1..]),
         "worker-upsert" => run_worker_upsert(&args[1..]),
@@ -1725,6 +1726,7 @@ fn run_team_followup(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    let _ = reclaim_expired_claims(&store, run_id);
     run_team_nudge(args)?;
 
     maybe_prompt_all_workers_idle(&store, run_id, "team-followup")
@@ -2899,6 +2901,17 @@ fn run_task_release(args: &[String]) -> Result<(), String> {
     print_json(&task)
 }
 
+fn run_task_reclaim_expired(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "task-reclaim-expired requires <run_id>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let tasks = reclaim_expired_claims(&store, run_id)?;
+    print_json(&json!({
+        "run_id": run_id,
+        "reclaimed": tasks.len(),
+        "tasks": tasks,
+    }))
+}
+
 fn run_task_approval(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(
         args,
@@ -3618,6 +3631,12 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.readiness.stale_operator,
         snapshot.readiness.silent_workers.len()
     );
+    println!(
+        "monitor    all_idle={} reclaimed={} non_reporting={}",
+        snapshot.monitor.all_workers_idle,
+        snapshot.monitor.reclaimed_claims,
+        snapshot.monitor.non_reporting_workers.len()
+    );
     println!("next       {}", next_operator_action(&snapshot));
     println!();
     println!("workers");
@@ -3701,6 +3720,12 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.readiness.pending_approvals,
             snapshot.readiness.stale_operator,
             snapshot.readiness.silent_workers.len()
+        );
+        println!(
+            "monitor    all_idle={} reclaimed={} non_reporting={}",
+            snapshot.monitor.all_workers_idle,
+            snapshot.monitor.reclaimed_claims,
+            snapshot.monitor.non_reporting_workers.len()
         );
         println!("next       {}", next_operator_action(&snapshot));
         println!();
@@ -3811,7 +3836,7 @@ fn render_hud_strip(
     let next = next_operator_action(snapshot);
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3827,12 +3852,13 @@ fn render_hud_strip(
             blocked_workers,
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
+            snapshot.monitor.reclaimed_claims,
             snapshot.mailbox.unread,
             next,
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3848,6 +3874,7 @@ fn render_hud_strip(
             blocked_workers,
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
+            snapshot.monitor.reclaimed_claims,
             snapshot.mailbox.unread,
             next,
         )
@@ -5142,7 +5169,8 @@ mod tests {
     use crate::cli::host_catalog::{HostCatalog, VendorCatalog};
     use crate::runtime::types::{
         AuthorityLease, DispatchCounts, MailboxCounts, ReadinessState, ReplayState, RunPhase,
-        RunSnapshot, RuntimeSnapshot, SessionRecord, SessionStatus, TaskCounts, WorkerKind,
+        RunSnapshot, RuntimeSnapshot, SessionRecord, SessionStatus, TaskCounts, TaskStatus,
+        WorkerKind,
         WorkerRecord, WorkerState,
     };
     use chrono::Utc;
@@ -5250,6 +5278,12 @@ mod tests {
                 stale_operator: false,
                 silent_workers: Vec::new(),
             },
+            monitor: crate::runtime::types::MonitorState {
+                leader_stale: false,
+                all_workers_idle: false,
+                non_reporting_workers: Vec::new(),
+                reclaimed_claims: 0,
+            },
         }
     }
 
@@ -5301,6 +5335,7 @@ mod tests {
         assert!(line.contains("Executing"));
         assert!(line.contains("auth:orchestrator-main"));
         assert!(line.contains("mail:4"));
+        assert!(line.contains("reclaimed:0"));
         assert!(!line.contains('\u{1b}'));
     }
 
@@ -5730,6 +5765,46 @@ mod tests {
             .expect("list sessions failed");
         assert!(!session_ids.contains(&"session-main".to_string()));
         assert!(!session_ids.contains(&"session-explore-1".to_string()));
+    }
+
+    #[test]
+    fn reclaim_expired_claims_returns_in_progress_tasks_to_pending() {
+        let root = unique_temp_dir("conductor-reclaim");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .create_task("demo-run", "task-1", "Inspect", Some("inspect".to_string()))
+            .expect("failed to create task");
+        let mut task = store
+            .read_task("demo-run", "task-1")
+            .expect("task should be readable");
+        task.status = TaskStatus::InProgress;
+        task.owner = Some("explore-1".to_string());
+        task.claim = Some(crate::runtime::types::TaskClaim {
+            owner: "explore-1".to_string(),
+            token: "claim-task-1-explore-1".to_string(),
+            leased_until: Utc::now() - chrono::Duration::minutes(1),
+        });
+        store.write_task(&task).expect("failed to write task");
+
+        let reclaimed =
+            reclaim_expired_claims(&store, "demo-run").expect("reclaim should succeed");
+        assert_eq!(reclaimed.len(), 1);
+
+        let reread = store
+            .read_task("demo-run", "task-1")
+            .expect("task should be readable");
+        assert_eq!(reread.status, TaskStatus::Pending);
+        assert!(reread.claim.is_none());
+        assert!(reread.owner.is_none());
+
+        let snapshot = store
+            .read_snapshot("demo-run")
+            .expect("snapshot should be readable");
+        assert_eq!(snapshot.monitor.reclaimed_claims, 1);
     }
 
     #[test]

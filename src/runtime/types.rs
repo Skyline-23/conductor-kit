@@ -70,6 +70,7 @@ pub enum WorkerKind {
 pub enum EventKind {
     AuthorityAcquired,
     AuthorityRenewed,
+    ClaimReclaimed,
     WorkerSpawned,
     WorkerSessionStarted,
     WorkerSessionStopped,
@@ -286,6 +287,14 @@ pub struct ReadinessState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorState {
+    pub leader_stale: bool,
+    pub all_workers_idle: bool,
+    pub non_reporting_workers: Vec<String>,
+    pub reclaimed_claims: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSnapshot {
     pub run_id: String,
     pub phase: RunPhase,
@@ -305,6 +314,7 @@ pub struct RuntimeSnapshot {
     pub mailbox: MailboxCounts,
     pub replay: ReplayState,
     pub readiness: ReadinessState,
+    pub monitor: MonitorState,
 }
 
 impl TaskCounts {

@@ -33,6 +33,7 @@ Advanced:
   authority-renew     Renew authority lease for a run
   phase-set           Transition run phase
   task-claim          Acquire a task claim
+  task-reclaim-expired Reclaim expired task claims
   task-release        Release a task claim
   task-approval       Mark task approval as pending, approved, rejected, or clear
   worker-upsert       Upsert worker state for a run
