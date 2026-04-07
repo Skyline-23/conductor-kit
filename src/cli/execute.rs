@@ -1660,6 +1660,10 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
         if let Some(pane_id) = pane_map.get(&worker_id) {
             let prompt = build_team_report_nudge_prompt(&worker_id);
             let _ = send_prompt_to_tmux_pane(pane_id, &prompt);
+            let mut worker = worker;
+            worker.reason = Some("awaiting_report_nudged".to_string());
+            worker.last_event_at = Some(Utc::now());
+            let _ = store.upsert_worker(worker);
         }
     }
     Ok(())
@@ -3453,17 +3457,27 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.dispatch.failed
     );
     println!("mailbox    unread={}", snapshot.mailbox.unread);
+    println!("next       {}", next_operator_action(&snapshot));
     println!();
     println!("workers");
     println!("-------");
     for worker in snapshot.workers {
+        let task_id = worker
+            .current_task_id
+            .as_deref()
+            .unwrap_or("-");
+        let summary = worker
+            .current_summary
+            .as_deref()
+            .unwrap_or("-");
         println!(
-            "{} | kind={:?} | state={:?} | task={} | summary={}",
+            "{} | kind={:?} | state={:?} | task={} | summary={} | lane={}",
             worker.worker_id,
             worker.worker_kind,
             worker.state,
-            worker.current_task_id.unwrap_or_else(|| "-".to_string()),
-            worker.current_summary.unwrap_or_else(|| "-".to_string())
+            task_id,
+            summary,
+            worker_lane_status(&worker)
         );
     }
     Ok(())
@@ -3520,17 +3534,27 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.dispatch.failed
         );
         println!("mailbox    unread={}", snapshot.mailbox.unread);
+        println!("next       {}", next_operator_action(&snapshot));
         println!();
         println!("workers");
         println!("-------");
         for worker in snapshot.workers {
+            let task_id = worker
+                .current_task_id
+                .as_deref()
+                .unwrap_or("-");
+            let summary = worker
+                .current_summary
+                .as_deref()
+                .unwrap_or("-");
             println!(
-                "{} | kind={:?} | state={:?} | task={} | summary={}",
+                "{} | kind={:?} | state={:?} | task={} | summary={} | lane={}",
                 worker.worker_id,
                 worker.worker_kind,
                 worker.state,
-                worker.current_task_id.unwrap_or_else(|| "-".to_string()),
-                worker.current_summary.unwrap_or_else(|| "-".to_string())
+                task_id,
+                summary,
+                worker_lane_status(&worker)
             );
         }
         count += 1;
@@ -3601,9 +3625,20 @@ fn render_hud_strip(
             )
         })
         .count();
+    let awaiting_reports = snapshot
+        .workers
+        .iter()
+        .filter(|worker| worker_lane_status(worker) == "awaiting-report")
+        .count();
+    let blocked_workers = snapshot
+        .workers
+        .iter()
+        .filter(|worker| worker_lane_status(worker) == "blocked")
+        .count();
+    let next = next_operator_action(snapshot);
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  mail:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3614,11 +3649,14 @@ fn render_hud_strip(
             snapshot.tasks.failed,
             active_workers,
             snapshot.workers.len(),
+            awaiting_reports,
+            blocked_workers,
             snapshot.mailbox.unread,
+            next,
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  mail:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3629,8 +3667,66 @@ fn render_hud_strip(
             snapshot.tasks.failed,
             active_workers,
             snapshot.workers.len(),
+            awaiting_reports,
+            blocked_workers,
             snapshot.mailbox.unread,
+            next,
         )
+    }
+}
+
+fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'static str {
+    match worker.state {
+        WorkerState::Blocked => "blocked",
+        WorkerState::Working => {
+            let summary = worker.current_summary.as_deref().unwrap_or("");
+            if summary.starts_with("direct ") {
+                "awaiting-report"
+            } else {
+                "active"
+            }
+        }
+        WorkerState::Idle => {
+            if worker
+                .current_summary
+                .as_deref()
+                .map(|summary| !summary.trim().is_empty())
+                .unwrap_or(false)
+            {
+                "reported"
+            } else {
+                "idle"
+            }
+        }
+        WorkerState::Done => "done",
+        WorkerState::Failed => "failed",
+        WorkerState::Stopped => "stopped",
+        WorkerState::Unknown => "unknown",
+    }
+}
+
+fn next_operator_action(snapshot: &crate::runtime::types::RuntimeSnapshot) -> &'static str {
+    if snapshot
+        .workers
+        .iter()
+        .any(|worker| worker_lane_status(worker) == "blocked")
+    {
+        "unblock"
+    } else if snapshot
+        .workers
+        .iter()
+        .any(|worker| worker_lane_status(worker) == "awaiting-report")
+    {
+        "wait-report"
+    } else if snapshot
+        .workers
+        .iter()
+        .filter(|worker| !matches!(worker.worker_kind, WorkerKind::Orchestrator))
+        .all(|worker| matches!(worker.state, WorkerState::Idle | WorkerState::Done | WorkerState::Stopped | WorkerState::Unknown))
+    {
+        "reassign-or-close"
+    } else {
+        "monitor"
     }
 }
 
