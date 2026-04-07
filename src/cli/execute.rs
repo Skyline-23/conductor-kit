@@ -1727,6 +1727,12 @@ fn build_dependency_handoff_prompt(worker_id: &str, summary: &str) -> String {
     )
 }
 
+fn build_scope_reset_prompt(worker_id: &str, summary: &str) -> String {
+    format!(
+        "Narrow the scope for {worker_id}. Pick one concrete seam, one boundary, or one file cluster only. Report upward with `conductor report {worker_id} \"<short result>\"` after you have a tighter plan.\n\nBlocked report: {summary}"
+    )
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -2036,6 +2042,22 @@ fn maybe_handoff_blocked_lane(
                 &format!(
                     "{} -> {}: inspect the blocked dependency",
                     blocked_worker.worker_id, explore_worker_id
+                ),
+            );
+            Ok(delivered)
+        }
+        BlockedKind::Scope => {
+            let prompt = build_scope_reset_prompt(&blocked_worker.worker_id, summary);
+            let payload = ask_worker(store, run_id, &blocked_worker.worker_id, &prompt)?;
+            let delivered = payload
+                .get("delivered")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let _ = push_text_to_main_pane(
+                run_id,
+                &format!(
+                    "{} -> {}: narrow the lane scope and retry",
+                    blocked_worker.worker_id, blocked_worker.worker_id
                 ),
             );
             Ok(delivered)
@@ -2643,6 +2665,11 @@ fn maybe_resume_context_prompt(
     }
     let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
     let why = snapshot.decision.reason.trim();
+    let focus_reason = snapshot
+        .workers
+        .iter()
+        .find(|worker| worker.worker_id == focus)
+        .and_then(|worker| worker.reason.as_deref());
     let lane_lines = snapshot
         .workers
         .iter()
@@ -2669,9 +2696,20 @@ fn maybe_resume_context_prompt(
     };
     let suggested_command = if let Some(focus_worker) = snapshot.decision.focus_worker.as_deref() {
         match next {
-            "unblock" => format!(
-                "\nSuggested command: conductor ask {focus_worker} \"narrow the blocker or confirm the missing dependency\""
-            ),
+            "unblock" => match focus_reason {
+                Some("blocked_approval_reported_to_operator") => {
+                    "\nSuggested command: conductor task-approval <run_id> <task_id> approved <reviewer> \"<reason>\"".to_string()
+                }
+                Some("blocked_evidence_reported_to_operator") => format!(
+                    "\nSuggested command: conductor ask {focus_worker} \"state the missing proof in one line and say what would satisfy it\""
+                ),
+                Some("blocked_scope_reported_to_operator") => format!(
+                    "\nSuggested command: conductor ask {focus_worker} \"pick one seam only and restate the lane in one sentence\""
+                ),
+                _ => format!(
+                    "\nSuggested command: conductor ask {focus_worker} \"narrow the blocker or confirm the missing dependency\""
+                ),
+            },
             "verify-completion" => format!(
                 "\nSuggested command: conductor ask {focus_worker} \"summarize the strongest completion evidence in one line\""
             ),
@@ -6100,6 +6138,16 @@ mod tests {
     }
 
     #[test]
+    fn build_scope_reset_prompt_keeps_the_retry_narrow() {
+        let prompt = build_scope_reset_prompt(
+            "review-1",
+            "blocked: scope is too broad and needs context",
+        );
+        assert!(prompt.contains("Narrow the scope for review-1."));
+        assert!(prompt.contains("conductor report review-1"));
+    }
+
+    #[test]
     fn worker_lane_status_marks_stalled_non_reporting_workers() {
         let worker = crate::runtime::types::WorkerProjection {
             worker_id: "explore-1".to_string(),
@@ -6190,7 +6238,41 @@ mod tests {
         assert!(prompt.contains("operator approval"));
         assert!(prompt.contains("Active lane context:"));
         assert!(prompt.contains("review-1 (Blocked):"));
-        assert!(prompt.contains("Suggested command: conductor ask review-1"));
+        assert!(prompt.contains("Suggested command: conductor task-approval"));
+    }
+
+    #[test]
+    fn maybe_resume_context_prompt_suggests_scope_narrowing_for_scope_blockers() {
+        let root = unique_temp_dir("conductor-resume-scope");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Blocked,
+                current_task_id: None,
+                current_summary: Some("blocked: scope is too broad and needs context".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("blocked_scope_reported_to_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        let prompt = maybe_resume_context_prompt(&store, "demo-run", true)
+            .expect("resume prompt should exist");
+        assert!(prompt.contains("Suggested command: conductor ask explore-1"));
+        assert!(prompt.contains("pick one seam only"));
     }
 
     #[test]
@@ -6468,6 +6550,46 @@ mod tests {
             .expect("explore worker should be readable");
         assert_eq!(explore_worker.state, WorkerState::Working);
         assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
+    }
+
+    #[test]
+    fn report_to_main_retries_scope_blockers_in_place() {
+        let root = unique_temp_dir("conductor-scope-handoff");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "review-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: None,
+                current_summary: Some("direct review pane ready".to_string()),
+                terminal_label: Some("review-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert review worker");
+
+        report_to_main(
+            &store,
+            "demo-run",
+            "review-1",
+            "blocked: scope is too broad and needs context",
+        )
+        .expect("report should succeed");
+
+        let review_worker = store
+            .read_worker("demo-run", "review-1")
+            .expect("review worker should be readable");
+        assert_eq!(review_worker.state, WorkerState::Working);
+        assert_eq!(review_worker.reason.as_deref(), Some("operator_followup_sent"));
     }
 
     #[test]
