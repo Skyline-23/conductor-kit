@@ -3769,6 +3769,15 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.monitor.non_reporting_workers.len()
     );
     println!("next       {}", next_operator_action(&snapshot));
+    println!(
+        "focus      {}",
+        snapshot
+            .decision
+            .focus_worker
+            .as_deref()
+            .unwrap_or("-")
+    );
+    println!("why        {}", snapshot.decision.reason);
     println!();
     println!("workers");
     println!("-------");
@@ -3859,6 +3868,15 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.monitor.non_reporting_workers.len()
         );
         println!("next       {}", next_operator_action(&snapshot));
+        println!(
+            "focus      {}",
+            snapshot
+                .decision
+                .focus_worker
+                .as_deref()
+                .unwrap_or("-")
+        );
+        println!("why        {}", snapshot.decision.reason);
         println!();
         println!("workers");
         println!("-------");
@@ -3965,9 +3983,10 @@ fn render_hud_strip(
         .filter(|worker| worker_lane_status(worker) == "blocked")
         .count();
     let next = next_operator_action(snapshot);
+    let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3986,10 +4005,11 @@ fn render_hud_strip(
             snapshot.monitor.reclaimed_claims,
             snapshot.mailbox.unread,
             next,
+            focus,
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -4008,6 +4028,7 @@ fn render_hud_strip(
             snapshot.monitor.reclaimed_claims,
             snapshot.mailbox.unread,
             next,
+            focus,
         )
     }
 }
@@ -4053,43 +4074,8 @@ fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'sta
     }
 }
 
-fn next_operator_action(snapshot: &crate::runtime::types::RuntimeSnapshot) -> &'static str {
-    if snapshot.readiness.stale_operator {
-        "resume-operator"
-    } else if snapshot
-        .workers
-        .iter()
-        .any(|worker| worker_lane_status(worker) == "stalled")
-    {
-        "relaunch-stalled"
-    } else if snapshot.readiness.pending_approvals > 0 {
-        "review-approval"
-    } else if !snapshot.readiness.silent_workers.is_empty() {
-        "poke-silent"
-    } else if snapshot
-        .workers
-        .iter()
-        .any(|worker| worker_lane_status(worker) == "blocked")
-    {
-        "unblock"
-    } else if snapshot
-        .workers
-        .iter()
-        .any(|worker| worker_lane_status(worker) == "awaiting-report")
-    {
-        "wait-report"
-    } else if snapshot
-        .workers
-        .iter()
-        .filter(|worker| !matches!(worker.worker_kind, WorkerKind::Orchestrator))
-        .all(|worker| matches!(worker.state, WorkerState::Idle | WorkerState::Done | WorkerState::Stopped | WorkerState::Unknown))
-    {
-        "reassign-or-close"
-    } else if snapshot.mailbox.unread > 0 {
-        "read-inbox"
-    } else {
-        "monitor"
-    }
+fn next_operator_action(snapshot: &crate::runtime::types::RuntimeSnapshot) -> &str {
+    snapshot.decision.next_action.as_str()
 }
 
 fn run_events_list(args: &[String]) -> Result<(), String> {
@@ -5415,6 +5401,11 @@ mod tests {
                 non_reporting_workers: Vec::new(),
                 reclaimed_claims: 0,
             },
+            decision: crate::runtime::types::OperatorDecision {
+                next_action: "read-inbox".to_string(),
+                focus_worker: Some("explore-1".to_string()),
+                reason: "new worker reports are waiting in the mailbox".to_string(),
+            },
         }
     }
 
@@ -5743,7 +5734,17 @@ mod tests {
             terminal_label: Some("explore-1".to_string()),
             reason: Some("stalled_non_reporting".to_string()),
         }];
+        snapshot.decision.next_action = "relaunch-stalled".to_string();
+        snapshot.decision.focus_worker = Some("explore-1".to_string());
         assert_eq!(next_operator_action(&snapshot), "relaunch-stalled");
+    }
+
+    #[test]
+    fn render_hud_strip_includes_focus_worker() {
+        let snapshot = sample_snapshot();
+        let strip = render_hud_strip(&snapshot, false);
+        assert!(strip.contains("next:read-inbox"));
+        assert!(strip.contains("focus:explore-1"));
     }
 
     #[test]

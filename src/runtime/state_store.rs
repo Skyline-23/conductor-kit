@@ -1,8 +1,8 @@
 use crate::runtime::types::{
     ApprovalStatus, DispatchCounts, DispatchRecord, DispatchStatus, EventEnvelope, EventKind,
-    MailboxCounts, MailboxMessage, MailboxRecord, MonitorState, ReadinessState, ReplayState,
-    RunPhase, RunRecord, RunSnapshot, RuntimeSnapshot, SCHEMA_VERSION, SessionRecord, TaskCounts,
-    TaskRecord, TaskStatus, WorkerProjection, WorkerRecord,
+    MailboxCounts, MailboxMessage, MailboxRecord, MonitorState, OperatorDecision, ReadinessState,
+    ReplayState, RunPhase, RunRecord, RunSnapshot, RuntimeSnapshot, SCHEMA_VERSION,
+    SessionRecord, TaskCounts, TaskRecord, TaskStatus, WorkerProjection, WorkerRecord,
 };
 use chrono::{Duration, Utc};
 use serde::Serialize;
@@ -583,6 +583,13 @@ impl StateStore {
             stale_operator,
             silent_workers: silent_workers.clone(),
         };
+        let decision = derive_operator_decision(
+            &worker_projections,
+            &readiness,
+            &tasks,
+            unread,
+            all_workers_idle,
+        );
 
         Ok(RuntimeSnapshot {
             schema_version: SCHEMA_VERSION,
@@ -609,6 +616,7 @@ impl StateStore {
                 non_reporting_workers: silent_workers.clone(),
                 reclaimed_claims,
             },
+            decision,
         })
     }
 
@@ -848,5 +856,98 @@ impl StateStore {
         file.write_all(b"\n").map_err(|err| err.to_string())?;
         file.sync_all().map_err(|err| err.to_string())?;
         fs::rename(temp_path, path).map_err(|err| err.to_string())
+    }
+}
+
+fn derive_operator_decision(
+    workers: &[WorkerProjection],
+    readiness: &ReadinessState,
+    tasks: &[TaskRecord],
+    unread_mailbox: usize,
+    all_workers_idle: bool,
+) -> OperatorDecision {
+    if readiness.stale_operator {
+        return OperatorDecision {
+            next_action: "resume-operator".to_string(),
+            focus_worker: None,
+            reason: "operator activity is stale".to_string(),
+        };
+    }
+
+    if let Some(worker) = workers
+        .iter()
+        .find(|worker| worker.reason.as_deref() == Some("stalled_non_reporting"))
+    {
+        return OperatorDecision {
+            next_action: "relaunch-stalled".to_string(),
+            focus_worker: Some(worker.worker_id.clone()),
+            reason: "worker stalled waiting for a progress report".to_string(),
+        };
+    }
+
+    if let Some(task) = tasks
+        .iter()
+        .find(|task| task.approval_status == Some(ApprovalStatus::Pending))
+    {
+        return OperatorDecision {
+            next_action: "review-approval".to_string(),
+            focus_worker: task.owner.clone(),
+            reason: format!("approval required for {}", task.task_id),
+        };
+    }
+
+    if let Some(worker_id) = readiness.silent_workers.first() {
+        return OperatorDecision {
+            next_action: "poke-silent".to_string(),
+            focus_worker: Some(worker_id.clone()),
+            reason: "worker has gone silent".to_string(),
+        };
+    }
+
+    if let Some(worker) = workers.iter().find(|worker| {
+        matches!(worker.state, crate::runtime::types::WorkerState::Blocked)
+    }) {
+        return OperatorDecision {
+            next_action: "unblock".to_string(),
+            focus_worker: Some(worker.worker_id.clone()),
+            reason: "worker reported a blocker".to_string(),
+        };
+    }
+
+    if unread_mailbox > 0 {
+        return OperatorDecision {
+            next_action: "read-inbox".to_string(),
+            focus_worker: None,
+            reason: "new worker reports are waiting in the mailbox".to_string(),
+        };
+    }
+
+    if let Some(worker) = workers.iter().find(|worker| {
+        matches!(worker.state, crate::runtime::types::WorkerState::Working)
+            && worker
+                .reason
+                .as_deref()
+                .map(|reason| reason.starts_with("awaiting_report_nudged"))
+                .unwrap_or(false)
+    }) {
+        return OperatorDecision {
+            next_action: "wait-report".to_string(),
+            focus_worker: Some(worker.worker_id.clone()),
+            reason: "waiting for a lane progress report".to_string(),
+        };
+    }
+
+    if all_workers_idle {
+        return OperatorDecision {
+            next_action: "reassign-or-close".to_string(),
+            focus_worker: None,
+            reason: "all worker lanes are idle".to_string(),
+        };
+    }
+
+    OperatorDecision {
+        next_action: "monitor".to_string(),
+        focus_worker: None,
+        reason: "workers are still making progress".to_string(),
     }
 }

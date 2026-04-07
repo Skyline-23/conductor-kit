@@ -295,6 +295,13 @@ pub struct MonitorState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperatorDecision {
+    pub next_action: String,
+    pub focus_worker: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSnapshot {
     pub run_id: String,
     pub phase: RunPhase,
@@ -315,6 +322,7 @@ pub struct RuntimeSnapshot {
     pub replay: ReplayState,
     pub readiness: ReadinessState,
     pub monitor: MonitorState,
+    pub decision: OperatorDecision,
 }
 
 impl TaskCounts {
