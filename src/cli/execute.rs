@@ -2253,6 +2253,7 @@ fn accept_worker_lane(
         );
     }
     let closed = settle_worker_lane(store, run_id, &worker, "accepted_by_operator", Some(reason))?;
+    let _ = maybe_complete_run_after_operator_settlement(store, run_id, worker_id);
     let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: accepted ({reason})"));
     Ok(json!({
         "run_id": run_id,
@@ -2273,6 +2274,7 @@ fn close_worker_lane(
     let worker = store.read_worker(run_id, worker_id)?;
     let now = Utc::now();
     let closed = settle_worker_lane(store, run_id, &worker, "closed_by_operator", Some(reason))?;
+    let _ = maybe_complete_run_after_operator_settlement(store, run_id, worker_id);
     let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: closed ({reason})"));
     Ok(json!({
         "run_id": run_id,
@@ -2341,6 +2343,38 @@ fn settle_worker_lane(
     }
 
     Ok(false)
+}
+
+fn maybe_complete_run_after_operator_settlement(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+) -> Result<bool, String> {
+    let snapshot = store.refresh_snapshot(run_id)?;
+    let has_live_lane = snapshot.workers.iter().any(|worker| {
+        worker.worker_id != "main"
+            && worker.worker_id != "orchestrator-main"
+            && matches!(worker.state, WorkerState::Working | WorkerState::Blocked | WorkerState::Idle)
+    });
+    if has_live_lane
+        || snapshot.tasks.pending > 0
+        || snapshot.tasks.blocked > 0
+        || snapshot.tasks.in_progress > 0
+        || snapshot.readiness.pending_approvals > 0
+    {
+        return Ok(false);
+    }
+
+    let mut run = store.read_run(run_id)?;
+    run.active = false;
+    run.current_phase = RunPhase::Complete;
+    run.updated_at = Utc::now();
+    run.completed_at = Some(Utc::now());
+    run.stop_reason = Some(format!("all lanes settled after operator closed {worker_id}"));
+    store.write_run(&run)?;
+    let _ = store.refresh_snapshot(run_id)?;
+    let _ = push_text_to_main_pane(run_id, "run: all lanes settled; closing the orchestration loop");
+    Ok(true)
 }
 
 fn respawn_direct_team_worker_pane(
@@ -6682,6 +6716,41 @@ mod tests {
         assert_eq!(worker.state, WorkerState::Stopped);
         assert_eq!(worker.reason.as_deref(), Some("closed_by_operator"));
         assert_eq!(worker.current_task_id, None);
+    }
+
+    #[test]
+    fn maybe_complete_run_after_operator_settlement_closes_fully_settled_runs() {
+        let root = unique_temp_dir("conductor-close-run");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "verify-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Verifier,
+                session_ref: None,
+                state: WorkerState::Stopped,
+                current_task_id: None,
+                current_summary: Some("accepted after verification".to_string()),
+                terminal_label: Some("verify-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("accepted_by_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+
+        let completed = maybe_complete_run_after_operator_settlement(&store, "demo-run", "verify-1")
+            .expect("run completion check should succeed");
+        assert!(completed);
+
+        let run = store.read_run("demo-run").expect("run should still exist");
+        assert!(!run.active);
+        assert_eq!(run.current_phase, RunPhase::Complete);
+        assert!(run.stop_reason.as_deref().unwrap_or_default().contains("verify-1"));
     }
 
     #[test]
