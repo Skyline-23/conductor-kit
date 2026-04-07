@@ -1580,6 +1580,15 @@ fn build_all_workers_idle_prompt(run_id: &str, summaries: &[(String, String)]) -
     )
 }
 
+fn classify_worker_report(summary: &str) -> (WorkerState, &'static str) {
+    let normalized = summary.trim_start().to_ascii_lowercase();
+    if normalized.starts_with("blocked:") || normalized.starts_with("blocked ") {
+        (WorkerState::Blocked, "blocked_reported_to_operator")
+    } else {
+        (WorkerState::Idle, "awaiting_operator_after_report")
+    }
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -1680,63 +1689,7 @@ fn run_team_followup(args: &[String]) -> Result<(), String> {
 
     run_team_nudge(args)?;
 
-    let workers = store
-        .list_worker_ids(run_id)?
-        .into_iter()
-        .filter(|worker_id| worker_id != "main" && worker_id != "orchestrator-main")
-        .filter_map(|worker_id| store.read_worker(run_id, &worker_id).ok())
-        .collect::<Vec<_>>();
-    if workers.is_empty() {
-        return Ok(());
-    }
-
-    let all_idle = workers.iter().all(|worker| {
-        matches!(
-            worker.state,
-            WorkerState::Idle | WorkerState::Done | WorkerState::Stopped | WorkerState::Unknown
-        )
-    });
-    if !all_idle || recently_prompted_all_idle(&store, run_id, 60)? {
-        return Ok(());
-    }
-
-    let summaries = workers
-        .iter()
-        .filter_map(|worker| {
-            let summary = worker.current_summary.as_deref()?.trim();
-            if summary.is_empty() || summary.starts_with("direct ") {
-                return None;
-            }
-            Some((worker.worker_id.clone(), summary.to_string()))
-        })
-        .collect::<Vec<_>>();
-    if summaries.is_empty() {
-        return Ok(());
-    }
-
-    let prompt = build_all_workers_idle_prompt(run_id, &summaries);
-    let now = Utc::now();
-    let message_id = format!("all-idle-{}", now.timestamp_millis());
-    let message = store.create_mailbox_message(run_id, &message_id, "runtime", "main", &prompt)?;
-    let _ = store.update_mailbox_status(run_id, "main", &message_id, false)?;
-    let event = EventEnvelope {
-        schema_version: SCHEMA_VERSION,
-        event: EventKind::MailboxMessageCreated,
-        timestamp: now,
-        run_id: Some(run_id.to_string()),
-        session_id: None,
-        source: "team-followup".to_string(),
-        worker: Some("main".to_string()),
-        task_id: None,
-        message_id: Some(message.message_id.clone()),
-        reason: Some("all_workers_idle_prompted".to_string()),
-        context: serde_json::Map::new(),
-    };
-    store.append_runtime_event(run_id, event)?;
-    if push_text_to_main_pane(run_id, &prompt).unwrap_or(false) {
-        let _ = store.update_mailbox_status(run_id, "main", &message_id, true)?;
-    }
-    Ok(())
+    maybe_prompt_all_workers_idle(&store, run_id, "team-followup")
 }
 
 fn report_to_main(
@@ -1747,11 +1700,12 @@ fn report_to_main(
 ) -> Result<serde_json::Value, String> {
     let mut worker = store.read_worker(&run_id, &worker_id)?;
     let now = Utc::now();
+    let (next_state, next_reason) = classify_worker_report(summary);
     worker.current_summary = Some(summary.to_string());
-    worker.state = WorkerState::Idle;
+    worker.state = next_state;
     worker.last_event_at = Some(now);
     worker.last_stdout_at = Some(now);
-    worker.reason = Some("awaiting_operator_after_report".to_string());
+    worker.reason = Some(next_reason.to_string());
     let worker = store.upsert_worker(worker)?;
 
     let message_id = format!("report-{}-{}", worker_id, now.timestamp_millis());
@@ -1783,6 +1737,7 @@ fn report_to_main(
     if push_worker_report_to_main_pane(run_id, worker_id, summary).unwrap_or(false) {
         let _ = store.update_mailbox_status(&run_id, "main", &message_id, true)?;
     }
+    let _ = maybe_prompt_all_workers_idle(store, run_id, "report");
 
     Ok(json!({
         "run_id": run_id,
@@ -1891,6 +1846,70 @@ fn recently_prompted_all_idle(store: &StateStore, run_id: &str, cooldown_secs: i
         event.timestamp >= cutoff
             && event.reason.as_deref() == Some("all_workers_idle_prompted")
     }))
+}
+
+fn maybe_prompt_all_workers_idle(
+    store: &StateStore,
+    run_id: &str,
+    source: &str,
+) -> Result<(), String> {
+    let workers = store
+        .list_worker_ids(run_id)?
+        .into_iter()
+        .filter(|worker_id| worker_id != "main" && worker_id != "orchestrator-main")
+        .filter_map(|worker_id| store.read_worker(run_id, &worker_id).ok())
+        .collect::<Vec<_>>();
+    if workers.is_empty() {
+        return Ok(());
+    }
+
+    let all_idle = workers.iter().all(|worker| {
+        matches!(
+            worker.state,
+            WorkerState::Idle | WorkerState::Done | WorkerState::Stopped | WorkerState::Unknown
+        )
+    });
+    if !all_idle || recently_prompted_all_idle(store, run_id, 60)? {
+        return Ok(());
+    }
+
+    let summaries = workers
+        .iter()
+        .filter_map(|worker| {
+            let summary = worker.current_summary.as_deref()?.trim();
+            if summary.is_empty() || summary.starts_with("direct ") {
+                return None;
+            }
+            Some((worker.worker_id.clone(), summary.to_string()))
+        })
+        .collect::<Vec<_>>();
+    if summaries.is_empty() {
+        return Ok(());
+    }
+
+    let prompt = build_all_workers_idle_prompt(run_id, &summaries);
+    let now = Utc::now();
+    let message_id = format!("all-idle-{}", now.timestamp_millis());
+    let message = store.create_mailbox_message(run_id, &message_id, "runtime", "main", &prompt)?;
+    let _ = store.update_mailbox_status(run_id, "main", &message_id, false)?;
+    let event = EventEnvelope {
+        schema_version: SCHEMA_VERSION,
+        event: EventKind::MailboxMessageCreated,
+        timestamp: now,
+        run_id: Some(run_id.to_string()),
+        session_id: None,
+        source: source.to_string(),
+        worker: Some("main".to_string()),
+        task_id: None,
+        message_id: Some(message.message_id.clone()),
+        reason: Some("all_workers_idle_prompted".to_string()),
+        context: serde_json::Map::new(),
+    };
+    store.append_runtime_event(run_id, event)?;
+    if push_text_to_main_pane(run_id, &prompt).unwrap_or(false) {
+        let _ = store.update_mailbox_status(run_id, "main", &message_id, true)?;
+    }
+    Ok(())
 }
 
 fn rebuild_direct_team_surface(
@@ -5262,7 +5281,7 @@ mod tests {
         let snapshot = store
             .read_snapshot("demo-run")
             .expect("snapshot should be readable");
-        assert!(snapshot.mailbox.unread <= 1);
+        assert!(snapshot.mailbox.unread <= 2);
 
         let events = store
             .read_events("demo-run")
@@ -5298,6 +5317,18 @@ mod tests {
     }
 
     #[test]
+    fn classify_worker_report_marks_blockers_as_blocked() {
+        assert_eq!(
+            classify_worker_report("blocked: waiting on a missing token"),
+            (WorkerState::Blocked, "blocked_reported_to_operator")
+        );
+        assert_eq!(
+            classify_worker_report("mapped the key docs and likely change files"),
+            (WorkerState::Idle, "awaiting_operator_after_report")
+        );
+    }
+
+    #[test]
     fn build_all_workers_idle_prompt_lists_lane_summaries() {
         let prompt = build_all_workers_idle_prompt(
             "demo-run",
@@ -5310,6 +5341,59 @@ mod tests {
         assert!(prompt.contains("- explore-1: mapped the entry points"));
         assert!(prompt.contains("- review-1: flagged two risky seams"));
         assert!(prompt.contains("decide the next assignments"));
+    }
+
+    #[test]
+    fn report_to_main_prompts_the_operator_when_the_last_lane_finishes() {
+        let root = unique_temp_dir("conductor-report-followup");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "main".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("surface".to_string()),
+                terminal_label: Some("main".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: None,
+            })
+            .expect("failed to upsert main worker");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: None,
+                current_summary: Some("direct explore pane ready".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert worker");
+
+        report_to_main(&store, "demo-run", "explore-1", "mapped the key docs")
+            .expect("report should succeed");
+
+        let events = store
+            .read_events("demo-run")
+            .expect("events should be readable");
+        assert!(events.iter().any(|event| {
+            event.reason.as_deref() == Some("all_workers_idle_prompted")
+                && event.worker.as_deref() == Some("main")
+        }));
     }
 
     #[test]
