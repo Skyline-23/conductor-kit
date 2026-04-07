@@ -1447,6 +1447,9 @@ fn prepare_direct_team_panes(
         let launch = resolve_worker_adapter(&adapter, run_id, &worker_id, None, None)?;
         stop_worker_session_if_present(store, run_id, &worker_id);
         let summary = Some(format!("direct {} pane ready", worker_type));
+        let starter_prompt =
+            render_team_starter_prompt(run_id, &worker_id, &worker_type, team_prompt);
+        let use_inline_prompt = launch_uses_inline_prompt(&launch);
         store.upsert_worker(WorkerRecord {
             worker_id: worker_id.clone(),
             run_id: run_id.to_string(),
@@ -1463,13 +1466,12 @@ fn prepare_direct_team_panes(
         })?;
         pane_specs.push(OpsPaneSpec {
             title: worker_id.clone(),
-            command: build_direct_launch_shell_command(cwd, &launch),
-            starter_prompt: Some(render_team_starter_prompt(
-                run_id,
-                &worker_id,
-                &worker_type,
-                team_prompt,
-            )),
+            command: build_direct_launch_shell_command(
+                cwd,
+                &launch,
+                use_inline_prompt.then_some(starter_prompt.as_str()),
+            ),
+            starter_prompt: (!use_inline_prompt).then_some(starter_prompt),
         });
     }
     Ok(pane_specs)
@@ -3821,6 +3823,7 @@ fn build_launch_shell_command(
 fn build_direct_launch_shell_command(
     cwd: &Path,
     launch: &crate::runtime::adapters::WorkerAdapterLaunch,
+    initial_prompt: Option<&str>,
 ) -> String {
     let base_env = launch
         .env
@@ -3839,12 +3842,23 @@ fn build_direct_launch_shell_command(
             .into_iter()
             .map(|arg| shell_quote_str(&arg)),
     );
+    if let Some(prompt) = initial_prompt.filter(|value| !value.trim().is_empty()) {
+        command_parts.push(shell_quote_str(prompt));
+    }
     build_tmux_pane_shell_command(format!(
         "cd {} && {}exec {}",
         shell_quote(cwd),
         env_prefix,
         command_parts.join(" ")
     ))
+}
+
+fn launch_uses_inline_prompt(launch: &crate::runtime::adapters::WorkerAdapterLaunch) -> bool {
+    Path::new(&launch.program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.starts_with("codex"))
+        .unwrap_or(false)
 }
 
 fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
@@ -4979,6 +4993,25 @@ mod tests {
                 "gpt-5.4".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn direct_codex_team_launch_embeds_the_initial_prompt() {
+        let launch = crate::runtime::adapters::WorkerAdapterLaunch {
+            program: "/opt/homebrew/bin/codex".to_string(),
+            args: vec!["-m".to_string(), "gpt-5.4".to_string()],
+            cwd: None,
+            stdin_payload: None,
+            env: BTreeMap::new(),
+        };
+        let command = build_direct_launch_shell_command(
+            Path::new("/tmp/demo"),
+            &launch,
+            Some("Inspect this repository and report upward."),
+        );
+        assert!(command.contains("codex"));
+        assert!(command.contains("--no-alt-screen"));
+        assert!(command.contains("Inspect this repository and report upward."));
     }
 
     #[test]
