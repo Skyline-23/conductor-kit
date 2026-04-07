@@ -1559,6 +1559,20 @@ fn build_team_report_nudge_prompt(worker_id: &str) -> String {
     )
 }
 
+fn advance_team_nudge_reason(reason: Option<&str>) -> (&'static str, bool) {
+    match reason {
+        Some("awaiting_report_nudged") => ("awaiting_report_nudged_twice", false),
+        Some("awaiting_report_nudged_twice") | Some("stalled_non_reporting") => {
+            ("stalled_non_reporting", true)
+        }
+        _ => ("awaiting_report_nudged", false),
+    }
+}
+
+fn build_stalled_worker_prompt(worker_id: &str) -> String {
+    format!("{worker_id}: stalled waiting for a progress report")
+}
+
 fn build_all_workers_idle_prompt(run_id: &str, summaries: &[(String, String)]) -> String {
     let lines = summaries
         .iter()
@@ -1670,9 +1684,33 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
             let prompt = build_team_report_nudge_prompt(&worker_id);
             let _ = send_prompt_to_tmux_pane(pane_id, &prompt);
             let mut worker = worker;
-            worker.reason = Some("awaiting_report_nudged".to_string());
+            let (next_reason, stalled) =
+                advance_team_nudge_reason(worker.reason.as_deref());
+            worker.reason = Some(next_reason.to_string());
             worker.last_event_at = Some(Utc::now());
             let _ = store.upsert_worker(worker);
+            if stalled {
+                let _ = push_text_to_main_pane(
+                    run_id,
+                    &build_stalled_worker_prompt(&worker_id),
+                );
+                let _ = store.append_runtime_event(
+                    run_id,
+                    EventEnvelope {
+                        schema_version: SCHEMA_VERSION,
+                        event: EventKind::WorkerStateChanged,
+                        timestamp: Utc::now(),
+                        run_id: Some(run_id.to_string()),
+                        session_id: None,
+                        source: "team-nudge".to_string(),
+                        worker: Some(worker_id.clone()),
+                        task_id: None,
+                        message_id: None,
+                        reason: Some("worker_stalled_waiting_for_report".to_string()),
+                        context: serde_json::Map::new(),
+                    },
+                );
+            }
         }
     }
     Ok(())
@@ -3760,6 +3798,11 @@ fn render_hud_strip(
         .iter()
         .filter(|worker| worker_lane_status(worker) == "awaiting-report")
         .count();
+    let stalled_workers = snapshot
+        .workers
+        .iter()
+        .filter(|worker| worker_lane_status(worker) == "stalled")
+        .count();
     let blocked_workers = snapshot
         .workers
         .iter()
@@ -3768,7 +3811,7 @@ fn render_hud_strip(
     let next = next_operator_action(snapshot);
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3780,6 +3823,7 @@ fn render_hud_strip(
             active_workers,
             snapshot.workers.len(),
             awaiting_reports,
+            stalled_workers,
             blocked_workers,
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
@@ -3788,7 +3832,7 @@ fn render_hud_strip(
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3800,6 +3844,7 @@ fn render_hud_strip(
             active_workers,
             snapshot.workers.len(),
             awaiting_reports,
+            stalled_workers,
             blocked_workers,
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
@@ -3813,11 +3858,22 @@ fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'sta
     match worker.state {
         WorkerState::Blocked => "blocked",
         WorkerState::Working => {
+            if worker.reason.as_deref() == Some("stalled_non_reporting") {
+                "stalled"
+            } else if worker
+                .reason
+                .as_deref()
+                .map(|reason| reason.starts_with("awaiting_report_nudged"))
+                .unwrap_or(false)
+            {
+                "awaiting-report"
+            } else {
             let summary = worker.current_summary.as_deref().unwrap_or("");
             if summary.starts_with("direct ") {
                 "awaiting-report"
             } else {
                 "active"
+            }
             }
         }
         WorkerState::Idle => {
@@ -3842,6 +3898,12 @@ fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'sta
 fn next_operator_action(snapshot: &crate::runtime::types::RuntimeSnapshot) -> &'static str {
     if snapshot.readiness.stale_operator {
         "resume-operator"
+    } else if snapshot
+        .workers
+        .iter()
+        .any(|worker| worker_lane_status(worker) == "stalled")
+    {
+        "relaunch-stalled"
     } else if snapshot.readiness.pending_approvals > 0 {
         "review-approval"
     } else if !snapshot.readiness.silent_workers.is_empty() {
@@ -5456,6 +5518,22 @@ mod tests {
     }
 
     #[test]
+    fn advance_team_nudge_reason_escalates_to_stalled() {
+        assert_eq!(
+            advance_team_nudge_reason(Some("direct_team_pane")),
+            ("awaiting_report_nudged", false)
+        );
+        assert_eq!(
+            advance_team_nudge_reason(Some("awaiting_report_nudged")),
+            ("awaiting_report_nudged_twice", false)
+        );
+        assert_eq!(
+            advance_team_nudge_reason(Some("awaiting_report_nudged_twice")),
+            ("stalled_non_reporting", true)
+        );
+    }
+
+    #[test]
     fn classify_worker_report_marks_blockers_as_blocked() {
         assert_eq!(
             classify_worker_report("blocked: waiting on a missing token"),
@@ -5469,6 +5547,37 @@ mod tests {
             classify_worker_report("done: mapped the key docs and likely change files"),
             (WorkerState::Done, "completion_reported_to_operator")
         );
+    }
+
+    #[test]
+    fn worker_lane_status_marks_stalled_non_reporting_workers() {
+        let worker = crate::runtime::types::WorkerProjection {
+            worker_id: "explore-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Working,
+            current_task_id: None,
+            current_summary: Some("mapped the key docs".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("explore-1".to_string()),
+            reason: Some("stalled_non_reporting".to_string()),
+        };
+        assert_eq!(worker_lane_status(&worker), "stalled");
+    }
+
+    #[test]
+    fn next_operator_action_prioritizes_stalled_workers() {
+        let mut snapshot = sample_snapshot();
+        snapshot.workers = vec![crate::runtime::types::WorkerProjection {
+            worker_id: "explore-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Working,
+            current_task_id: None,
+            current_summary: Some("mapped the key docs".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("explore-1".to_string()),
+            reason: Some("stalled_non_reporting".to_string()),
+        }];
+        assert_eq!(next_operator_action(&snapshot), "relaunch-stalled");
     }
 
     #[test]
