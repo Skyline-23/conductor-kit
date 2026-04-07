@@ -17,6 +17,7 @@ Commands:
   ralph               Start the wider ralph-style orchestration layout
   report              Report a worker finding back to the main conductor run
   ask                 Send a direct follow-up to a worker lane
+  handoff             Reassign a narrow follow-up from one worker lane to another
   accept              Accept a worker lane result and close that lane
   close               Close a worker lane without relaunching it
   relaunch            Relaunch or retry a worker lane with a narrower follow-up

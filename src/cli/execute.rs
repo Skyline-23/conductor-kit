@@ -66,6 +66,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "ralph" => run_ralph(&args[1..]),
         "report" => run_report(&args[1..]),
         "ask" => run_ask(&args[1..]),
+        "handoff" => run_handoff(&args[1..]),
         "accept" => run_accept(&args[1..]),
         "close" => run_close(&args[1..]),
         "relaunch" => run_relaunch(&args[1..]),
@@ -1595,6 +1596,7 @@ enum WorkerReportKind {
     Progress,
     Blocked,
     Done,
+    Handoff,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1638,6 +1640,40 @@ fn classify_worker_report(summary: &str) -> (WorkerState, String, WorkerReportKi
             "reported_progress_continuing".to_string(),
             WorkerReportKind::Progress,
         )
+    }
+}
+
+fn classify_structured_worker_report(
+    kind: WorkerReportKind,
+    summary: &str,
+) -> (WorkerState, String, WorkerReportKind) {
+    match kind {
+        WorkerReportKind::Progress => (
+            WorkerState::Working,
+            "reported_progress_continuing".to_string(),
+            WorkerReportKind::Progress,
+        ),
+        WorkerReportKind::Blocked => {
+            let blocked_kind = infer_blocked_kind(&summary.to_ascii_lowercase());
+            (
+                WorkerState::Blocked,
+                format!(
+                    "blocked_{}_reported_to_operator",
+                    blocked_kind.as_reason_suffix()
+                ),
+                WorkerReportKind::Blocked,
+            )
+        }
+        WorkerReportKind::Done => (
+            WorkerState::Done,
+            "completion_reported_to_operator".to_string(),
+            WorkerReportKind::Done,
+        ),
+        WorkerReportKind::Handoff => (
+            WorkerState::Working,
+            "handoff_requested_from_lane".to_string(),
+            WorkerReportKind::Handoff,
+        ),
     }
 }
 
@@ -1694,6 +1730,7 @@ fn build_operator_followup_prompt(
 ) -> Option<String> {
     match report_kind {
         WorkerReportKind::Progress => None,
+        WorkerReportKind::Handoff => None,
         WorkerReportKind::Blocked => {
             let blocked_kind = infer_blocked_kind(&summary.to_ascii_lowercase());
             let action = match blocked_kind {
@@ -1750,6 +1787,8 @@ fn run_report(args: &[String]) -> Result<(), String> {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
     }
 
+    let (report_kind_override, args) = parse_report_kind(args)?;
+
     let (run_id, worker_id, summary) = if args.len() >= 3 {
         let first = &args[0];
         let second = &args[1];
@@ -1772,7 +1811,7 @@ fn run_report(args: &[String]) -> Result<(), String> {
     }
 
     let store = StateStore::new(resolve_state_root()?);
-    let payload = report_to_main(&store, &run_id, &worker_id, &summary)?;
+    let payload = report_to_main(&store, &run_id, &worker_id, &summary, report_kind_override)?;
     print_json(&payload)
 }
 
@@ -1800,6 +1839,62 @@ fn run_ask(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let payload = ask_worker(&store, &run_id, &worker_id, &prompt)?;
     print_json(&payload)
+}
+
+fn run_handoff(args: &[String]) -> Result<(), String> {
+    if args.len() < 3 {
+        return Err(
+            "handoff requires <from_worker> <to_worker> <prompt> or <run_id> <from_worker> <to_worker> <prompt>"
+                .to_string(),
+        );
+    }
+    let (run_id, from_worker, to_worker, prompt) = if args.len() >= 4 {
+        let first = &args[0];
+        let second = &args[1];
+        let third = &args[2];
+        if second.contains('-') || second == "main" || second == "surface" {
+            (first.clone(), second.clone(), third.clone(), args[3..].join(" "))
+        } else {
+            (
+                default_run_id(),
+                first.clone(),
+                second.clone(),
+                args[2..].join(" "),
+            )
+        }
+    } else {
+        (
+            default_run_id(),
+            args[0].clone(),
+            args[1].clone(),
+            args[2].clone(),
+        )
+    };
+    if prompt.trim().is_empty() {
+        return Err("handoff prompt must not be empty".to_string());
+    }
+    let store = StateStore::new(resolve_state_root()?);
+    let payload = handoff_worker_lane(&store, &run_id, &from_worker, &to_worker, &prompt)?;
+    print_json(&payload)
+}
+
+fn parse_report_kind(args: &[String]) -> Result<(Option<WorkerReportKind>, &[String]), String> {
+    if args.first().map(String::as_str) != Some("--kind") {
+        return Ok((None, args));
+    }
+    let kind = match args.get(1).map(String::as_str) {
+        Some("progress") => WorkerReportKind::Progress,
+        Some("blocked") => WorkerReportKind::Blocked,
+        Some("done") => WorkerReportKind::Done,
+        Some("handoff") => WorkerReportKind::Handoff,
+        Some(other) => {
+            return Err(format!(
+                "report --kind must be progress, blocked, done, or handoff; got {other}"
+            ))
+        }
+        None => return Err("report --kind requires a value".to_string()),
+    };
+    Ok((Some(kind), &args[2..]))
 }
 
 fn run_accept(args: &[String]) -> Result<(), String> {
@@ -1972,10 +2067,13 @@ fn report_to_main(
     run_id: &str,
     worker_id: &str,
     summary: &str,
+    report_kind_override: Option<WorkerReportKind>,
 ) -> Result<serde_json::Value, String> {
     let mut worker = store.read_worker(&run_id, &worker_id)?;
     let now = Utc::now();
-    let (next_state, next_reason, report_kind) = classify_worker_report(summary);
+    let (next_state, next_reason, report_kind) = report_kind_override
+        .map(|kind| classify_structured_worker_report(kind, summary))
+        .unwrap_or_else(|| classify_worker_report(summary));
     worker.current_summary = Some(summary.to_string());
     worker.state = next_state;
     worker.last_event_at = Some(now);
@@ -2042,6 +2140,7 @@ fn report_to_main(
         WorkerReportKind::Blocked => {
             let _ = maybe_handoff_blocked_lane(store, run_id, &worker, summary);
         }
+        WorkerReportKind::Handoff => {}
         WorkerReportKind::Progress => {}
     }
     let _ = maybe_prompt_all_workers_idle(store, run_id, "report");
@@ -2311,6 +2410,30 @@ fn relaunch_worker_lane(
     }
     let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: relaunched"));
     Ok(payload)
+}
+
+fn handoff_worker_lane(
+    store: &StateStore,
+    run_id: &str,
+    from_worker: &str,
+    to_worker: &str,
+    prompt: &str,
+) -> Result<serde_json::Value, String> {
+    let handoff_prompt = format!(
+        "Handoff from {from_worker}. Stay in your lane, pick up only this narrow follow-up, and report upward with `conductor report {to_worker} \"<short result>\"`.\n\n{prompt}"
+    );
+    let payload = ask_worker(store, run_id, to_worker, &handoff_prompt)?;
+    let _ = push_text_to_main_pane(
+        run_id,
+        &format!("{from_worker} -> {to_worker}: handoff"),
+    );
+    Ok(json!({
+        "run_id": run_id,
+        "from_worker": from_worker,
+        "to_worker": to_worker,
+        "prompt": prompt,
+        "delivered": payload.get("delivered").and_then(|value| value.as_bool()).unwrap_or(false)
+    }))
 }
 
 fn settle_worker_lane(
@@ -3041,6 +3164,9 @@ fn suggested_operator_command(
         )),
         "relaunch-stalled" => Some(format!(
             "conductor relaunch {focus_worker} \"report progress now or declare blocked\""
+        )),
+        "read-inbox" => Some(format!(
+            "conductor handoff main {focus_worker} \"pick up the newest report and keep the lane moving\""
         )),
         "reassign-or-close" => Some(format!(
             "conductor close {focus_worker} \"closing this lane after operator review\""
@@ -6310,6 +6436,7 @@ mod tests {
             "demo-run",
             "explore-1",
             "mapped the key docs and likely change files",
+            None,
         )
         .expect("report should succeed");
 
@@ -6849,7 +6976,7 @@ mod tests {
             })
             .expect("failed to upsert worker");
 
-        report_to_main(&store, "demo-run", "explore-1", "done: mapped the key docs")
+        report_to_main(&store, "demo-run", "explore-1", "done: mapped the key docs", None)
             .expect("report should succeed");
 
         let events = store
@@ -6907,6 +7034,7 @@ mod tests {
             "demo-run",
             "build-1",
             "done: prepared a staged migration plan",
+            None,
         )
         .expect("report should succeed");
 
@@ -6960,6 +7088,7 @@ mod tests {
             "demo-run",
             "build-1",
             "blocked: waiting for operator approval before finishing",
+            None,
         )
         .expect("report should succeed");
 
@@ -7019,6 +7148,7 @@ mod tests {
             "demo-run",
             "review-1",
             "blocked: need stronger test evidence before claiming done",
+            None,
         )
         .expect("report should succeed");
 
@@ -7075,6 +7205,7 @@ mod tests {
             "demo-run",
             "build-1",
             "blocked: waiting on an MCP dependency",
+            None,
         )
         .expect("report should succeed");
 
@@ -7115,6 +7246,7 @@ mod tests {
             "demo-run",
             "review-1",
             "blocked: scope is too broad and needs context",
+            None,
         )
         .expect("report should succeed");
 
@@ -7123,6 +7255,86 @@ mod tests {
             .expect("review worker should be readable");
         assert_eq!(review_worker.state, WorkerState::Working);
         assert_eq!(review_worker.reason.as_deref(), Some("operator_followup_sent"));
+    }
+
+    #[test]
+    fn classify_structured_worker_report_respects_explicit_handoff_kind() {
+        let (state, reason, kind) = classify_structured_worker_report(
+            WorkerReportKind::Handoff,
+            "handoff: verify this branch",
+        );
+        assert_eq!(state, WorkerState::Working);
+        assert_eq!(reason, "handoff_requested_from_lane");
+        assert_eq!(kind, WorkerReportKind::Handoff);
+    }
+
+    #[test]
+    fn suggested_operator_command_uses_real_approval_task_ids() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "review-approval".to_string();
+        snapshot.decision.focus_worker = Some("build-1".to_string());
+        snapshot.workers = vec![crate::runtime::types::WorkerProjection {
+            worker_id: "build-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Blocked,
+            current_task_id: Some("task-build-1".to_string()),
+            current_summary: Some("blocked: waiting for operator approval".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("build-1".to_string()),
+            reason: Some("blocked_approval_reported_to_operator".to_string()),
+        }];
+        let command = suggested_operator_command(
+            "demo-run",
+            &snapshot,
+            Some("blocked_approval_reported_to_operator"),
+        )
+        .expect("command should exist");
+        assert!(command.contains("task-build-1"));
+    }
+
+    #[test]
+    fn handoff_worker_lane_pushes_work_into_the_target_lane() {
+        let root = unique_temp_dir("conductor-handoff");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("direct explore pane ready".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert explore worker");
+
+        let payload = handoff_worker_lane(
+            &store,
+            "demo-run",
+            "review-1",
+            "explore-1",
+            "inspect the missing dependency only",
+        )
+        .expect("handoff should succeed");
+
+        assert_eq!(
+            payload.get("to_worker").and_then(|value| value.as_str()),
+            Some("explore-1")
+        );
+        let explore_worker = store
+            .read_worker("demo-run", "explore-1")
+            .expect("explore worker should be readable");
+        assert_eq!(explore_worker.state, WorkerState::Working);
+        assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
     }
 
     #[test]
