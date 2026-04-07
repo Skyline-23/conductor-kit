@@ -1640,6 +1640,12 @@ fn build_operator_followup_prompt(
     }
 }
 
+fn build_verify_handoff_prompt(worker_id: &str, summary: &str) -> String {
+    format!(
+        "Verify the completion report from {worker_id}. Check commands, evidence, and obvious gaps. Report upward with `conductor report verify-1 \"<short result>\"`.\n\nCompletion report: {summary}"
+    )
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -1862,6 +1868,9 @@ fn report_to_main(
             },
         )?;
     }
+    if report_kind == WorkerReportKind::Done {
+        let _ = maybe_handoff_completion_to_verify(store, run_id, &worker, summary);
+    }
     let _ = maybe_prompt_all_workers_idle(store, run_id, "report");
 
     Ok(json!({
@@ -1871,6 +1880,40 @@ fn report_to_main(
         "message_id": message.message_id,
         "mailbox_target": "main"
     }))
+}
+
+fn maybe_handoff_completion_to_verify(
+    store: &StateStore,
+    run_id: &str,
+    completed_worker: &WorkerRecord,
+    summary: &str,
+) -> Result<bool, String> {
+    if matches!(completed_worker.worker_kind, WorkerKind::Verifier) {
+        return Ok(false);
+    }
+
+    let verify_worker_id = store
+        .list_worker_ids(run_id)?
+        .into_iter()
+        .find(|worker_id| worker_id.starts_with("verify-"));
+    let Some(verify_worker_id) = verify_worker_id else {
+        return Ok(false);
+    };
+
+    let prompt = build_verify_handoff_prompt(&completed_worker.worker_id, summary);
+    let payload = ask_worker(store, run_id, &verify_worker_id, &prompt)?;
+    let delivered = payload
+        .get("delivered")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let _ = push_text_to_main_pane(
+        run_id,
+        &format!(
+            "{} -> {}: verify this completion",
+            completed_worker.worker_id, verify_worker_id
+        ),
+    );
+    Ok(delivered)
 }
 
 fn ask_worker(
@@ -5781,6 +5824,16 @@ mod tests {
     }
 
     #[test]
+    fn build_verify_handoff_prompt_keeps_the_completion_scope_narrow() {
+        let prompt = build_verify_handoff_prompt(
+            "build-1",
+            "done: prepared a staged migration plan",
+        );
+        assert!(prompt.contains("Verify the completion report from build-1."));
+        assert!(prompt.contains("Completion report: done: prepared a staged migration plan"));
+    }
+
+    #[test]
     fn worker_lane_status_marks_stalled_non_reporting_workers() {
         let worker = crate::runtime::types::WorkerProjection {
             worker_id: "explore-1".to_string(),
@@ -5886,6 +5939,72 @@ mod tests {
         assert!(events.iter().any(|event| {
             event.reason.as_deref() == Some("all_workers_idle_prompted")
                 && event.worker.as_deref() == Some("main")
+        }));
+    }
+
+    #[test]
+    fn report_to_main_handoffs_completed_lane_to_verify_when_present() {
+        let root = unique_temp_dir("conductor-verify-handoff");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: None,
+                current_summary: Some("direct build pane ready".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert build worker");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "verify-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Verifier,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("direct verify pane ready".to_string()),
+                terminal_label: Some("verify-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert verify worker");
+
+        report_to_main(
+            &store,
+            "demo-run",
+            "build-1",
+            "done: prepared a staged migration plan",
+        )
+        .expect("report should succeed");
+
+        let verify_worker = store
+            .read_worker("demo-run", "verify-1")
+            .expect("verify worker should be readable");
+        assert_eq!(verify_worker.state, WorkerState::Working);
+        assert_eq!(
+            verify_worker.reason.as_deref(),
+            Some("operator_followup_sent")
+        );
+        let events = store
+            .read_events("demo-run")
+            .expect("events should be readable");
+        assert!(events.iter().any(|event| {
+            event.worker.as_deref() == Some("verify-1")
+                && event.reason.as_deref() == Some("worker_lane_unavailable")
         }));
     }
 
