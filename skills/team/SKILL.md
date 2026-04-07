@@ -32,7 +32,8 @@ Workers do the lane work. The operator coordinates, waits for reports, and conve
 2. Let conductor expand the current tmux surface into worker lanes.
 3. Stay in the operator lane after the team is up.
 4. Wait for worker reports and use them to coordinate, reassign, or conclude.
-5. If the team shape was inferred, accept it unless there is a clear reason to override it.
+5. When one worker needs a narrower follow-up, send it with `conductor ask <worker_id> "<follow-up>"`.
+6. If the team shape was inferred, accept it unless there is a clear reason to override it.
 
 ## Constraints & Safety
 
@@ -53,6 +54,7 @@ Workers do the lane work. The operator coordinates, waits for reports, and conve
 ## Recovery & Lifecycle
 
 - if worker reports stall, stay in the operator lane and nudge or reshape the team
+- if one lane needs a targeted follow-up, use `conductor ask <worker_id> "<follow-up>"`
 - if the task changes, rerun `conductor team ... --prompt "..."` with the updated objective
 - if the team is no longer justified, collapse back to the main surface and continue solo
 

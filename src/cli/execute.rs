@@ -65,6 +65,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "team-followup" => run_team_followup(&args[1..]),
         "ralph" => run_ralph(&args[1..]),
         "report" => run_report(&args[1..]),
+        "ask" => run_ask(&args[1..]),
         "start" => run_start(&args[1..]),
         "open" => run_open(&args[1..]),
         "attach" => run_attach_alias(&args[1..]),
@@ -1635,6 +1636,32 @@ fn run_report(args: &[String]) -> Result<(), String> {
     print_json(&payload)
 }
 
+fn run_ask(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("ask requires <worker_id> <prompt> or <run_id> <worker_id> <prompt>".to_string());
+    }
+
+    let (run_id, worker_id, prompt) = if args.len() >= 3 {
+        let first = &args[0];
+        let second = &args[1];
+        if second.contains('-') || second == "main" || second == "surface" || second == "orchestrator-main" {
+            (first.clone(), second.clone(), args[2..].join(" "))
+        } else {
+            (default_run_id(), first.clone(), args[1..].join(" "))
+        }
+    } else {
+        (default_run_id(), args[0].clone(), args[1].clone())
+    };
+
+    if prompt.trim().is_empty() {
+        return Err("ask prompt must not be empty".to_string());
+    }
+
+    let store = StateStore::new(resolve_state_root()?);
+    let payload = ask_worker(&store, &run_id, &worker_id, &prompt)?;
+    print_json(&payload)
+}
+
 fn run_team_nudge(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "team-nudge requires <run_id> <tmux_session_name>")?;
     let tmux_session_name =
@@ -1808,6 +1835,84 @@ fn report_to_main(
     }))
 }
 
+fn ask_worker(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+    prompt: &str,
+) -> Result<serde_json::Value, String> {
+    let mut worker = store.read_worker(run_id, worker_id)?;
+    let now = Utc::now();
+    worker.last_event_at = Some(now);
+    if !matches!(worker.state, WorkerState::Failed | WorkerState::Stopped) {
+        worker.state = WorkerState::Working;
+    }
+    worker.reason = Some("operator_followup_sent".to_string());
+    let worker = store.upsert_worker(worker)?;
+
+    let message_id = format!("ask-{}-{}", worker_id, now.timestamp_millis());
+    let message = store.create_mailbox_message(run_id, &message_id, "main", worker_id, prompt)?;
+    let _ = store.update_mailbox_status(run_id, worker_id, &message_id, false)?;
+
+    let delivered = deliver_operator_followup(store, run_id, &worker, prompt)?;
+    if delivered {
+        let _ = store.update_mailbox_status(run_id, worker_id, &message_id, true)?;
+    } else {
+        store.append_runtime_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::LeaderNotificationDeferred,
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: worker.session_ref.clone(),
+                source: "ask".to_string(),
+                worker: Some(worker_id.to_string()),
+                task_id: worker.current_task_id.clone(),
+                message_id: Some(message_id.clone()),
+                reason: Some("worker_lane_unavailable".to_string()),
+                context: serde_json::Map::from_iter([
+                    ("prompt".to_string(), json!(prompt)),
+                    ("to_worker".to_string(), json!(worker_id)),
+                ]),
+            },
+        )?;
+    }
+
+    Ok(json!({
+        "run_id": run_id,
+        "worker_id": worker_id,
+        "prompt": prompt,
+        "message_id": message.message_id,
+        "delivered": delivered
+    }))
+}
+
+fn deliver_operator_followup(
+    store: &StateStore,
+    run_id: &str,
+    worker: &WorkerRecord,
+    prompt: &str,
+) -> Result<bool, String> {
+    if let Some(pane_id) = find_worker_tmux_pane_id(run_id, &worker.worker_id)? {
+        send_prompt_to_tmux_pane(&pane_id, prompt)?;
+        return Ok(true);
+    }
+
+    if let Some(session_id) = worker.session_ref.as_deref() {
+        let session = store.read_session(run_id, session_id)?;
+        let response = send_session_command(
+            Path::new(&session.socket_path),
+            &SessionCommand::SendStdin {
+                data: format!("{prompt}\n"),
+            },
+        )?;
+        return Ok(response.ok);
+    }
+
+    Ok(false)
+}
+
 fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str) -> Result<bool, String> {
     let prompt = build_operator_report_prompt(worker_id, summary);
     push_text_to_main_pane(run_id, &prompt)
@@ -1834,6 +1939,32 @@ fn push_text_to_main_pane(run_id: &str, prompt: &str) -> Result<bool, String> {
 
 fn build_operator_report_prompt(worker_id: &str, summary: &str) -> String {
     format!("{worker_id}: {summary}")
+}
+
+fn find_worker_tmux_pane_id(run_id: &str, worker_id: &str) -> Result<Option<String>, String> {
+    let session_name = current_tmux_session_hint()
+        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
+        .unwrap_or_else(|| surface_tmux_session_name(run_id));
+    if !tmux_session_exists(&session_name)? {
+        return Ok(None);
+    }
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_title}",
+    ])?;
+    Ok(panes.lines().find_map(|line| {
+        let mut parts = line.splitn(2, '\t');
+        let pane_id = parts.next()?.trim().to_string();
+        let pane_title = parts.next()?.trim();
+        if pane_title == worker_id {
+            Some(pane_id)
+        } else {
+            None
+        }
+    }))
 }
 
 fn schedule_team_report_nudge(run_id: &str, tmux_session_name: &str) -> Result<(), String> {
@@ -5860,5 +5991,21 @@ mod tests {
         let panes = "%166\t0\t⠴ conductor-kit\tcodex-aarch64-a\n%168\t1\tmain\tconductor\n";
         let main = find_main_pane_id("demo-session", panes).expect("main pane should resolve");
         assert_eq!(main, "%166");
+    }
+
+    #[test]
+    fn find_worker_tmux_pane_id_matches_exact_title() {
+        let panes = "%166\tmain\n%167\texplore-1\n%168\treview-1\n";
+        let found = panes.lines().find_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let pane_id = parts.next()?.trim().to_string();
+            let pane_title = parts.next()?.trim();
+            if pane_title == "review-1" {
+                Some(pane_id)
+            } else {
+                None
+            }
+        });
+        assert_eq!(found.as_deref(), Some("%168"));
     }
 }

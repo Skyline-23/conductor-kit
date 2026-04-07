@@ -32,6 +32,7 @@ fn team_and_ralph_skills_force_cli_routing() {
 
     assert!(team.contains("conductor team <count> <profile> [profile...]"));
     assert!(team.contains("conductor team --prompt \"<current task>\""));
+    assert!(team.contains("conductor ask <worker_id> \"<follow-up>\""));
     assert!(team.contains("--prompt \"<current task>\""));
     assert!(team.contains("do not call built-in sub-agent or delegation tools"));
     assert!(team.contains("do not inspect the repo, reason about layout, or explain the command before running it"));

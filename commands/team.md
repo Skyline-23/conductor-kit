@@ -15,6 +15,7 @@ What it should do:
 - mix the requested agent profiles round-robin across the requested team width
 - keep state visible through the HUD and worker panes around the main surface
 - wait for worker reports instead of continuing the same exploration or implementation work in the main pane
+- use `conductor ask <worker_id> "<follow-up>"` when one lane needs a targeted operator follow-up
 
 Default shape:
 - `conductor team`

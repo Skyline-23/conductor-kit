@@ -16,6 +16,7 @@ Commands:
   team                Start a configured team: team <count> <profile> [profile...]
   ralph               Start the wider ralph-style orchestration layout
   report              Report a worker finding back to the main conductor run
+  ask                 Send a direct follow-up to a worker lane
   help                Show this help
   version             Print version
   worker-log          Print recent session log output
