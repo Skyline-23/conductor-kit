@@ -2012,6 +2012,15 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
         if !should_nudge {
             continue;
         }
+        if recently_emitted_reason(
+            &store,
+            run_id,
+            Some(&worker_id),
+            "worker_report_nudged",
+            20,
+        )? {
+            continue;
+        }
         if let Some(pane_id) = pane_map.get(&worker_id) {
             let prompt = build_team_report_nudge_prompt(&worker_id);
             let _ = send_prompt_to_tmux_pane(pane_id, &prompt);
@@ -2021,27 +2030,54 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
             worker.reason = Some(next_reason.to_string());
             worker.last_event_at = Some(Utc::now());
             let _ = store.upsert_worker(worker);
+            let _ = store.append_runtime_event(
+                run_id,
+                EventEnvelope {
+                    schema_version: SCHEMA_VERSION,
+                    event: EventKind::WorkerStateChanged,
+                    timestamp: Utc::now(),
+                    run_id: Some(run_id.to_string()),
+                    session_id: None,
+                    source: "team-nudge".to_string(),
+                    worker: Some(worker_id.clone()),
+                    task_id: None,
+                    message_id: None,
+                    reason: Some("worker_report_nudged".to_string()),
+                    context: serde_json::Map::from_iter([(
+                        "prompt".to_string(),
+                        json!(prompt),
+                    )]),
+                },
+            );
             if stalled {
-                let _ = push_text_to_main_pane(
+                if !recently_emitted_reason(
+                    &store,
                     run_id,
-                    &build_stalled_worker_prompt(&worker_id),
-                );
-                let _ = store.append_runtime_event(
-                    run_id,
-                    EventEnvelope {
-                        schema_version: SCHEMA_VERSION,
-                        event: EventKind::WorkerStateChanged,
-                        timestamp: Utc::now(),
-                        run_id: Some(run_id.to_string()),
-                        session_id: None,
-                        source: "team-nudge".to_string(),
-                        worker: Some(worker_id.clone()),
-                        task_id: None,
-                        message_id: None,
-                        reason: Some("worker_stalled_waiting_for_report".to_string()),
-                        context: serde_json::Map::new(),
-                    },
-                );
+                    Some(&worker_id),
+                    "worker_stalled_waiting_for_report",
+                    60,
+                )? {
+                    let _ = push_text_to_main_pane(
+                        run_id,
+                        &build_stalled_worker_prompt(&worker_id),
+                    );
+                    let _ = store.append_runtime_event(
+                        run_id,
+                        EventEnvelope {
+                            schema_version: SCHEMA_VERSION,
+                            event: EventKind::WorkerStateChanged,
+                            timestamp: Utc::now(),
+                            run_id: Some(run_id.to_string()),
+                            session_id: None,
+                            source: "team-nudge".to_string(),
+                            worker: Some(worker_id.clone()),
+                            task_id: None,
+                            message_id: None,
+                            reason: Some("worker_stalled_waiting_for_report".to_string()),
+                            context: serde_json::Map::new(),
+                        },
+                    );
+                }
             }
         }
     }
@@ -2799,10 +2835,23 @@ fn schedule_team_followup_loop(run_id: &str, tmux_session_name: &str) -> Result<
 }
 
 fn recently_prompted_all_idle(store: &StateStore, run_id: &str, cooldown_secs: i64) -> Result<bool, String> {
+    recently_emitted_reason(store, run_id, Some("main"), "all_workers_idle_prompted", cooldown_secs)
+}
+
+fn recently_emitted_reason(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: Option<&str>,
+    reason: &str,
+    cooldown_secs: i64,
+) -> Result<bool, String> {
     let cutoff = Utc::now() - chrono::Duration::seconds(cooldown_secs);
     Ok(store.read_events(run_id)?.iter().rev().any(|event| {
         event.timestamp >= cutoff
-            && event.reason.as_deref() == Some("all_workers_idle_prompted")
+            && event.reason.as_deref() == Some(reason)
+            && worker_id
+                .map(|target| event.worker.as_deref() == Some(target))
+                .unwrap_or(true)
     }))
 }
 
@@ -7134,6 +7183,55 @@ mod tests {
             event.reason.as_deref() == Some("all_workers_idle_prompted")
                 && event.worker.as_deref() == Some("main")
         }));
+    }
+
+    #[test]
+    fn recently_emitted_reason_can_scope_to_a_worker() {
+        let root = unique_temp_dir("conductor-recent-reason");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .append_runtime_event(
+                "demo-run",
+                EventEnvelope {
+                    schema_version: SCHEMA_VERSION,
+                    event: EventKind::WorkerStateChanged,
+                    timestamp: Utc::now(),
+                    run_id: Some("demo-run".to_string()),
+                    session_id: None,
+                    source: "test".to_string(),
+                    worker: Some("explore-1".to_string()),
+                    task_id: None,
+                    message_id: None,
+                    reason: Some("worker_report_nudged".to_string()),
+                    context: serde_json::Map::new(),
+                },
+            )
+            .expect("failed to append event");
+
+        assert!(
+            recently_emitted_reason(
+                &store,
+                "demo-run",
+                Some("explore-1"),
+                "worker_report_nudged",
+                30,
+            )
+            .expect("lookup should succeed")
+        );
+        assert!(
+            !recently_emitted_reason(
+                &store,
+                "demo-run",
+                Some("review-1"),
+                "worker_report_nudged",
+                30,
+            )
+            .expect("lookup should succeed")
+        );
     }
 
     #[test]
