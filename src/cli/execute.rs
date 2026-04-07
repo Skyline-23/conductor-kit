@@ -4559,10 +4559,16 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.readiness.silent_workers.len()
     );
     println!(
-        "monitor    all_idle={} reclaimed={} non_reporting={}",
+        "monitor    all_idle={} reclaimed={} non_reporting={} pending_leader_notifications={} leader_nudge={}",
         snapshot.monitor.all_workers_idle,
         snapshot.monitor.reclaimed_claims,
-        snapshot.monitor.non_reporting_workers.len()
+        snapshot.monitor.non_reporting_workers.len(),
+        snapshot.monitor.pending_leader_notifications,
+        snapshot
+            .monitor
+            .leader_nudge_reason
+            .as_deref()
+            .unwrap_or("-")
     );
     println!("next       {}", next_operator_action(&snapshot));
     println!(
@@ -4713,10 +4719,16 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.readiness.silent_workers.len()
         );
         println!(
-            "monitor    all_idle={} reclaimed={} non_reporting={}",
+            "monitor    all_idle={} reclaimed={} non_reporting={} pending_leader_notifications={} leader_nudge={}",
             snapshot.monitor.all_workers_idle,
             snapshot.monitor.reclaimed_claims,
-            snapshot.monitor.non_reporting_workers.len()
+            snapshot.monitor.non_reporting_workers.len(),
+            snapshot.monitor.pending_leader_notifications,
+            snapshot
+                .monitor
+                .leader_nudge_reason
+                .as_deref()
+                .unwrap_or("-")
         );
         println!("next       {}", next_operator_action(&snapshot));
         println!(
@@ -4837,7 +4849,7 @@ fn render_hud_strip(
     let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}  focus:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -4855,12 +4867,17 @@ fn render_hud_strip(
             snapshot.readiness.silent_workers.len(),
             snapshot.monitor.reclaimed_claims,
             snapshot.mailbox.unread,
+            snapshot
+                .monitor
+                .leader_nudge_reason
+                .as_deref()
+                .unwrap_or("-"),
             next,
             focus,
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  next:{}  focus:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -4878,6 +4895,11 @@ fn render_hud_strip(
             snapshot.readiness.silent_workers.len(),
             snapshot.monitor.reclaimed_claims,
             snapshot.mailbox.unread,
+            snapshot
+                .monitor
+                .leader_nudge_reason
+                .as_deref()
+                .unwrap_or("-"),
             next,
             focus,
         )
@@ -6251,6 +6273,8 @@ mod tests {
                 all_workers_idle: false,
                 non_reporting_workers: Vec::new(),
                 reclaimed_claims: 0,
+                pending_leader_notifications: 4,
+                leader_nudge_reason: Some("read_inbox".to_string()),
             },
             decision: crate::runtime::types::OperatorDecision {
                 next_action: "read-inbox".to_string(),
@@ -6696,6 +6720,7 @@ mod tests {
         let strip = render_hud_strip(&snapshot, false);
         assert!(strip.contains("next:read-inbox"));
         assert!(strip.contains("focus:explore-1"));
+        assert!(strip.contains("leader:read_inbox"));
     }
 
     #[test]

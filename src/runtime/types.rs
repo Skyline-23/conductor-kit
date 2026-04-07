@@ -292,6 +292,8 @@ pub struct MonitorState {
     pub all_workers_idle: bool,
     pub non_reporting_workers: Vec<String>,
     pub reclaimed_claims: usize,
+    pub pending_leader_notifications: usize,
+    pub leader_nudge_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

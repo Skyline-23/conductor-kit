@@ -576,6 +576,15 @@ impl StateStore {
             .filter(|event| event.event == EventKind::ClaimReclaimed)
             .count();
 
+        let pending_leader_notifications = unread;
+        let leader_nudge_reason = derive_leader_nudge_reason(
+            stale_operator,
+            pending_leader_notifications,
+            all_workers_idle,
+            &silent_workers,
+            &worker_projections,
+        );
+
         let readiness = ReadinessState {
             ready: run.authority.is_some() && !stale_operator,
             reasons: {
@@ -584,7 +593,14 @@ impl StateStore {
                     reasons.push("missing authority lease".to_string());
                 }
                 if stale_operator {
-                    reasons.push("operator activity is stale".to_string());
+                    if pending_leader_notifications > 0 {
+                        reasons.push(format!(
+                            "operator activity is stale with {} pending leader notifications",
+                            pending_leader_notifications
+                        ));
+                    } else {
+                        reasons.push("operator activity is stale".to_string());
+                    }
                 }
                 if pending_approvals > 0 {
                     reasons.push(format!("{pending_approvals} task approvals pending"));
@@ -630,6 +646,8 @@ impl StateStore {
                 all_workers_idle,
                 non_reporting_workers: silent_workers.clone(),
                 reclaimed_claims,
+                pending_leader_notifications,
+                leader_nudge_reason,
             },
             decision,
         })
@@ -885,7 +903,14 @@ fn derive_operator_decision(
         return OperatorDecision {
             next_action: "resume-operator".to_string(),
             focus_worker: None,
-            reason: "operator activity is stale".to_string(),
+            reason: if unread_mailbox > 0 {
+                format!(
+                    "operator activity is stale with {} pending leader notifications",
+                    unread_mailbox
+                )
+            } else {
+                "operator activity is stale".to_string()
+            },
         };
     }
 
@@ -1002,6 +1027,31 @@ fn derive_operator_decision(
         focus_worker: None,
         reason: "workers are still making progress".to_string(),
     }
+}
+
+fn derive_leader_nudge_reason(
+    stale_operator: bool,
+    pending_leader_notifications: usize,
+    all_workers_idle: bool,
+    silent_workers: &[String],
+    workers: &[WorkerProjection],
+) -> Option<String> {
+    let has_stalled_worker = workers
+        .iter()
+        .any(|worker| worker.reason.as_deref() == Some("stalled_non_reporting"));
+    if stale_operator && pending_leader_notifications > 0 {
+        return Some("stale_leader_with_messages".to_string());
+    }
+    if has_stalled_worker {
+        return Some("stuck_waiting_on_leader".to_string());
+    }
+    if all_workers_idle {
+        return Some("all_workers_idle".to_string());
+    }
+    if !silent_workers.is_empty() {
+        return Some("silent_workers".to_string());
+    }
+    None
 }
 
 fn blocked_decision_reason(worker: &WorkerProjection) -> String {
@@ -1139,5 +1189,19 @@ mod tests {
         let decision = derive_operator_decision(&workers, &readiness, &tasks, 0, false);
         assert_eq!(decision.next_action, "review-approval");
         assert_eq!(decision.focus_worker.as_deref(), Some("build-1"));
+    }
+
+    #[test]
+    fn derive_operator_decision_surfaces_stale_leader_with_messages() {
+        let readiness = ReadinessState {
+            ready: false,
+            reasons: vec!["operator activity is stale with 2 pending leader notifications".to_string()],
+            pending_approvals: 0,
+            stale_operator: true,
+            silent_workers: Vec::new(),
+        };
+        let decision = derive_operator_decision(&[], &readiness, &[], 2, false);
+        assert_eq!(decision.next_action, "resume-operator");
+        assert!(decision.reason.contains("pending leader notifications"));
     }
 }
