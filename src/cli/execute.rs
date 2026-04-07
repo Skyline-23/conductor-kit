@@ -1509,29 +1509,41 @@ fn render_team_starter_prompt(
     worker_type: &str,
     team_prompt: Option<&str>,
 ) -> String {
-    let role_instruction = match worker_type {
-        "explore" => {
-            "Start immediately by mapping the repository, the likely touch points, and the fastest path to useful findings."
-        }
-        "build" => {
-            "Start immediately by locating the implementation surface and drafting the smallest concrete change path."
-        }
-        "review" => {
-            "Start immediately by checking likely regressions, risky files, and verification gaps."
-        }
-        "verify" => {
-            "Start immediately by preparing the validation path, likely commands, and evidence to confirm completion."
-        }
-        _ => "Start immediately by scanning the repository and contributing useful progress from your lane.",
+    let role_intent = match worker_type {
+        "explore" => "Find files, boundaries, touch points, and fast situational clarity.",
+        "build" => "Locate the implementation surface and drive the smallest correct change path.",
+        "review" => "Challenge the likely risks, regressions, and missing checks.",
+        "verify" => "Prepare and run the validation path, commands, and completion evidence.",
+        _ => "Contribute useful progress from your assigned lane.",
     };
-    match team_prompt {
-        Some(prompt) => format!(
-            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} Current task: {prompt} As soon as you have a concrete finding, send it back to the operator with `conductor report {worker_id} \"<short result>\"` before you continue."
-        ),
-        None => format!(
-            "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_instruction} If the operator has not provided a concrete task yet, inspect the repository and produce an immediate situational summary. Report the first useful summary with `conductor report {worker_id} \"<short result>\"`."
-        ),
-    }
+    let current_task = match team_prompt {
+        Some(prompt) => format!("Current task: {prompt}"),
+        None => "Current task: no explicit task yet; inspect the repository and produce a fast situational summary.".to_string(),
+    };
+    format!(
+        "Role & Intent: You are {worker_id} in conductor run {run_id}. Profile: {worker_type}. {role_intent}\n\
+Operating Principles:\n\
+- stay in your lane\n\
+- report upward to the operator\n\
+- do not recursively orchestrate other workers\n\
+- produce useful progress quickly instead of waiting for perfect coverage\n\
+Execution Protocol:\n\
+1. Acknowledge your lane and inspect only the surfaces that matter.\n\
+2. Produce the first useful finding fast.\n\
+3. Report it with `conductor report {worker_id} \"<short result>\"`.\n\
+4. Continue only if more work in your lane is still justified.\n\
+Constraints & Safety:\n\
+- do not use built-in sub-agent or delegation tools\n\
+- do not act like the operator lane\n\
+- do not claim completion without evidence\n\
+Verification & Completion:\n\
+- before claiming completion, gather the evidence or commands that support it\n\
+- when blocked, report the blocker upward immediately\n\
+Recovery & Lifecycle:\n\
+- if the task changes, wait for a new operator instruction\n\
+- if you are done, send a final concise report upward and stop extending scope\n\
+{current_task}"
+    )
 }
 
 fn run_report(args: &[String]) -> Result<(), String> {

@@ -35,9 +35,13 @@ fn team_and_ralph_skills_force_cli_routing() {
     assert!(team.contains("--prompt \"<current task>\""));
     assert!(team.contains("do not call built-in sub-agent or delegation tools"));
     assert!(team.contains("do not inspect the repo, reason about layout, or explain the command before running it"));
-    assert!(team.contains("stay in the operator lane, wait for worker reports, and only coordinate or summarize"));
+    assert!(team.contains("The current pane stays in the operator lane."));
+    assert!(team.contains("## Role & Intent"));
+    assert!(team.contains("## Execution Protocol"));
+    assert!(team.contains("## Verification & Completion"));
     assert!(ralph.contains("conductor ralph"));
     assert!(ralph.contains("do not call built-in sub-agent or delegation tools"));
+    assert!(ralph.contains("## Recovery & Lifecycle"));
 }
 
 #[test]
