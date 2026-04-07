@@ -3011,10 +3011,16 @@ fn suggested_operator_command(
     focus_reason: Option<&str>,
 ) -> Option<String> {
     let focus_worker = snapshot.decision.focus_worker.as_deref()?;
+    let focus_task_id = snapshot
+        .workers
+        .iter()
+        .find(|worker| worker.worker_id == focus_worker)
+        .and_then(|worker| worker.current_task_id.as_deref());
     match snapshot.decision.next_action.as_str() {
         "unblock" => match focus_reason {
             Some("blocked_approval_reported_to_operator") => Some(format!(
-                "conductor task-approval {run_id} <task_id> approved <reviewer> \"<reason>\""
+                "conductor task-approval {run_id} {} approved <reviewer> \"<reason>\"",
+                focus_task_id.unwrap_or("<task_id>")
             )),
             Some("blocked_evidence_reported_to_operator") => Some(format!(
                 "conductor ask {focus_worker} \"state the missing proof in one line and say what would satisfy it\""
@@ -3030,7 +3036,8 @@ fn suggested_operator_command(
             "conductor accept {focus_worker} \"accepted after verification\""
         )),
         "review-approval" => Some(format!(
-            "conductor task-approval {run_id} <task_id> approved <reviewer> \"<reason>\""
+            "conductor task-approval {run_id} {} approved <reviewer> \"<reason>\"",
+            focus_task_id.unwrap_or("<task_id>")
         )),
         "relaunch-stalled" => Some(format!(
             "conductor relaunch {focus_worker} \"report progress now or declare blocked\""
@@ -6564,7 +6571,7 @@ mod tests {
                 worker_kind: WorkerKind::Worker,
                 session_ref: None,
                 state: WorkerState::Blocked,
-                current_task_id: None,
+                current_task_id: Some("task-review-1".to_string()),
                 current_summary: Some("blocked: waiting for operator approval".to_string()),
                 terminal_label: Some("review-1".to_string()),
                 last_heartbeat_at: Some(Utc::now()),
@@ -6584,7 +6591,7 @@ mod tests {
         assert!(prompt.contains("operator approval"));
         assert!(prompt.contains("Active lane context:"));
         assert!(prompt.contains("review-1 (Blocked):"));
-        assert!(prompt.contains("Suggested command: conductor task-approval"));
+        assert!(prompt.contains("Suggested command: conductor task-approval demo-run task-review-1"));
     }
 
     #[test]
