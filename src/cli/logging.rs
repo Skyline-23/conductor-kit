@@ -24,6 +24,7 @@ Commands:
   version             Print version
   worker-log          Print recent session log output
   hud-view            Print a compact runtime HUD view
+  next                Print the next suggested operator command for a run
   doctor              Validate config
 
 Advanced:

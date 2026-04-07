@@ -109,6 +109,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "worker-stop-session" => run_worker_stop_session(&args[1..]),
         "hud-open" => run_hud_open(&args[1..]),
         "ops-open" => run_ops_open(&args[1..]),
+        "next" => run_next(&args[1..]),
         "worker-host" => run_worker_host_command(&args[1..]),
         "dispatch-route" => run_dispatch_route(&args[1..]),
         "hud-view" => run_hud_view(&args[1..]),
@@ -2996,42 +2997,49 @@ fn maybe_resume_context_prompt(
     } else {
         format!("\n\nActive lane context:\n{}", lane_lines.join("\n"))
     };
-    let suggested_command = if let Some(focus_worker) = snapshot.decision.focus_worker.as_deref() {
-        match next {
-            "unblock" => match focus_reason {
-                Some("blocked_approval_reported_to_operator") => {
-                    "\nSuggested command: conductor task-approval <run_id> <task_id> approved <reviewer> \"<reason>\"".to_string()
-                }
-                Some("blocked_evidence_reported_to_operator") => format!(
-                    "\nSuggested command: conductor ask {focus_worker} \"state the missing proof in one line and say what would satisfy it\""
-                ),
-                Some("blocked_scope_reported_to_operator") => format!(
-                    "\nSuggested command: conductor ask {focus_worker} \"pick one seam only and restate the lane in one sentence\""
-                ),
-                _ => format!(
-                    "\nSuggested command: conductor ask {focus_worker} \"narrow the blocker or confirm the missing dependency\""
-                ),
-            },
-            "accept-completion" | "verify-completion" => format!(
-                "\nSuggested command: conductor accept {focus_worker} \"accepted after verification\""
-            ),
-            "review-approval" => {
-                "\nSuggested command: conductor task-approval <run_id> <task_id> approved <reviewer> \"<reason>\"".to_string()
-            }
-            "relaunch-stalled" => format!(
-                "\nSuggested command: conductor relaunch {focus_worker} \"report progress now or declare blocked\""
-            ),
-            "reassign-or-close" => format!(
-                "\nSuggested command: conductor close {focus_worker} \"closing this lane after operator review\""
-            ),
-            _ => String::new(),
-        }
-    } else {
-        String::new()
-    };
+    let suggested_command = suggested_operator_command(run_id, &snapshot, focus_reason)
+        .map(|command| format!("\nSuggested command: {command}"))
+        .unwrap_or_default();
     Some(format!(
         "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}. Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work.{lane_block}{suggested_command}"
     ))
+}
+
+fn suggested_operator_command(
+    run_id: &str,
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+    focus_reason: Option<&str>,
+) -> Option<String> {
+    let focus_worker = snapshot.decision.focus_worker.as_deref()?;
+    match snapshot.decision.next_action.as_str() {
+        "unblock" => match focus_reason {
+            Some("blocked_approval_reported_to_operator") => Some(format!(
+                "conductor task-approval {run_id} <task_id> approved <reviewer> \"<reason>\""
+            )),
+            Some("blocked_evidence_reported_to_operator") => Some(format!(
+                "conductor ask {focus_worker} \"state the missing proof in one line and say what would satisfy it\""
+            )),
+            Some("blocked_scope_reported_to_operator") => Some(format!(
+                "conductor ask {focus_worker} \"pick one seam only and restate the lane in one sentence\""
+            )),
+            _ => Some(format!(
+                "conductor ask {focus_worker} \"narrow the blocker or confirm the missing dependency\""
+            )),
+        },
+        "accept-completion" | "verify-completion" => Some(format!(
+            "conductor accept {focus_worker} \"accepted after verification\""
+        )),
+        "review-approval" => Some(format!(
+            "conductor task-approval {run_id} <task_id> approved <reviewer> \"<reason>\""
+        )),
+        "relaunch-stalled" => Some(format!(
+            "conductor relaunch {focus_worker} \"report progress now or declare blocked\""
+        )),
+        "reassign-or-close" => Some(format!(
+            "conductor close {focus_worker} \"closing this lane after operator review\""
+        )),
+        _ => None,
+    }
 }
 
 fn plan_team_roster(
@@ -4453,6 +4461,32 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
             summary,
             worker_lane_status(&worker)
         );
+    }
+    Ok(())
+}
+
+fn run_next(args: &[String]) -> Result<(), String> {
+    let run_id = args
+        .first()
+        .cloned()
+        .unwrap_or_else(default_run_id);
+    let store = StateStore::new(resolve_state_root()?);
+    let snapshot = store.read_snapshot(&run_id)?;
+    let focus_reason = snapshot
+        .decision
+        .focus_worker
+        .as_deref()
+        .and_then(|focus_worker| {
+            snapshot
+                .workers
+                .iter()
+                .find(|worker| worker.worker_id == focus_worker)
+                .and_then(|worker| worker.reason.as_deref())
+        });
+    if let Some(command) = suggested_operator_command(&run_id, &snapshot, focus_reason) {
+        println!("{command}");
+    } else {
+        println!("# no direct operator command suggested");
     }
     Ok(())
 }
@@ -6618,6 +6652,20 @@ mod tests {
         let prompt = maybe_resume_context_prompt(&store, "demo-run", true)
             .expect("resume prompt should exist");
         assert!(prompt.contains("Suggested command: conductor accept verify-1"));
+    }
+
+    #[test]
+    fn suggested_operator_command_prefers_relaunch_for_stalled_workers() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "relaunch-stalled".to_string();
+        snapshot.decision.focus_worker = Some("explore-1".to_string());
+        let command = suggested_operator_command(
+            "demo-run",
+            &snapshot,
+            Some("stalled_non_reporting"),
+        )
+        .expect("command should exist");
+        assert!(command.contains("conductor relaunch explore-1"));
     }
 
     #[test]
