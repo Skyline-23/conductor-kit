@@ -1593,12 +1593,25 @@ enum WorkerReportKind {
     Done,
 }
 
-fn classify_worker_report(summary: &str) -> (WorkerState, &'static str, WorkerReportKind) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BlockedKind {
+    Dependency,
+    Approval,
+    Evidence,
+    Scope,
+    Generic,
+}
+
+fn classify_worker_report(summary: &str) -> (WorkerState, String, WorkerReportKind) {
     let normalized = summary.trim_start().to_ascii_lowercase();
     if normalized.starts_with("blocked:") || normalized.starts_with("blocked ") {
+        let blocked_kind = infer_blocked_kind(&normalized);
         (
             WorkerState::Blocked,
-            "blocked_reported_to_operator",
+            format!(
+                "blocked_{}_reported_to_operator",
+                blocked_kind.as_reason_suffix()
+            ),
             WorkerReportKind::Blocked,
         )
     } else if normalized.starts_with("done:")
@@ -1612,15 +1625,61 @@ fn classify_worker_report(summary: &str) -> (WorkerState, &'static str, WorkerRe
     {
         (
             WorkerState::Done,
-            "completion_reported_to_operator",
+            "completion_reported_to_operator".to_string(),
             WorkerReportKind::Done,
         )
     } else {
         (
             WorkerState::Working,
-            "reported_progress_continuing",
+            "reported_progress_continuing".to_string(),
             WorkerReportKind::Progress,
         )
+    }
+}
+
+impl BlockedKind {
+    fn as_reason_suffix(self) -> &'static str {
+        match self {
+            BlockedKind::Dependency => "dependency",
+            BlockedKind::Approval => "approval",
+            BlockedKind::Evidence => "evidence",
+            BlockedKind::Scope => "scope",
+            BlockedKind::Generic => "generic",
+        }
+    }
+}
+
+fn infer_blocked_kind(summary: &str) -> BlockedKind {
+    if summary.contains("approval")
+        || summary.contains("approve")
+        || summary.contains("signoff")
+        || summary.contains("reviewer")
+    {
+        BlockedKind::Approval
+    } else if summary.contains("evidence")
+        || summary.contains("proof")
+        || summary.contains("repro")
+        || summary.contains("test")
+        || summary.contains("verify")
+    {
+        BlockedKind::Evidence
+    } else if summary.contains("scope")
+        || summary.contains("unclear")
+        || summary.contains("missing spec")
+        || summary.contains("need context")
+    {
+        BlockedKind::Scope
+    } else if summary.contains("dependency")
+        || summary.contains("waiting on")
+        || summary.contains("token")
+        || summary.contains("credential")
+        || summary.contains("api")
+        || summary.contains("mcp")
+        || summary.contains("service")
+    {
+        BlockedKind::Dependency
+    } else {
+        BlockedKind::Generic
     }
 }
 
@@ -1631,9 +1690,19 @@ fn build_operator_followup_prompt(
 ) -> Option<String> {
     match report_kind {
         WorkerReportKind::Progress => None,
-        WorkerReportKind::Blocked => Some(format!(
-            "{worker_id} is blocked. Decide whether to unblock it, reroute the dependency, or stop that lane. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower retry.\n\nLatest report: {summary}"
-        )),
+        WorkerReportKind::Blocked => {
+            let blocked_kind = infer_blocked_kind(&summary.to_ascii_lowercase());
+            let action = match blocked_kind {
+                BlockedKind::Dependency => "unblock it or reroute the dependency",
+                BlockedKind::Approval => "review the pending approval or reroute the lane",
+                BlockedKind::Evidence => "ask for stronger evidence or redirect verification",
+                BlockedKind::Scope => "clarify the scope and restart the lane narrowly",
+                BlockedKind::Generic => "unblock it, reroute the lane, or stop the branch",
+            };
+            Some(format!(
+                "{worker_id} is blocked. Decide whether to {action}. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower retry.\n\nLatest report: {summary}"
+            ))
+        }
         WorkerReportKind::Done => Some(format!(
             "{worker_id} finished its lane. Decide whether to accept it, ask for stronger evidence, hand it off to another lane, or close that branch. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower follow-up.\n\nLatest report: {summary}"
         )),
@@ -1813,7 +1882,7 @@ fn report_to_main(
     worker.state = next_state;
     worker.last_event_at = Some(now);
     worker.last_stdout_at = Some(now);
-    worker.reason = Some(next_reason.to_string());
+    worker.reason = Some(next_reason);
     let worker = store.upsert_worker(worker)?;
 
     let message_id = format!("report-{}-{}", worker_id, now.timestamp_millis());
@@ -2351,7 +2420,7 @@ fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String
     let pane_specs = vec![OpsPaneSpec {
         title: "main".to_string(),
         command: surface_cmd,
-        starter_prompt: None,
+        starter_prompt: maybe_resume_context_prompt(&store, run_id, resume_surface),
     }];
     if tmux_session_exists(&tmux_session_name)? {
         run_tmux(["kill-session", "-t", &tmux_session_name])?;
@@ -2365,6 +2434,7 @@ fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String
             &hud_status_cmd,
             pane_specs[0].title.as_str(),
             pane_specs[0].command.as_str(),
+            pane_specs[0].starter_prompt.as_deref(),
         );
     }
     ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
@@ -2376,6 +2446,7 @@ fn run_surface_attached_tmux_session(
     hud_status_cmd: &str,
     main_title: &str,
     surface_cmd: &str,
+    starter_prompt: Option<&str>,
 ) -> Result<(), String> {
     run_tmux([
         "new-session",
@@ -2429,6 +2500,9 @@ fn run_surface_attached_tmux_session(
         "pane-exited",
         &main_exit_hook,
     ])?;
+    if let Some(prompt) = starter_prompt {
+        send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)?;
+    }
     attach_tmux_ops_session(session_name)
 }
 
@@ -2459,6 +2533,26 @@ fn resolve_surface_launch(
         launch.stdin_payload = None;
     }
     Ok(launch)
+}
+
+fn maybe_resume_context_prompt(
+    store: &StateStore,
+    run_id: &str,
+    resume_surface: bool,
+) -> Option<String> {
+    if !resume_surface {
+        return None;
+    }
+    let snapshot = store.read_snapshot(run_id).ok()?;
+    let next = snapshot.decision.next_action.trim();
+    if next.is_empty() || next == "monitor" {
+        return None;
+    }
+    let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
+    let why = snapshot.decision.reason.trim();
+    Some(format!(
+        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}. Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work."
+    ))
 }
 
 fn plan_team_roster(
@@ -5777,7 +5871,7 @@ mod tests {
             classify_worker_report("blocked: waiting on a missing token"),
             (
                 WorkerState::Blocked,
-                "blocked_reported_to_operator",
+                "blocked_dependency_reported_to_operator".to_string(),
                 WorkerReportKind::Blocked
             )
         );
@@ -5785,7 +5879,7 @@ mod tests {
             classify_worker_report("mapped the key docs and likely change files"),
             (
                 WorkerState::Working,
-                "reported_progress_continuing",
+                "reported_progress_continuing".to_string(),
                 WorkerReportKind::Progress
             )
         );
@@ -5793,9 +5887,25 @@ mod tests {
             classify_worker_report("done: mapped the key docs and likely change files"),
             (
                 WorkerState::Done,
-                "completion_reported_to_operator",
+                "completion_reported_to_operator".to_string(),
                 WorkerReportKind::Done
             )
+        );
+    }
+
+    #[test]
+    fn infer_blocked_kind_distinguishes_common_operator_paths() {
+        assert_eq!(
+            infer_blocked_kind("blocked: waiting for operator approval"),
+            BlockedKind::Approval
+        );
+        assert_eq!(
+            infer_blocked_kind("blocked: need stronger test evidence before claiming done"),
+            BlockedKind::Evidence
+        );
+        assert_eq!(
+            infer_blocked_kind("blocked: waiting on an MCP dependency"),
+            BlockedKind::Dependency
         );
     }
 
@@ -5887,6 +5997,41 @@ mod tests {
         assert!(prompt.contains("- explore-1: mapped the entry points"));
         assert!(prompt.contains("- review-1: flagged two risky seams"));
         assert!(prompt.contains("decide the next assignments"));
+    }
+
+    #[test]
+    fn maybe_resume_context_prompt_restores_operator_decision_context() {
+        let root = unique_temp_dir("conductor-resume-context");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "review-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Blocked,
+                current_task_id: None,
+                current_summary: Some("blocked: waiting for operator approval".to_string()),
+                terminal_label: Some("review-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("blocked_approval_reported_to_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        let prompt = maybe_resume_context_prompt(&store, "demo-run", true)
+            .expect("resume prompt should exist");
+        assert!(prompt.contains("Next: unblock."));
+        assert!(prompt.contains("Focus: review-1."));
+        assert!(prompt.contains("operator approval"));
     }
 
     #[test]

@@ -907,13 +907,7 @@ fn derive_operator_decision(
     if let Some(worker) = workers.iter().find(|worker| {
         matches!(worker.state, crate::runtime::types::WorkerState::Blocked)
     }) {
-        let reason = worker
-            .current_summary
-            .as_deref()
-            .map(|summary| summary.trim())
-            .filter(|summary| !summary.is_empty())
-            .map(|summary| format!("blocked lane needs operator help: {summary}"))
-            .unwrap_or_else(|| "worker reported a blocker".to_string());
+        let reason = blocked_decision_reason(worker);
         return OperatorDecision {
             next_action: "unblock".to_string(),
             focus_worker: Some(worker.worker_id.clone()),
@@ -977,6 +971,30 @@ fn derive_operator_decision(
     }
 }
 
+fn blocked_decision_reason(worker: &WorkerProjection) -> String {
+    let summary = worker
+        .current_summary
+        .as_deref()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .unwrap_or("worker reported a blocker");
+    match worker.reason.as_deref() {
+        Some("blocked_approval_reported_to_operator") => {
+            format!("blocked lane needs operator approval: {summary}")
+        }
+        Some("blocked_evidence_reported_to_operator") => {
+            format!("blocked lane needs stronger evidence: {summary}")
+        }
+        Some("blocked_scope_reported_to_operator") => {
+            format!("blocked lane needs scope clarification: {summary}")
+        }
+        Some("blocked_dependency_reported_to_operator") => {
+            format!("blocked lane needs a dependency unblocked: {summary}")
+        }
+        _ => format!("blocked lane needs operator help: {summary}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::derive_operator_decision;
@@ -1031,6 +1049,23 @@ mod tests {
         assert_eq!(decision.next_action, "unblock");
         assert_eq!(decision.focus_worker.as_deref(), Some("review-1"));
         assert!(decision.reason.contains("API credentials"));
+    }
+
+    #[test]
+    fn derive_operator_decision_distinguishes_approval_blockers() {
+        let workers = vec![WorkerProjection {
+            worker_id: "build-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Blocked,
+            current_task_id: None,
+            current_summary: Some("blocked: waiting for operator approval".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("build-1".to_string()),
+            reason: Some("blocked_approval_reported_to_operator".to_string()),
+        }];
+        let decision = derive_operator_decision(&workers, &sample_readiness(), &[], 0, false);
+        assert_eq!(decision.next_action, "unblock");
+        assert!(decision.reason.contains("operator approval"));
     }
 
     #[test]
