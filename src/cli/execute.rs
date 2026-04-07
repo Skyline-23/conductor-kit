@@ -1586,10 +1586,21 @@ fn build_all_workers_idle_prompt(run_id: &str, summaries: &[(String, String)]) -
     )
 }
 
-fn classify_worker_report(summary: &str) -> (WorkerState, &'static str) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkerReportKind {
+    Progress,
+    Blocked,
+    Done,
+}
+
+fn classify_worker_report(summary: &str) -> (WorkerState, &'static str, WorkerReportKind) {
     let normalized = summary.trim_start().to_ascii_lowercase();
     if normalized.starts_with("blocked:") || normalized.starts_with("blocked ") {
-        (WorkerState::Blocked, "blocked_reported_to_operator")
+        (
+            WorkerState::Blocked,
+            "blocked_reported_to_operator",
+            WorkerReportKind::Blocked,
+        )
     } else if normalized.starts_with("done:")
         || normalized.starts_with("done ")
         || normalized.starts_with("complete:")
@@ -1599,9 +1610,33 @@ fn classify_worker_report(summary: &str) -> (WorkerState, &'static str) {
         || normalized.starts_with("final:")
         || normalized.starts_with("final ")
     {
-        (WorkerState::Done, "completion_reported_to_operator")
+        (
+            WorkerState::Done,
+            "completion_reported_to_operator",
+            WorkerReportKind::Done,
+        )
     } else {
-        (WorkerState::Working, "reported_progress_continuing")
+        (
+            WorkerState::Working,
+            "reported_progress_continuing",
+            WorkerReportKind::Progress,
+        )
+    }
+}
+
+fn build_operator_followup_prompt(
+    worker_id: &str,
+    summary: &str,
+    report_kind: WorkerReportKind,
+) -> Option<String> {
+    match report_kind {
+        WorkerReportKind::Progress => None,
+        WorkerReportKind::Blocked => Some(format!(
+            "{worker_id} is blocked. Decide whether to unblock it, reroute the dependency, or stop that lane. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower retry.\n\nLatest report: {summary}"
+        )),
+        WorkerReportKind::Done => Some(format!(
+            "{worker_id} finished its lane. Decide whether to accept it, ask for stronger evidence, hand it off to another lane, or close that branch. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower follow-up.\n\nLatest report: {summary}"
+        )),
     }
 }
 
@@ -1767,7 +1802,7 @@ fn report_to_main(
 ) -> Result<serde_json::Value, String> {
     let mut worker = store.read_worker(&run_id, &worker_id)?;
     let now = Utc::now();
-    let (next_state, next_reason) = classify_worker_report(summary);
+    let (next_state, next_reason, report_kind) = classify_worker_report(summary);
     worker.current_summary = Some(summary.to_string());
     worker.state = next_state;
     worker.last_event_at = Some(now);
@@ -1803,6 +1838,9 @@ fn report_to_main(
     store.append_runtime_event(&run_id, event)?;
     if push_worker_report_to_main_pane(run_id, worker_id, summary).unwrap_or(false) {
         let _ = store.update_mailbox_status(&run_id, "main", &message_id, true)?;
+        if let Some(followup) = build_operator_followup_prompt(worker_id, summary, report_kind) {
+            let _ = push_text_to_main_pane(run_id, &followup);
+        }
     } else {
         store.append_runtime_event(
             &run_id,
@@ -5694,16 +5732,52 @@ mod tests {
     fn classify_worker_report_marks_blockers_as_blocked() {
         assert_eq!(
             classify_worker_report("blocked: waiting on a missing token"),
-            (WorkerState::Blocked, "blocked_reported_to_operator")
+            (
+                WorkerState::Blocked,
+                "blocked_reported_to_operator",
+                WorkerReportKind::Blocked
+            )
         );
         assert_eq!(
             classify_worker_report("mapped the key docs and likely change files"),
-            (WorkerState::Working, "reported_progress_continuing")
+            (
+                WorkerState::Working,
+                "reported_progress_continuing",
+                WorkerReportKind::Progress
+            )
         );
         assert_eq!(
             classify_worker_report("done: mapped the key docs and likely change files"),
-            (WorkerState::Done, "completion_reported_to_operator")
+            (
+                WorkerState::Done,
+                "completion_reported_to_operator",
+                WorkerReportKind::Done
+            )
         );
+    }
+
+    #[test]
+    fn build_operator_followup_prompt_only_expands_terminal_reports() {
+        assert!(build_operator_followup_prompt(
+            "explore-1",
+            "mapped the key docs",
+            WorkerReportKind::Progress
+        )
+        .is_none());
+        let blocked = build_operator_followup_prompt(
+            "review-1",
+            "blocked: waiting on approval",
+            WorkerReportKind::Blocked,
+        )
+        .expect("blocked follow-up should exist");
+        assert!(blocked.contains("review-1 is blocked"));
+        let done = build_operator_followup_prompt(
+            "build-1",
+            "done: prepared a staged migration plan",
+            WorkerReportKind::Done,
+        )
+        .expect("done follow-up should exist");
+        assert!(done.contains("build-1 finished its lane"));
     }
 
     #[test]
