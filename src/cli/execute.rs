@@ -1619,6 +1619,7 @@ fn report_to_main(
         ]),
     };
     store.append_runtime_event(&run_id, event)?;
+    let _ = push_worker_report_to_main_pane(run_id, worker_id, summary);
 
     Ok(json!({
         "run_id": run_id,
@@ -1627,6 +1628,31 @@ fn report_to_main(
         "message_id": message.message_id,
         "mailbox_target": "main"
     }))
+}
+
+fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str) -> Result<(), String> {
+    let session_name = current_tmux_session_hint()
+        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
+        .unwrap_or_else(|| format!("conductor-{}-surface", sanitize_tmux_name(run_id)));
+    if !tmux_session_exists(&session_name)? {
+        return Ok(());
+    }
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
+    ])?;
+    let main_pane_id = find_main_pane_id(&session_name, &panes)?;
+    let prompt = build_operator_report_prompt(worker_id, summary);
+    send_prompt_to_tmux_pane(&main_pane_id, &prompt)
+}
+
+fn build_operator_report_prompt(worker_id: &str, summary: &str) -> String {
+    format!(
+        "Worker report from {worker_id}. Integrate this into the operator lane, update your plan if needed, and avoid redoing the lane work.\n\n{summary}"
+    )
 }
 
 fn rebuild_direct_team_surface(
@@ -4370,7 +4396,11 @@ where
 }
 
 fn default_tmux_session_name(run_id: &str) -> String {
-    let sanitized = run_id
+    format!("conductor-{}", sanitize_tmux_name(run_id))
+}
+
+fn sanitize_tmux_name(value: &str) -> String {
+    value
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
@@ -4379,8 +4409,7 @@ fn default_tmux_session_name(run_id: &str) -> String {
                 '-'
             }
         })
-        .collect::<String>();
-    format!("conductor-{sanitized}")
+        .collect::<String>()
 }
 
 fn pane_sort_key(worker_id: &str) -> (u8, String) {
@@ -4880,6 +4909,14 @@ mod tests {
                 && event.worker.as_deref() == Some("explore-1")
                 && event.reason.as_deref() == Some("worker_reported_to_main")
         }));
+    }
+
+    #[test]
+    fn build_operator_report_prompt_mentions_the_worker_and_summary() {
+        let prompt = build_operator_report_prompt("explore-1", "mapped the key docs");
+        assert!(prompt.contains("Worker report from explore-1"));
+        assert!(prompt.contains("mapped the key docs"));
+        assert!(prompt.contains("operator lane"));
     }
 
     #[test]
