@@ -1715,6 +1715,12 @@ fn build_verify_handoff_prompt(worker_id: &str, summary: &str) -> String {
     )
 }
 
+fn build_verify_blocker_prompt(worker_id: &str, summary: &str) -> String {
+    format!(
+        "Inspect the evidence gap reported by {worker_id}. Check tests, commands, and observable proof. Report upward with `conductor report verify-1 \"<short result>\"`.\n\nBlocked report: {summary}"
+    )
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -1937,8 +1943,14 @@ fn report_to_main(
             },
         )?;
     }
-    if report_kind == WorkerReportKind::Done {
-        let _ = maybe_handoff_completion_to_verify(store, run_id, &worker, summary);
+    match report_kind {
+        WorkerReportKind::Done => {
+            let _ = maybe_handoff_completion_to_verify(store, run_id, &worker, summary);
+        }
+        WorkerReportKind::Blocked => {
+            let _ = maybe_handoff_blocked_lane(store, run_id, &worker, summary);
+        }
+        WorkerReportKind::Progress => {}
     }
     let _ = maybe_prompt_all_workers_idle(store, run_id, "report");
 
@@ -1949,6 +1961,56 @@ fn report_to_main(
         "message_id": message.message_id,
         "mailbox_target": "main"
     }))
+}
+
+fn maybe_handoff_blocked_lane(
+    store: &StateStore,
+    run_id: &str,
+    blocked_worker: &WorkerRecord,
+    summary: &str,
+) -> Result<bool, String> {
+    match infer_blocked_kind(&summary.to_ascii_lowercase()) {
+        BlockedKind::Approval => {
+            if let Some(task_id) = blocked_worker.current_task_id.as_deref() {
+                let _ = store.update_task_approval(
+                    run_id,
+                    task_id,
+                    Some(ApprovalStatus::Pending),
+                    None,
+                    Some(summary.to_string()),
+                )?;
+            }
+            let _ = push_text_to_main_pane(
+                run_id,
+                &format!("{} -> operator: approval needed", blocked_worker.worker_id),
+            );
+            Ok(true)
+        }
+        BlockedKind::Evidence => {
+            let verify_worker_id = store
+                .list_worker_ids(run_id)?
+                .into_iter()
+                .find(|worker_id| worker_id.starts_with("verify-"));
+            let Some(verify_worker_id) = verify_worker_id else {
+                return Ok(false);
+            };
+            let prompt = build_verify_blocker_prompt(&blocked_worker.worker_id, summary);
+            let payload = ask_worker(store, run_id, &verify_worker_id, &prompt)?;
+            let delivered = payload
+                .get("delivered")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let _ = push_text_to_main_pane(
+                run_id,
+                &format!(
+                    "{} -> {}: inspect the missing evidence",
+                    blocked_worker.worker_id, verify_worker_id
+                ),
+            );
+            Ok(delivered)
+        }
+        _ => Ok(false),
+    }
 }
 
 fn maybe_handoff_completion_to_verify(
@@ -2550,8 +2612,32 @@ fn maybe_resume_context_prompt(
     }
     let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
     let why = snapshot.decision.reason.trim();
+    let lane_lines = snapshot
+        .workers
+        .iter()
+        .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
+        .filter_map(|worker| {
+            let summary = worker.current_summary.as_deref()?.trim();
+            if summary.is_empty() {
+                return None;
+            }
+            match worker.state {
+                WorkerState::Blocked | WorkerState::Done | WorkerState::Working => Some(format!(
+                    "- {} ({:?}): {}",
+                    worker.worker_id, worker.state, summary
+                )),
+                _ => None,
+            }
+        })
+        .take(4)
+        .collect::<Vec<_>>();
+    let lane_block = if lane_lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nActive lane context:\n{}", lane_lines.join("\n"))
+    };
     Some(format!(
-        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}. Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work."
+        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}. Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work.{lane_block}"
     ))
 }
 
@@ -5944,6 +6030,16 @@ mod tests {
     }
 
     #[test]
+    fn build_verify_blocker_prompt_keeps_the_evidence_scope_narrow() {
+        let prompt = build_verify_blocker_prompt(
+            "review-1",
+            "blocked: need stronger test evidence before claiming done",
+        );
+        assert!(prompt.contains("Inspect the evidence gap reported by review-1."));
+        assert!(prompt.contains("Blocked report: blocked: need stronger test evidence"));
+    }
+
+    #[test]
     fn worker_lane_status_marks_stalled_non_reporting_workers() {
         let worker = crate::runtime::types::WorkerProjection {
             worker_id: "explore-1".to_string(),
@@ -6032,6 +6128,8 @@ mod tests {
         assert!(prompt.contains("Next: unblock."));
         assert!(prompt.contains("Focus: review-1."));
         assert!(prompt.contains("operator approval"));
+        assert!(prompt.contains("Active lane context:"));
+        assert!(prompt.contains("review-1 (Blocked):"));
     }
 
     #[test]
@@ -6151,6 +6249,108 @@ mod tests {
             event.worker.as_deref() == Some("verify-1")
                 && event.reason.as_deref() == Some("worker_lane_unavailable")
         }));
+    }
+
+    #[test]
+    fn report_to_main_turns_approval_blockers_into_pending_approvals() {
+        let root = unique_temp_dir("conductor-approval-handoff");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .create_task("demo-run", "task-1", "Ship it", None)
+            .expect("failed to create task");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: Some("task-1".to_string()),
+                current_summary: Some("direct build pane ready".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert worker");
+
+        report_to_main(
+            &store,
+            "demo-run",
+            "build-1",
+            "blocked: waiting for operator approval before finishing",
+        )
+        .expect("report should succeed");
+
+        let task = store.read_task("demo-run", "task-1").expect("task should be readable");
+        assert_eq!(task.approval_status, Some(ApprovalStatus::Pending));
+        assert!(
+            task.approval_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("operator approval")
+        );
+    }
+
+    #[test]
+    fn report_to_main_handoffs_evidence_blockers_to_verify_when_present() {
+        let root = unique_temp_dir("conductor-evidence-handoff");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "review-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: None,
+                current_summary: Some("direct review pane ready".to_string()),
+                terminal_label: Some("review-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert review worker");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "verify-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Verifier,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("direct verify pane ready".to_string()),
+                terminal_label: Some("verify-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert verify worker");
+
+        report_to_main(
+            &store,
+            "demo-run",
+            "review-1",
+            "blocked: need stronger test evidence before claiming done",
+        )
+        .expect("report should succeed");
+
+        let verify_worker = store
+            .read_worker("demo-run", "verify-1")
+            .expect("verify worker should be readable");
+        assert_eq!(verify_worker.state, WorkerState::Working);
+        assert_eq!(verify_worker.reason.as_deref(), Some("operator_followup_sent"));
     }
 
     #[test]
