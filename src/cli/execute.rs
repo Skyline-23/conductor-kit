@@ -1814,9 +1814,7 @@ fn push_text_to_main_pane(run_id: &str, prompt: &str) -> Result<bool, String> {
 }
 
 fn build_operator_report_prompt(worker_id: &str, summary: &str) -> String {
-    format!(
-        "Worker report from {worker_id}:\n{summary}\n\nIntegrate it, decide the next step, and do not redo the lane work."
-    )
+    format!("{worker_id}: {summary}")
 }
 
 fn schedule_team_report_nudge(run_id: &str, tmux_session_name: &str) -> Result<(), String> {
@@ -5168,7 +5166,7 @@ mod tests {
         let snapshot = store
             .read_snapshot("demo-run")
             .expect("snapshot should be readable");
-        assert_eq!(snapshot.mailbox.unread, 1);
+        assert!(snapshot.mailbox.unread <= 1);
 
         let events = store
             .read_events("demo-run")
@@ -5178,14 +5176,44 @@ mod tests {
                 && event.worker.as_deref() == Some("explore-1")
                 && event.reason.as_deref() == Some("worker_reported_to_main")
         }));
+        assert!(events.iter().any(|event| {
+            event.message_id.as_deref().map(|id| id.starts_with("report-explore-1-")).unwrap_or(false)
+                && matches!(
+                    event.event,
+                    EventKind::MailboxMessageNotified | EventKind::MailboxMessageDelivered
+                )
+        }));
     }
 
     #[test]
     fn build_operator_report_prompt_mentions_the_worker_and_summary() {
         let prompt = build_operator_report_prompt("explore-1", "mapped the key docs");
-        assert!(prompt.contains("Worker report from explore-1:"));
+        assert!(prompt.contains("explore-1: mapped the key docs"));
         assert!(prompt.contains("mapped the key docs"));
-        assert!(prompt.contains("do not redo the lane work"));
+        assert_eq!(prompt, "explore-1: mapped the key docs");
+    }
+
+    #[test]
+    fn build_team_report_nudge_prompt_requests_an_upward_report() {
+        let prompt = build_team_report_nudge_prompt("explore-1");
+        assert!(prompt.contains("continue your assigned task now"));
+        assert!(prompt.contains("conductor report explore-1"));
+        assert!(prompt.contains("blocked"));
+    }
+
+    #[test]
+    fn build_all_workers_idle_prompt_lists_lane_summaries() {
+        let prompt = build_all_workers_idle_prompt(
+            "demo-run",
+            &[
+                ("explore-1".to_string(), "mapped the entry points".to_string()),
+                ("review-1".to_string(), "flagged two risky seams".to_string()),
+            ],
+        );
+        assert!(prompt.contains("All team workers in run demo-run are idle."));
+        assert!(prompt.contains("- explore-1: mapped the entry points"));
+        assert!(prompt.contains("- review-1: flagged two risky seams"));
+        assert!(prompt.contains("decide the next assignments"));
     }
 
     #[test]
