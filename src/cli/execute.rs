@@ -1531,43 +1531,31 @@ fn render_team_starter_prompt(
     worker_type: &str,
     team_prompt: Option<&str>,
 ) -> String {
-    let role_intent = match worker_type {
-        "explore" => "Map the codebase fast. Find entry points, boundaries, touch points, and likely files.",
-        "build" => "Find the implementation surface. Point to the smallest correct change path.",
-        "review" => "Challenge the plan. Find risks, regressions, contradictions, and missing checks.",
-        "verify" => "Prepare validation. Identify commands, evidence, and obvious gaps before completion.",
-        _ => "Contribute useful progress from your assigned lane.",
-    };
     let first_step = match worker_type {
-        "explore" => "Start with file discovery and structure mapping. Stay read-only.",
-        "build" => "Start with the concrete edit surface, CLI entry point, and owning modules.",
-        "review" => "Start with docs/config/contracts and the highest-risk implementation seams.",
-        "verify" => "Start with tests, commands, and completion evidence already present in the repo.",
-        _ => "Start with the smallest concrete next step in your lane.",
+        "explore" => "Map dirs, entry points, boundaries, and likely files. Stay read-only.",
+        "build" => "Find the edit surface, CLI entry, and owning modules.",
+        "review" => "Check docs, config, contracts, and risky seams first.",
+        "verify" => "Check tests, commands, evidence, and obvious gaps first.",
+        _ => "Take the smallest concrete next step in your lane.",
     };
     let current_task = match team_prompt {
         Some(prompt) => format!("Current task: {prompt}"),
-        None => "Current task: no explicit task yet; inspect the repository and produce a fast situational summary.".to_string(),
+        None => "Current task: inspect the repository and produce a fast situational summary.".to_string(),
     };
     format!(
         "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}.\n\
-Mission: {role_intent}\n\
 {current_task}\n\
-First move: {first_step}\n\
-Rules:\n\
-- stay in your lane\n\
-- do not use built-in sub-agent or delegation tools\n\
-- do not act like the operator lane\n\
-- report progress upward fast with `conductor report {worker_id} \"<short result>\"`\n\
-- after reporting progress, continue assigned work or the next feasible task in your lane\n\
-- if blocked, report the blocker upward immediately\n\
-- if done, send one final concise report with evidence and then wait"
+{first_step}\n\
+Stay in your lane. Do not use built-in sub-agent tools. Do not act like the operator.\n\
+Report progress fast with `conductor report {worker_id} \"<short result>\"`.\n\
+After reporting, continue assigned work or the next feasible task.\n\
+If blocked, report `blocked: <reason>`. When truly finished, report `done: <result>`."
     )
 }
 
 fn build_team_report_nudge_prompt(worker_id: &str) -> String {
     format!(
-        "Next: read your inbox/mailbox, continue your assigned task now, and if blocked send the leader a concrete status update. Report upward with `conductor report {worker_id} \"<short result>\"` as soon as you have a concise result."
+        "Act now. Continue your lane, report progress with `conductor report {worker_id} \"<short result>\"`, report `blocked: <reason>` if stuck, or `done: <result>` when truly finished."
     )
 }
 
@@ -5326,6 +5314,8 @@ mod tests {
         assert!(prompt.contains("inspect the repository and find the likely bug"));
         assert!(prompt.contains("conductor report explore-1"));
         assert!(prompt.contains("continue assigned work or the next feasible task"));
+        assert!(prompt.contains("blocked: <reason>"));
+        assert!(prompt.contains("done: <result>"));
     }
 
     #[test]
@@ -5459,9 +5449,10 @@ mod tests {
     #[test]
     fn build_team_report_nudge_prompt_requests_an_upward_report() {
         let prompt = build_team_report_nudge_prompt("explore-1");
-        assert!(prompt.contains("continue your assigned task now"));
+        assert!(prompt.contains("Act now."));
         assert!(prompt.contains("conductor report explore-1"));
-        assert!(prompt.contains("blocked"));
+        assert!(prompt.contains("blocked: <reason>"));
+        assert!(prompt.contains("done: <result>"));
     }
 
     #[test]
