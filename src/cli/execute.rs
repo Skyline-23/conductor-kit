@@ -4127,6 +4127,7 @@ fn send_prompt_to_tmux_pane(pane_id: &str, prompt: &str) -> Result<(), String> {
     if prompt.trim().is_empty() {
         return Ok(());
     }
+    wait_for_tmux_pane_prompt_ready(pane_id)?;
     let prompt = prompt.replace('\n', " ");
     run_tmux(["send-keys", "-t", pane_id, "-l", "--", &prompt])?;
     let script = format!(
@@ -4135,6 +4136,24 @@ fn send_prompt_to_tmux_pane(pane_id: &str, prompt: &str) -> Result<(), String> {
         shell_quote_str(pane_id),
     );
     run_tmux(["run-shell", "-b", &script])
+}
+
+fn wait_for_tmux_pane_prompt_ready(pane_id: &str) -> Result<(), String> {
+    for _ in 0..80 {
+        let output = run_tmux_capture(["capture-pane", "-p", "-t", pane_id, "-S", "-80"])?;
+        if pane_output_ready_for_codex_prompt(&output) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Ok(())
+}
+
+fn pane_output_ready_for_codex_prompt(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    (lower.contains("openai codex") || lower.contains("/model to change"))
+        && !lower.contains("zsh: command not found")
+        && !lower.contains("no such file or directory")
 }
 
 fn rebalance_tmux_team_layout(session_name: &str) -> Result<(), String> {
@@ -4767,6 +4786,14 @@ mod tests {
         assert!(prompt.contains("Profile: explore"));
         assert!(prompt.contains("inspect the repository and find the likely bug"));
         assert!(prompt.contains("conductor report explore-1"));
+    }
+
+    #[test]
+    fn pane_output_ready_for_codex_prompt_requires_the_codex_surface() {
+        assert!(!pane_output_ready_for_codex_prompt("zsh prompt only"));
+        assert!(pane_output_ready_for_codex_prompt(
+            "OpenAI Codex (v0.118.0)\n/model to change"
+        ));
     }
 
     #[test]
