@@ -1721,6 +1721,12 @@ fn build_verify_blocker_prompt(worker_id: &str, summary: &str) -> String {
     )
 }
 
+fn build_dependency_handoff_prompt(worker_id: &str, summary: &str) -> String {
+    format!(
+        "Unblock the dependency reported by {worker_id}. Inspect the external seam, missing token, service, API, or MCP path, then report upward with `conductor report explore-1 \"<short result>\"`.\n\nBlocked report: {summary}"
+    )
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -2005,6 +2011,31 @@ fn maybe_handoff_blocked_lane(
                 &format!(
                     "{} -> {}: inspect the missing evidence",
                     blocked_worker.worker_id, verify_worker_id
+                ),
+            );
+            Ok(delivered)
+        }
+        BlockedKind::Dependency => {
+            let explore_worker_id = store
+                .list_worker_ids(run_id)?
+                .into_iter()
+                .find(|worker_id| {
+                    worker_id.starts_with("explore-") && worker_id != &blocked_worker.worker_id
+                });
+            let Some(explore_worker_id) = explore_worker_id else {
+                return Ok(false);
+            };
+            let prompt = build_dependency_handoff_prompt(&blocked_worker.worker_id, summary);
+            let payload = ask_worker(store, run_id, &explore_worker_id, &prompt)?;
+            let delivered = payload
+                .get("delivered")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let _ = push_text_to_main_pane(
+                run_id,
+                &format!(
+                    "{} -> {}: inspect the blocked dependency",
+                    blocked_worker.worker_id, explore_worker_id
                 ),
             );
             Ok(delivered)
@@ -2636,8 +2667,27 @@ fn maybe_resume_context_prompt(
     } else {
         format!("\n\nActive lane context:\n{}", lane_lines.join("\n"))
     };
+    let suggested_command = if let Some(focus_worker) = snapshot.decision.focus_worker.as_deref() {
+        match next {
+            "unblock" => format!(
+                "\nSuggested command: conductor ask {focus_worker} \"narrow the blocker or confirm the missing dependency\""
+            ),
+            "verify-completion" => format!(
+                "\nSuggested command: conductor ask {focus_worker} \"summarize the strongest completion evidence in one line\""
+            ),
+            "review-approval" => {
+                "\nSuggested command: conductor task-approval <run_id> <task_id> approved <reviewer> \"<reason>\"".to_string()
+            }
+            "relaunch-stalled" => format!(
+                "\nSuggested command: conductor ask {focus_worker} \"report progress now or declare blocked\""
+            ),
+            _ => String::new(),
+        }
+    } else {
+        String::new()
+    };
     Some(format!(
-        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}. Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work.{lane_block}"
+        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}. Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work.{lane_block}{suggested_command}"
     ))
 }
 
@@ -6040,6 +6090,16 @@ mod tests {
     }
 
     #[test]
+    fn build_dependency_handoff_prompt_targets_the_explore_lane() {
+        let prompt = build_dependency_handoff_prompt(
+            "build-1",
+            "blocked: waiting on an MCP dependency",
+        );
+        assert!(prompt.contains("Unblock the dependency reported by build-1."));
+        assert!(prompt.contains("conductor report explore-1"));
+    }
+
+    #[test]
     fn worker_lane_status_marks_stalled_non_reporting_workers() {
         let worker = crate::runtime::types::WorkerProjection {
             worker_id: "explore-1".to_string(),
@@ -6130,6 +6190,7 @@ mod tests {
         assert!(prompt.contains("operator approval"));
         assert!(prompt.contains("Active lane context:"));
         assert!(prompt.contains("review-1 (Blocked):"));
+        assert!(prompt.contains("Suggested command: conductor ask review-1"));
     }
 
     #[test]
@@ -6351,6 +6412,62 @@ mod tests {
             .expect("verify worker should be readable");
         assert_eq!(verify_worker.state, WorkerState::Working);
         assert_eq!(verify_worker.reason.as_deref(), Some("operator_followup_sent"));
+    }
+
+    #[test]
+    fn report_to_main_handoffs_dependency_blockers_to_explore_when_present() {
+        let root = unique_temp_dir("conductor-dependency-handoff");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: None,
+                current_summary: Some("direct build pane ready".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert build worker");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("direct explore pane ready".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to upsert explore worker");
+
+        report_to_main(
+            &store,
+            "demo-run",
+            "build-1",
+            "blocked: waiting on an MCP dependency",
+        )
+        .expect("report should succeed");
+
+        let explore_worker = store
+            .read_worker("demo-run", "explore-1")
+            .expect("explore worker should be readable");
+        assert_eq!(explore_worker.state, WorkerState::Working);
+        assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
     }
 
     #[test]
