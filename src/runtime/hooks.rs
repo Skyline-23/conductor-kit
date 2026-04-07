@@ -6,11 +6,33 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub fn filter_events(events: Vec<EventEnvelope>, event_name: Option<&str>) -> Vec<EventEnvelope> {
+pub fn is_wakeable_event(event: &EventEnvelope) -> bool {
+    matches!(
+        event.event,
+        crate::runtime::types::EventKind::WorkerStateChanged
+            | crate::runtime::types::EventKind::MailboxMessageCreated
+            | crate::runtime::types::EventKind::MailboxMessageDelivered
+            | crate::runtime::types::EventKind::LeaderNotificationDeferred
+            | crate::runtime::types::EventKind::VerificationPassed
+            | crate::runtime::types::EventKind::VerificationFailed
+    ) || matches!(
+        event.reason.as_deref(),
+        Some("all_workers_idle_prompted")
+            | Some("blocked_reported_to_operator")
+            | Some("worker_reported_to_main")
+    )
+}
+
+pub fn filter_events(
+    events: Vec<EventEnvelope>,
+    event_name: Option<&str>,
+    wakeable_only: bool,
+) -> Vec<EventEnvelope> {
     events
         .into_iter()
         .filter(|event| {
-            event_name
+            (!wakeable_only || is_wakeable_event(event))
+                && event_name
                 .map(|name| name == "*" || event_name_of(event) == name)
                 .unwrap_or(true)
         })
@@ -35,6 +57,7 @@ pub fn event_name_of(event: &EventEnvelope) -> &'static str {
         crate::runtime::types::EventKind::MailboxMessageCreated => "mailbox_message_created",
         crate::runtime::types::EventKind::MailboxMessageNotified => "mailbox_message_notified",
         crate::runtime::types::EventKind::MailboxMessageDelivered => "mailbox_message_delivered",
+        crate::runtime::types::EventKind::LeaderNotificationDeferred => "leader_notification_deferred",
         crate::runtime::types::EventKind::PhaseChanged => "phase_changed",
         crate::runtime::types::EventKind::VerificationPassed => "verification_passed",
         crate::runtime::types::EventKind::VerificationFailed => "verification_failed",
@@ -90,7 +113,7 @@ pub fn watch_and_run_hooks(
         let events = store.read_events(run_id)?;
         if cursor < events.len() {
             let slice = events[cursor..].to_vec();
-            for event in filter_events(slice, event_name) {
+            for event in filter_events(slice, event_name, false) {
                 let _ = run_hook_command(&event, program, args, cwd.clone())?;
                 handled += 1;
             }

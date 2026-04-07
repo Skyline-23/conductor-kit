@@ -84,6 +84,7 @@ pub enum EventKind {
     MailboxMessageCreated,
     MailboxMessageNotified,
     MailboxMessageDelivered,
+    LeaderNotificationDeferred,
     PhaseChanged,
     VerificationPassed,
     VerificationFailed,

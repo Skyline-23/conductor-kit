@@ -1737,6 +1737,26 @@ fn report_to_main(
     store.append_runtime_event(&run_id, event)?;
     if push_worker_report_to_main_pane(run_id, worker_id, summary).unwrap_or(false) {
         let _ = store.update_mailbox_status(&run_id, "main", &message_id, true)?;
+    } else {
+        store.append_runtime_event(
+            &run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::LeaderNotificationDeferred,
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "report".to_string(),
+                worker: Some(worker_id.to_string()),
+                task_id: worker.current_task_id.clone(),
+                message_id: Some(message_id.clone()),
+                reason: Some("main_pane_unavailable".to_string()),
+                context: serde_json::Map::from_iter([
+                    ("summary".to_string(), json!(summary)),
+                    ("to_worker".to_string(), json!("main")),
+                ]),
+            },
+        )?;
     }
     let _ = maybe_prompt_all_workers_idle(store, run_id, "report");
 
@@ -1909,6 +1929,26 @@ fn maybe_prompt_all_workers_idle(
     store.append_runtime_event(run_id, event)?;
     if push_text_to_main_pane(run_id, &prompt).unwrap_or(false) {
         let _ = store.update_mailbox_status(run_id, "main", &message_id, true)?;
+    } else {
+        store.append_runtime_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::LeaderNotificationDeferred,
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: source.to_string(),
+                worker: Some("main".to_string()),
+                task_id: None,
+                message_id: Some(message_id.clone()),
+                reason: Some("main_pane_unavailable".to_string()),
+                context: serde_json::Map::from_iter([(
+                    "deferred_prompt".to_string(),
+                    json!(prompt),
+                )]),
+            },
+        )?;
     }
     Ok(())
 }
@@ -3826,6 +3866,8 @@ fn next_operator_action(snapshot: &crate::runtime::types::RuntimeSnapshot) -> &'
         .all(|worker| matches!(worker.state, WorkerState::Idle | WorkerState::Done | WorkerState::Stopped | WorkerState::Unknown))
     {
         "reassign-or-close"
+    } else if snapshot.mailbox.unread > 0 {
+        "read-inbox"
     } else {
         "monitor"
     }
@@ -3833,9 +3875,14 @@ fn next_operator_action(snapshot: &crate::runtime::types::RuntimeSnapshot) -> &'
 
 fn run_events_list(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "events-list requires <run_id> [event_name]")?;
-    let event_name = args.get(1).map(String::as_str);
+    let wakeable_only = args.iter().skip(1).any(|arg| arg == "--wakeable");
+    let event_name = args
+        .iter()
+        .skip(1)
+        .find(|arg| arg.as_str() != "--wakeable")
+        .map(String::as_str);
     let store = StateStore::new(resolve_state_root()?);
-    let events = filter_events(store.read_events(run_id)?, event_name);
+    let events = filter_events(store.read_events(run_id)?, event_name, wakeable_only);
     let payload = events
         .into_iter()
         .map(|event| {
@@ -5375,6 +5422,10 @@ mod tests {
             event.event == EventKind::MailboxMessageCreated
                 && event.worker.as_deref() == Some("explore-1")
                 && event.reason.as_deref() == Some("worker_reported_to_main")
+        }));
+        assert!(events.iter().any(|event| {
+            event.event == EventKind::LeaderNotificationDeferred
+                && event.reason.as_deref() == Some("main_pane_unavailable")
         }));
         assert!(events.iter().any(|event| {
             event.message_id.as_deref().map(|id| id.starts_with("report-explore-1-")).unwrap_or(false)
