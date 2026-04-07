@@ -62,6 +62,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "resume" => run_open(&args[1..]),
         "team" => run_team(&args[1..]),
         "team-nudge" => run_team_nudge(&args[1..]),
+        "team-followup" => run_team_followup(&args[1..]),
         "ralph" => run_ralph(&args[1..]),
         "report" => run_report(&args[1..]),
         "start" => run_start(&args[1..]),
@@ -1440,6 +1441,7 @@ fn open_direct_team_in_current_surface(
 
     rebuild_direct_team_surface(tmux_session_name, &pane_specs)?;
     schedule_team_report_nudge(run_id, tmux_session_name)?;
+    schedule_team_followup_loop(run_id, tmux_session_name)?;
     Ok(())
 }
 
@@ -1567,6 +1569,17 @@ fn build_team_report_nudge_prompt(worker_id: &str) -> String {
     )
 }
 
+fn build_all_workers_idle_prompt(run_id: &str, summaries: &[(String, String)]) -> String {
+    let lines = summaries
+        .iter()
+        .map(|(worker_id, summary)| format!("- {worker_id}: {summary}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "All team workers in run {run_id} are idle. Review the latest lane reports below, decide the next assignments, relaunch team workers if needed, or conclude the run.\n\n{lines}"
+    )
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -1652,6 +1665,76 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_team_followup(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "team-followup requires <run_id> <tmux_session_name>")?;
+    let tmux_session_name =
+        required_arg(args, 1, "team-followup requires <run_id> <tmux_session_name>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    if !tmux_session_exists(tmux_session_name)? {
+        return Ok(());
+    }
+
+    run_team_nudge(args)?;
+
+    let workers = store
+        .list_worker_ids(run_id)?
+        .into_iter()
+        .filter(|worker_id| worker_id != "main" && worker_id != "orchestrator-main")
+        .filter_map(|worker_id| store.read_worker(run_id, &worker_id).ok())
+        .collect::<Vec<_>>();
+    if workers.is_empty() {
+        return Ok(());
+    }
+
+    let all_idle = workers.iter().all(|worker| {
+        matches!(
+            worker.state,
+            WorkerState::Idle | WorkerState::Done | WorkerState::Stopped | WorkerState::Unknown
+        )
+    });
+    if !all_idle || recently_prompted_all_idle(&store, run_id, 60)? {
+        return Ok(());
+    }
+
+    let summaries = workers
+        .iter()
+        .filter_map(|worker| {
+            let summary = worker.current_summary.as_deref()?.trim();
+            if summary.is_empty() || summary.starts_with("direct ") {
+                return None;
+            }
+            Some((worker.worker_id.clone(), summary.to_string()))
+        })
+        .collect::<Vec<_>>();
+    if summaries.is_empty() {
+        return Ok(());
+    }
+
+    let prompt = build_all_workers_idle_prompt(run_id, &summaries);
+    let now = Utc::now();
+    let message_id = format!("all-idle-{}", now.timestamp_millis());
+    let message = store.create_mailbox_message(run_id, &message_id, "runtime", "main", &prompt)?;
+    let _ = store.update_mailbox_status(run_id, "main", &message_id, false)?;
+    let event = EventEnvelope {
+        schema_version: SCHEMA_VERSION,
+        event: EventKind::MailboxMessageCreated,
+        timestamp: now,
+        run_id: Some(run_id.to_string()),
+        session_id: None,
+        source: "team-followup".to_string(),
+        worker: Some("main".to_string()),
+        task_id: None,
+        message_id: Some(message.message_id.clone()),
+        reason: Some("all_workers_idle_prompted".to_string()),
+        context: serde_json::Map::new(),
+    };
+    store.append_runtime_event(run_id, event)?;
+    if push_text_to_main_pane(run_id, &prompt).unwrap_or(false) {
+        let _ = store.update_mailbox_status(run_id, "main", &message_id, true)?;
+    }
+    Ok(())
+}
+
 fn report_to_main(
     store: &StateStore,
     run_id: &str,
@@ -1707,6 +1790,11 @@ fn report_to_main(
 }
 
 fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str) -> Result<bool, String> {
+    let prompt = build_operator_report_prompt(worker_id, summary);
+    push_text_to_main_pane(run_id, &prompt)
+}
+
+fn push_text_to_main_pane(run_id: &str, prompt: &str) -> Result<bool, String> {
     let session_name = current_tmux_session_hint()
         .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
         .unwrap_or_else(|| surface_tmux_session_name(run_id));
@@ -1721,7 +1809,6 @@ fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str)
         "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
     ])?;
     let main_pane_id = find_main_pane_id(&session_name, &panes)?;
-    let prompt = build_operator_report_prompt(worker_id, summary);
     send_prompt_to_tmux_pane(&main_pane_id, &prompt)?;
     Ok(true)
 }
@@ -1762,6 +1849,46 @@ fn schedule_team_report_nudge(run_id: &str, tmux_session_name: &str) -> Result<(
         run_tmux(["run-shell", "-b", &script])?;
     }
     Ok(())
+}
+
+fn schedule_team_followup_loop(run_id: &str, tmux_session_name: &str) -> Result<(), String> {
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let mut env_parts = vec![
+        format!(
+            "CONDUCTOR_STATE_DIR={}",
+            shell_quote_str(&state_root.display().to_string())
+        ),
+    ];
+    if let Some(config_path) = config_path {
+        env_parts.push(format!(
+            "CONDUCTOR_CONFIG={}",
+            shell_quote_str(&config_path.display().to_string())
+        ));
+    }
+    let command = format!(
+        "cd {} && {} {} team-followup {} {}",
+        shell_quote(&cwd),
+        env_parts.join(" "),
+        shell_quote(&conductor_bin),
+        shell_quote_str(run_id),
+        shell_quote_str(tmux_session_name),
+    );
+    for delay in [25_u64, 55_u64, 85_u64, 115_u64, 145_u64] {
+        let script = format!("sleep {delay}; {command}");
+        run_tmux(["run-shell", "-b", &script])?;
+    }
+    Ok(())
+}
+
+fn recently_prompted_all_idle(store: &StateStore, run_id: &str, cooldown_secs: i64) -> Result<bool, String> {
+    let cutoff = Utc::now() - chrono::Duration::seconds(cooldown_secs);
+    Ok(store.read_events(run_id)?.iter().rev().any(|event| {
+        event.timestamp >= cutoff
+            && event.reason.as_deref() == Some("all_workers_idle_prompted")
+    }))
 }
 
 fn rebuild_direct_team_surface(
