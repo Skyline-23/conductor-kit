@@ -1,8 +1,8 @@
 use crate::runtime::types::{
-    DispatchCounts, DispatchRecord, DispatchStatus, EventEnvelope, EventKind, MailboxCounts,
-    MailboxMessage, MailboxRecord, ReadinessState, ReplayState, RunPhase, RunRecord, RunSnapshot,
-    RuntimeSnapshot, SCHEMA_VERSION, SessionRecord, TaskCounts, TaskRecord, TaskStatus,
-    WorkerProjection, WorkerRecord,
+    ApprovalStatus, DispatchCounts, DispatchRecord, DispatchStatus, EventEnvelope, EventKind,
+    MailboxCounts, MailboxMessage, MailboxRecord, ReadinessState, ReplayState, RunPhase,
+    RunRecord, RunSnapshot, RuntimeSnapshot, SCHEMA_VERSION, SessionRecord, TaskCounts,
+    TaskRecord, TaskStatus, WorkerProjection, WorkerRecord,
 };
 use chrono::{Duration, Utc};
 use serde::Serialize;
@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 pub struct StateStore {
     root: PathBuf,
 }
+
+const OPERATOR_STALE_AFTER_SECS: i64 = 120;
+const SILENT_WORKER_AFTER_SECS: i64 = 120;
 
 impl StateStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
@@ -241,9 +244,33 @@ impl StateStore {
             completed_at: None,
             result: None,
             error: None,
+            approval_status: None,
+            approval_reason: None,
+            approval_reviewer: None,
+            approval_updated_at: None,
             metadata: Map::new(),
         };
         self.write_json(&self.task_file(run_id, task_id), &task)?;
+        self.refresh_snapshot(run_id)?;
+        Ok(task)
+    }
+
+    pub fn update_task_approval(
+        &self,
+        run_id: &str,
+        task_id: &str,
+        status: Option<ApprovalStatus>,
+        reviewer: Option<String>,
+        reason: Option<String>,
+    ) -> Result<TaskRecord, String> {
+        let mut task = self.read_task(run_id, task_id)?;
+        let now = Utc::now();
+        task.approval_status = status;
+        task.approval_reviewer = reviewer;
+        task.approval_reason = reason;
+        task.approval_updated_at = task.approval_status.as_ref().map(|_| now);
+        task.updated_at = now;
+        self.write_task(&task)?;
         self.refresh_snapshot(run_id)?;
         Ok(task)
     }
@@ -474,25 +501,66 @@ impl StateStore {
             .count();
 
         let worker_projections = workers
-            .into_iter()
+            .iter()
             .map(|worker| WorkerProjection {
-                worker_id: worker.worker_id,
-                worker_kind: worker.worker_kind,
-                state: worker.state,
-                current_task_id: worker.current_task_id,
-                current_summary: worker.current_summary,
+                worker_id: worker.worker_id.clone(),
+                worker_kind: worker.worker_kind.clone(),
+                state: worker.state.clone(),
+                current_task_id: worker.current_task_id.clone(),
+                current_summary: worker.current_summary.clone(),
                 last_heartbeat_at: worker.last_heartbeat_at,
-                terminal_label: worker.terminal_label,
+                terminal_label: worker.terminal_label.clone(),
+                reason: worker.reason.clone(),
             })
             .collect::<Vec<_>>();
 
+        let now = Utc::now();
+        let operator = workers
+            .iter()
+            .find(|worker| worker.worker_id == "main" || worker.worker_id == "orchestrator-main");
+        let stale_operator = operator
+            .and_then(|worker| worker.last_event_at.or(worker.last_heartbeat_at))
+            .map(|seen_at| seen_at < now - Duration::seconds(OPERATOR_STALE_AFTER_SECS))
+            .unwrap_or(false);
+        let silent_workers = workers
+            .iter()
+            .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
+            .filter(|worker| matches!(worker.state, crate::runtime::types::WorkerState::Working))
+            .filter(|worker| {
+                worker
+                    .last_event_at
+                    .or(worker.last_heartbeat_at)
+                    .map(|seen_at| seen_at < now - Duration::seconds(SILENT_WORKER_AFTER_SECS))
+                    .unwrap_or(true)
+            })
+            .map(|worker| worker.worker_id.clone())
+            .collect::<Vec<_>>();
+        let pending_approvals = tasks
+            .iter()
+            .filter(|task| task.approval_status == Some(ApprovalStatus::Pending))
+            .count();
+
         let readiness = ReadinessState {
-            ready: run.authority.is_some(),
-            reasons: if run.authority.is_some() {
-                Vec::new()
-            } else {
-                vec!["missing authority lease".to_string()]
+            ready: run.authority.is_some() && !stale_operator,
+            reasons: {
+                let mut reasons = Vec::new();
+                if run.authority.is_none() {
+                    reasons.push("missing authority lease".to_string());
+                }
+                if stale_operator {
+                    reasons.push("operator activity is stale".to_string());
+                }
+                if pending_approvals > 0 {
+                    reasons.push(format!("{pending_approvals} task approvals pending"));
+                }
+                if !silent_workers.is_empty() {
+                    reasons.push(format!("{} workers are silent", silent_workers.len()));
+                }
+                reasons
             },
+            pending_approvals,
+            stale_operator,
+            silent_workers,
         };
 
         Ok(RuntimeSnapshot {

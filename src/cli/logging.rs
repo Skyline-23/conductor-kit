@@ -34,6 +34,7 @@ Advanced:
   phase-set           Transition run phase
   task-claim          Acquire a task claim
   task-release        Release a task claim
+  task-approval       Mark task approval as pending, approved, rejected, or clear
   worker-upsert       Upsert worker state for a run
   worker-spawn-session Start a long-lived worker session host
   worker-adapter-spawn-session Start a configured worker adapter session

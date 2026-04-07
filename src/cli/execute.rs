@@ -18,8 +18,8 @@ use crate::runtime::sessions::{
 };
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
-    DispatchStatus, EventEnvelope, EventKind, RunPhase, SCHEMA_VERSION, SessionStatus, WorkerKind,
-    WorkerRecord, WorkerState,
+    ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, SCHEMA_VERSION,
+    SessionStatus, WorkerKind, WorkerRecord, WorkerState,
 };
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
@@ -89,6 +89,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "phase-set" => run_phase_set(&args[1..]),
         "task-claim" => run_task_claim(&args[1..]),
         "task-release" => run_task_release(&args[1..]),
+        "task-approval" => run_task_approval(&args[1..]),
         "worker-upsert" => run_worker_upsert(&args[1..]),
         "worker-exec" => run_worker_exec(&args[1..]),
         "worker-spawn-session" => run_worker_spawn_session(&args[1..]),
@@ -2821,6 +2822,63 @@ fn run_task_release(args: &[String]) -> Result<(), String> {
     print_json(&task)
 }
 
+fn run_task_approval(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(
+        args,
+        0,
+        "task-approval requires <run_id> <task_id> <pending|approved|rejected|clear> [reviewer] [reason]",
+    )?;
+    let task_id = required_arg(
+        args,
+        1,
+        "task-approval requires <run_id> <task_id> <pending|approved|rejected|clear> [reviewer] [reason]",
+    )?;
+    let action = required_arg(
+        args,
+        2,
+        "task-approval requires <run_id> <task_id> <pending|approved|rejected|clear> [reviewer] [reason]",
+    )?;
+    let store = StateStore::new(resolve_state_root()?);
+    let task = match action {
+        "clear" => store.update_task_approval(run_id, task_id, None, None, None)?,
+        "pending" => {
+            let reason = args.get(3).cloned();
+            store.update_task_approval(
+                run_id,
+                task_id,
+                Some(ApprovalStatus::Pending),
+                None,
+                reason,
+            )?
+        }
+        "approved" | "rejected" => {
+            let reviewer = required_arg(
+                args,
+                3,
+                "task-approval approved/rejected requires <reviewer> [reason]",
+            )?
+            .to_string();
+            let reason = if args.len() > 4 {
+                Some(args[4..].join(" "))
+            } else {
+                None
+            };
+            let status = if action == "approved" {
+                ApprovalStatus::Approved
+            } else {
+                ApprovalStatus::Rejected
+            };
+            store.update_task_approval(run_id, task_id, Some(status), Some(reviewer), reason)?
+        }
+        _ => {
+            return Err(
+                "task-approval action must be pending, approved, rejected, or clear".to_string(),
+            )
+        }
+    };
+    print_json(&task)
+}
+
 fn run_worker_upsert(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(
         args,
@@ -3476,6 +3534,13 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.dispatch.failed
     );
     println!("mailbox    unread={}", snapshot.mailbox.unread);
+    println!(
+        "readiness  ready={} approvals={} stale_operator={} silent={}",
+        snapshot.readiness.ready,
+        snapshot.readiness.pending_approvals,
+        snapshot.readiness.stale_operator,
+        snapshot.readiness.silent_workers.len()
+    );
     println!("next       {}", next_operator_action(&snapshot));
     println!();
     println!("workers");
@@ -3553,6 +3618,13 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.dispatch.failed
         );
         println!("mailbox    unread={}", snapshot.mailbox.unread);
+        println!(
+            "readiness  ready={} approvals={} stale_operator={} silent={}",
+            snapshot.readiness.ready,
+            snapshot.readiness.pending_approvals,
+            snapshot.readiness.stale_operator,
+            snapshot.readiness.silent_workers.len()
+        );
         println!("next       {}", next_operator_action(&snapshot));
         println!();
         println!("workers");
@@ -3657,7 +3729,7 @@ fn render_hud_strip(
     let next = next_operator_action(snapshot);
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  mail:{}  next:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3670,12 +3742,14 @@ fn render_hud_strip(
             snapshot.workers.len(),
             awaiting_reports,
             blocked_workers,
+            snapshot.readiness.pending_approvals,
+            snapshot.readiness.silent_workers.len(),
             snapshot.mailbox.unread,
             next,
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  mail:{}  next:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  blocked:{}  approvals:{}  silent:{}  mail:{}  next:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -3688,6 +3762,8 @@ fn render_hud_strip(
             snapshot.workers.len(),
             awaiting_reports,
             blocked_workers,
+            snapshot.readiness.pending_approvals,
+            snapshot.readiness.silent_workers.len(),
             snapshot.mailbox.unread,
             next,
         )
@@ -3725,7 +3801,13 @@ fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'sta
 }
 
 fn next_operator_action(snapshot: &crate::runtime::types::RuntimeSnapshot) -> &'static str {
-    if snapshot
+    if snapshot.readiness.stale_operator {
+        "resume-operator"
+    } else if snapshot.readiness.pending_approvals > 0 {
+        "review-approval"
+    } else if !snapshot.readiness.silent_workers.is_empty() {
+        "poke-silent"
+    } else if snapshot
         .workers
         .iter()
         .any(|worker| worker_lane_status(worker) == "blocked")
@@ -5056,6 +5138,9 @@ mod tests {
             readiness: ReadinessState {
                 ready: true,
                 reasons: Vec::new(),
+                pending_approvals: 0,
+                stale_operator: false,
+                silent_workers: Vec::new(),
             },
         }
     }

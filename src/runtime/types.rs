@@ -51,6 +51,14 @@ pub enum DispatchStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum ApprovalStatus {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkerKind {
     Orchestrator,
     Worker,
@@ -126,6 +134,10 @@ pub struct TaskRecord {
     pub completed_at: Option<DateTime<Utc>>,
     pub result: Option<Value>,
     pub error: Option<String>,
+    pub approval_status: Option<ApprovalStatus>,
+    pub approval_reason: Option<String>,
+    pub approval_reviewer: Option<String>,
+    pub approval_updated_at: Option<DateTime<Utc>>,
     pub metadata: Map<String, Value>,
 }
 
@@ -203,6 +215,7 @@ pub struct WorkerProjection {
     pub current_summary: Option<String>,
     pub last_heartbeat_at: Option<DateTime<Utc>>,
     pub terminal_label: Option<String>,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -266,6 +279,9 @@ pub struct ReplayState {
 pub struct ReadinessState {
     pub ready: bool,
     pub reasons: Vec<String>,
+    pub pending_approvals: usize,
+    pub stale_operator: bool,
+    pub silent_workers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
