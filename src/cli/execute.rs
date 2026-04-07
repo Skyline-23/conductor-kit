@@ -1703,9 +1703,17 @@ fn build_operator_followup_prompt(
                 "{worker_id} is blocked. Decide whether to {action}. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower retry.\n\nLatest report: {summary}"
             ))
         }
-        WorkerReportKind::Done => Some(format!(
-            "{worker_id} finished its lane. Decide whether to accept it, ask for stronger evidence, hand it off to another lane, or close that branch. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower follow-up.\n\nLatest report: {summary}"
-        )),
+        WorkerReportKind::Done => {
+            if worker_id.starts_with("verify-") {
+                Some(format!(
+                    "{worker_id} finished verification. Decide whether to accept the branch, request one more check, or close the run. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower verification retry.\n\nLatest report: {summary}"
+                ))
+            } else {
+                Some(format!(
+                    "{worker_id} finished its lane. Decide whether to accept it, ask for stronger evidence, hand it off to another lane, or close that branch. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower follow-up.\n\nLatest report: {summary}"
+                ))
+            }
+        }
     }
 }
 
@@ -2670,7 +2678,7 @@ fn maybe_resume_context_prompt(
         .iter()
         .find(|worker| worker.worker_id == focus)
         .and_then(|worker| worker.reason.as_deref());
-    let lane_lines = snapshot
+    let mut lane_lines = snapshot
         .workers
         .iter()
         .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
@@ -2687,8 +2695,20 @@ fn maybe_resume_context_prompt(
                 _ => None,
             }
         })
-        .take(4)
         .collect::<Vec<_>>();
+    lane_lines.sort_by_key(|line| {
+        let lower = line.to_ascii_lowercase();
+        if lower.contains("(blocked)") {
+            0
+        } else if lower.contains("(done)") {
+            1
+        } else if lower.contains("(working)") {
+            2
+        } else {
+            3
+        }
+    });
+    lane_lines.truncate(4);
     let lane_block = if lane_lines.is_empty() {
         String::new()
     } else {
@@ -6105,6 +6125,13 @@ mod tests {
         )
         .expect("done follow-up should exist");
         assert!(done.contains("build-1 finished its lane"));
+        let verify_done = build_operator_followup_prompt(
+            "verify-1",
+            "done: checked the evidence and the branch is clean",
+            WorkerReportKind::Done,
+        )
+        .expect("verify done follow-up should exist");
+        assert!(verify_done.contains("verify-1 finished verification"));
     }
 
     #[test]
@@ -6273,6 +6300,61 @@ mod tests {
             .expect("resume prompt should exist");
         assert!(prompt.contains("Suggested command: conductor ask explore-1"));
         assert!(prompt.contains("pick one seam only"));
+    }
+
+    #[test]
+    fn maybe_resume_context_prompt_lists_blocked_lanes_before_done_lanes() {
+        let root = unique_temp_dir("conductor-resume-order");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        for worker in [
+            WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Done,
+                current_task_id: None,
+                current_summary: Some("done: built the migration path".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("completion_reported_to_operator".to_string()),
+            },
+            WorkerRecord {
+                worker_id: "review-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Blocked,
+                current_task_id: None,
+                current_summary: Some("blocked: waiting for operator approval".to_string()),
+                terminal_label: Some("review-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("blocked_approval_reported_to_operator".to_string()),
+            },
+        ] {
+            store.upsert_worker(worker).expect("failed to upsert worker");
+        }
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        let prompt = maybe_resume_context_prompt(&store, "demo-run", true)
+            .expect("resume prompt should exist");
+        let blocked_index = prompt
+            .find("review-1 (Blocked)")
+            .expect("blocked line should exist");
+        let done_index = prompt
+            .find("build-1 (Done)")
+            .expect("done line should exist");
+        assert!(blocked_index < done_index);
     }
 
     #[test]
