@@ -907,10 +907,35 @@ fn derive_operator_decision(
     if let Some(worker) = workers.iter().find(|worker| {
         matches!(worker.state, crate::runtime::types::WorkerState::Blocked)
     }) {
+        let reason = worker
+            .current_summary
+            .as_deref()
+            .map(|summary| summary.trim())
+            .filter(|summary| !summary.is_empty())
+            .map(|summary| format!("blocked lane needs operator help: {summary}"))
+            .unwrap_or_else(|| "worker reported a blocker".to_string());
         return OperatorDecision {
             next_action: "unblock".to_string(),
             focus_worker: Some(worker.worker_id.clone()),
-            reason: "worker reported a blocker".to_string(),
+            reason,
+        };
+    }
+
+    if let Some(worker) = workers.iter().find(|worker| {
+        matches!(worker.state, crate::runtime::types::WorkerState::Done)
+            && !matches!(worker.worker_kind, crate::runtime::types::WorkerKind::Verifier)
+    }) {
+        let reason = worker
+            .current_summary
+            .as_deref()
+            .map(|summary| summary.trim())
+            .filter(|summary| !summary.is_empty())
+            .map(|summary| format!("completed lane is ready for verification: {summary}"))
+            .unwrap_or_else(|| "completed lane is ready for verification".to_string());
+        return OperatorDecision {
+            next_action: "verify-completion".to_string(),
+            focus_worker: Some(worker.worker_id.clone()),
+            reason,
         };
     }
 
@@ -949,5 +974,102 @@ fn derive_operator_decision(
         next_action: "monitor".to_string(),
         focus_worker: None,
         reason: "workers are still making progress".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_operator_decision;
+    use crate::runtime::types::{
+        ApprovalStatus, ReadinessState, TaskRecord, TaskStatus, WorkerKind, WorkerProjection,
+        WorkerState,
+    };
+    use chrono::Utc;
+    use serde_json::Map;
+
+    fn sample_readiness() -> ReadinessState {
+        ReadinessState {
+            ready: true,
+            reasons: Vec::new(),
+            pending_approvals: 0,
+            stale_operator: false,
+            silent_workers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn derive_operator_decision_prioritizes_completed_non_verifier_lanes_for_verification() {
+        let workers = vec![WorkerProjection {
+            worker_id: "build-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Done,
+            current_task_id: None,
+            current_summary: Some("done: prepared a staged migration plan".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("build-1".to_string()),
+            reason: Some("completion_reported_to_operator".to_string()),
+        }];
+        let decision = derive_operator_decision(&workers, &sample_readiness(), &[], 0, false);
+        assert_eq!(decision.next_action, "verify-completion");
+        assert_eq!(decision.focus_worker.as_deref(), Some("build-1"));
+        assert!(decision.reason.contains("staged migration plan"));
+    }
+
+    #[test]
+    fn derive_operator_decision_uses_blocked_summary_for_reason() {
+        let workers = vec![WorkerProjection {
+            worker_id: "review-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Blocked,
+            current_task_id: None,
+            current_summary: Some("blocked: waiting on API credentials".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("review-1".to_string()),
+            reason: Some("blocked_reported_to_operator".to_string()),
+        }];
+        let decision = derive_operator_decision(&workers, &sample_readiness(), &[], 0, false);
+        assert_eq!(decision.next_action, "unblock");
+        assert_eq!(decision.focus_worker.as_deref(), Some("review-1"));
+        assert!(decision.reason.contains("API credentials"));
+    }
+
+    #[test]
+    fn derive_operator_decision_prioritizes_pending_approvals_over_done_lanes() {
+        let workers = vec![WorkerProjection {
+            worker_id: "build-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Done,
+            current_task_id: Some("task-1".to_string()),
+            current_summary: Some("done: prepared a staged migration plan".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("build-1".to_string()),
+            reason: Some("completion_reported_to_operator".to_string()),
+        }];
+        let tasks = vec![TaskRecord {
+            task_id: "task-1".to_string(),
+            run_id: "demo-run".to_string(),
+            title: "Review the migration plan".to_string(),
+            description: None,
+            status: TaskStatus::InProgress,
+            owner: Some("build-1".to_string()),
+            claim: None,
+            depends_on: Vec::new(),
+            blocked_by: Vec::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+            result: None,
+            error: None,
+            approval_status: Some(ApprovalStatus::Pending),
+            approval_reason: Some("needs operator signoff".to_string()),
+            approval_reviewer: None,
+            approval_updated_at: Some(Utc::now()),
+            metadata: Map::new(),
+        }];
+        let mut readiness = sample_readiness();
+        readiness.pending_approvals = 1;
+        let decision = derive_operator_decision(&workers, &readiness, &tasks, 0, false);
+        assert_eq!(decision.next_action, "review-approval");
+        assert_eq!(decision.focus_worker.as_deref(), Some("build-1"));
     }
 }
