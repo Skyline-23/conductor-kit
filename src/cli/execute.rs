@@ -61,6 +61,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "init" => run_start(&args[1..]),
         "resume" => run_open(&args[1..]),
         "team" => run_team(&args[1..]),
+        "team-nudge" => run_team_nudge(&args[1..]),
         "ralph" => run_ralph(&args[1..]),
         "report" => run_report(&args[1..]),
         "start" => run_start(&args[1..]),
@@ -1438,6 +1439,7 @@ fn open_direct_team_in_current_surface(
     )?;
 
     rebuild_direct_team_surface(tmux_session_name, &pane_specs)?;
+    schedule_team_report_nudge(run_id, tmux_session_name)?;
     Ok(())
 }
 
@@ -1563,6 +1565,12 @@ Recovery & Lifecycle:\n\
     )
 }
 
+fn build_team_report_nudge_prompt(worker_id: &str) -> String {
+    format!(
+        "Next: read your inbox/mailbox, continue your assigned task now, and if blocked send the leader a concrete status update. Report upward with `conductor report {worker_id} \"<short result>\"` as soon as you have a concise result."
+    )
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -1592,6 +1600,60 @@ fn run_report(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let payload = report_to_main(&store, &run_id, &worker_id, &summary)?;
     print_json(&payload)
+}
+
+fn run_team_nudge(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "team-nudge requires <run_id> <tmux_session_name>")?;
+    let tmux_session_name =
+        required_arg(args, 1, "team-nudge requires <run_id> <tmux_session_name>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    if !tmux_session_exists(tmux_session_name)? {
+        return Ok(());
+    }
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{tmux_session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_title}",
+    ])?;
+    let pane_map = panes
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let pane_id = parts.next()?.trim().to_string();
+            let title = parts.next()?.trim().to_string();
+            Some((title, pane_id))
+        })
+        .collect::<BTreeMap<_, _>>();
+    for worker_id in store.list_worker_ids(run_id)? {
+        if worker_id == "main" || worker_id == "orchestrator-main" {
+            continue;
+        }
+        let worker = match store.read_worker(run_id, &worker_id) {
+            Ok(worker) => worker,
+            Err(_) => continue,
+        };
+        let should_nudge = worker.state == WorkerState::Working
+            && worker
+                .reason
+                .as_deref()
+                .map(|reason| reason == "direct_team_pane")
+                .unwrap_or(false)
+            && worker
+                .current_summary
+                .as_deref()
+                .map(|summary| summary.starts_with("direct "))
+                .unwrap_or(false);
+        if !should_nudge {
+            continue;
+        }
+        if let Some(pane_id) = pane_map.get(&worker_id) {
+            let prompt = build_team_report_nudge_prompt(&worker_id);
+            let _ = send_prompt_to_tmux_pane(pane_id, &prompt);
+        }
+    }
+    Ok(())
 }
 
 fn report_to_main(
@@ -1672,6 +1734,38 @@ fn build_operator_report_prompt(worker_id: &str, summary: &str) -> String {
     format!(
         "Worker report from {worker_id}:\n{summary}\n\nIntegrate it, decide the next step, and do not redo the lane work."
     )
+}
+
+fn schedule_team_report_nudge(run_id: &str, tmux_session_name: &str) -> Result<(), String> {
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let mut env_parts = vec![
+        format!(
+            "CONDUCTOR_STATE_DIR={}",
+            shell_quote_str(&state_root.display().to_string())
+        ),
+    ];
+    if let Some(config_path) = config_path {
+        env_parts.push(format!(
+            "CONDUCTOR_CONFIG={}",
+            shell_quote_str(&config_path.display().to_string())
+        ));
+    }
+    let command = format!(
+        "cd {} && {} {} team-nudge {} {}",
+        shell_quote(&cwd),
+        env_parts.join(" "),
+        shell_quote(&conductor_bin),
+        shell_quote_str(run_id),
+        shell_quote_str(tmux_session_name),
+    );
+    for delay in [20_u64, 50_u64, 80_u64] {
+        let script = format!("sleep {delay}; {command}");
+        run_tmux(["run-shell", "-b", &script])?;
+    }
+    Ok(())
 }
 
 fn rebuild_direct_team_surface(
