@@ -12,6 +12,7 @@ pub fn is_wakeable_event(event: &EventEnvelope) -> bool {
         crate::runtime::types::EventKind::WorkerStateChanged
             | crate::runtime::types::EventKind::MailboxMessageCreated
             | crate::runtime::types::EventKind::MailboxMessageDelivered
+            | crate::runtime::types::EventKind::HandoffNeeded
             | crate::runtime::types::EventKind::LeaderNotificationDeferred
             | crate::runtime::types::EventKind::VerificationPassed
             | crate::runtime::types::EventKind::VerificationFailed
@@ -58,6 +59,7 @@ pub fn event_name_of(event: &EventEnvelope) -> &'static str {
         crate::runtime::types::EventKind::MailboxMessageCreated => "mailbox_message_created",
         crate::runtime::types::EventKind::MailboxMessageNotified => "mailbox_message_notified",
         crate::runtime::types::EventKind::MailboxMessageDelivered => "mailbox_message_delivered",
+        crate::runtime::types::EventKind::HandoffNeeded => "handoff_needed",
         crate::runtime::types::EventKind::LeaderNotificationDeferred => "leader_notification_deferred",
         crate::runtime::types::EventKind::PhaseChanged => "phase_changed",
         crate::runtime::types::EventKind::VerificationPassed => "verification_passed",

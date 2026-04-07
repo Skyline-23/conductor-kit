@@ -2192,6 +2192,17 @@ fn maybe_handoff_blocked_lane(
                 .get("delivered")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
+            let _ = append_handoff_event(
+                store,
+                run_id,
+                &blocked_worker.worker_id,
+                &verify_worker_id,
+                "blocked_evidence_handoff",
+                &prompt,
+            );
+            if delivered {
+                let _ = mark_worker_reason(store, run_id, &verify_worker_id, "handoff_received_for_evidence");
+            }
             let _ = push_text_to_main_pane(
                 run_id,
                 &format!(
@@ -2217,6 +2228,17 @@ fn maybe_handoff_blocked_lane(
                 .get("delivered")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
+            let _ = append_handoff_event(
+                store,
+                run_id,
+                &blocked_worker.worker_id,
+                &explore_worker_id,
+                "blocked_dependency_handoff",
+                &prompt,
+            );
+            if delivered {
+                let _ = mark_worker_reason(store, run_id, &explore_worker_id, "handoff_received_for_dependency");
+            }
             let _ = push_text_to_main_pane(
                 run_id,
                 &format!(
@@ -2233,6 +2255,9 @@ fn maybe_handoff_blocked_lane(
                 .get("delivered")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
+            if delivered {
+                let _ = mark_worker_reason(store, run_id, &blocked_worker.worker_id, "scope_retry_requested");
+            }
             let _ = push_text_to_main_pane(
                 run_id,
                 &format!(
@@ -2270,6 +2295,17 @@ fn maybe_handoff_completion_to_verify(
         .get("delivered")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    let _ = append_handoff_event(
+        store,
+        run_id,
+        &completed_worker.worker_id,
+        &verify_worker_id,
+        "completion_verification_handoff",
+        &prompt,
+    );
+    if delivered {
+        let _ = mark_worker_reason(store, run_id, &verify_worker_id, "handoff_received_for_verification");
+    }
     let _ = push_text_to_main_pane(
         run_id,
         &format!(
@@ -2424,6 +2460,14 @@ fn handoff_worker_lane(
         "Handoff from {from_worker}. Stay in your lane, pick up only this narrow follow-up, and report upward with `conductor report {to_worker} \"<short result>\"`.\n\n{prompt}"
     );
     let payload = ask_worker(store, run_id, to_worker, &handoff_prompt)?;
+    let delivered = payload
+        .get("delivered")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let _ = append_handoff_event(store, run_id, from_worker, to_worker, "worker_to_worker_handoff", prompt);
+    if delivered {
+        let _ = mark_worker_reason(store, run_id, to_worker, "handoff_received");
+    }
     let _ = push_text_to_main_pane(
         run_id,
         &format!("{from_worker} -> {to_worker}: handoff"),
@@ -2433,8 +2477,51 @@ fn handoff_worker_lane(
         "from_worker": from_worker,
         "to_worker": to_worker,
         "prompt": prompt,
-        "delivered": payload.get("delivered").and_then(|value| value.as_bool()).unwrap_or(false)
+        "delivered": delivered
     }))
+}
+
+fn mark_worker_reason(
+    store: &StateStore,
+    run_id: &str,
+    worker_id: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let mut worker = store.read_worker(run_id, worker_id)?;
+    worker.reason = Some(reason.to_string());
+    worker.last_event_at = Some(Utc::now());
+    store.upsert_worker(worker)?;
+    Ok(())
+}
+
+fn append_handoff_event(
+    store: &StateStore,
+    run_id: &str,
+    from_worker: &str,
+    to_worker: &str,
+    reason: &str,
+    prompt: &str,
+) -> Result<(), String> {
+    store.append_runtime_event(
+        run_id,
+        EventEnvelope {
+            schema_version: SCHEMA_VERSION,
+            event: EventKind::HandoffNeeded,
+            timestamp: Utc::now(),
+            run_id: Some(run_id.to_string()),
+            session_id: None,
+            source: "handoff".to_string(),
+            worker: Some(to_worker.to_string()),
+            task_id: None,
+            message_id: None,
+            reason: Some(reason.to_string()),
+            context: serde_json::Map::from_iter([
+                ("from_worker".to_string(), json!(from_worker)),
+                ("to_worker".to_string(), json!(to_worker)),
+                ("prompt".to_string(), json!(prompt)),
+            ]),
+        },
+    )
 }
 
 fn settle_worker_lane(
@@ -4559,10 +4646,11 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.readiness.silent_workers.len()
     );
     println!(
-        "monitor    all_idle={} reclaimed={} non_reporting={} pending_leader_notifications={} leader_nudge={}",
+        "monitor    all_idle={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
         snapshot.monitor.all_workers_idle,
         snapshot.monitor.reclaimed_claims,
         snapshot.monitor.non_reporting_workers.len(),
+        snapshot.monitor.pending_handoffs,
         snapshot.monitor.pending_leader_notifications,
         snapshot
             .monitor
@@ -4719,10 +4807,11 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.readiness.silent_workers.len()
         );
         println!(
-            "monitor    all_idle={} reclaimed={} non_reporting={} pending_leader_notifications={} leader_nudge={}",
+            "monitor    all_idle={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
             snapshot.monitor.all_workers_idle,
             snapshot.monitor.reclaimed_claims,
             snapshot.monitor.non_reporting_workers.len(),
+            snapshot.monitor.pending_handoffs,
             snapshot.monitor.pending_leader_notifications,
             snapshot
                 .monitor
@@ -4849,7 +4938,7 @@ fn render_hud_strip(
     let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  leader:{}  next:{}  focus:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -4866,6 +4955,7 @@ fn render_hud_strip(
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
             snapshot.monitor.reclaimed_claims,
+            snapshot.monitor.pending_handoffs,
             snapshot.mailbox.unread,
             snapshot
                 .monitor
@@ -4877,7 +4967,7 @@ fn render_hud_strip(
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  mail:{}  leader:{}  next:{}  focus:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -4894,6 +4984,7 @@ fn render_hud_strip(
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
             snapshot.monitor.reclaimed_claims,
+            snapshot.monitor.pending_handoffs,
             snapshot.mailbox.unread,
             snapshot
                 .monitor
@@ -6273,6 +6364,7 @@ mod tests {
                 all_workers_idle: false,
                 non_reporting_workers: Vec::new(),
                 reclaimed_claims: 0,
+                pending_handoffs: 1,
                 pending_leader_notifications: 4,
                 leader_nudge_reason: Some("read_inbox".to_string()),
             },
@@ -6721,6 +6813,7 @@ mod tests {
         assert!(strip.contains("next:read-inbox"));
         assert!(strip.contains("focus:explore-1"));
         assert!(strip.contains("leader:read_inbox"));
+        assert!(strip.contains("handoffs:1"));
     }
 
     #[test]
@@ -7105,8 +7198,9 @@ mod tests {
             .read_events("demo-run")
             .expect("events should be readable");
         assert!(events.iter().any(|event| {
-            event.worker.as_deref() == Some("verify-1")
-                && event.reason.as_deref() == Some("worker_lane_unavailable")
+            event.event == EventKind::HandoffNeeded
+                && event.worker.as_deref() == Some("verify-1")
+                && event.reason.as_deref() == Some("completion_verification_handoff")
         }));
     }
 
@@ -7211,7 +7305,16 @@ mod tests {
             .read_worker("demo-run", "verify-1")
             .expect("verify worker should be readable");
         assert_eq!(verify_worker.state, WorkerState::Working);
-        assert_eq!(verify_worker.reason.as_deref(), Some("operator_followup_sent"));
+        assert_eq!(
+            verify_worker.reason.as_deref(),
+            Some("operator_followup_sent")
+        );
+        let events = store.read_events("demo-run").expect("events should be readable");
+        assert!(events.iter().any(|event| {
+            event.event == EventKind::HandoffNeeded
+                && event.reason.as_deref() == Some("blocked_evidence_handoff")
+                && event.worker.as_deref() == Some("verify-1")
+        }));
     }
 
     #[test]
@@ -7268,7 +7371,16 @@ mod tests {
             .read_worker("demo-run", "explore-1")
             .expect("explore worker should be readable");
         assert_eq!(explore_worker.state, WorkerState::Working);
-        assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
+        assert_eq!(
+            explore_worker.reason.as_deref(),
+            Some("operator_followup_sent")
+        );
+        let events = store.read_events("demo-run").expect("events should be readable");
+        assert!(events.iter().any(|event| {
+            event.event == EventKind::HandoffNeeded
+                && event.reason.as_deref() == Some("blocked_dependency_handoff")
+                && event.worker.as_deref() == Some("explore-1")
+        }));
     }
 
     #[test]
@@ -7390,6 +7502,12 @@ mod tests {
             .expect("explore worker should be readable");
         assert_eq!(explore_worker.state, WorkerState::Working);
         assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
+        let events = store.read_events("demo-run").expect("events should be readable");
+        assert!(events.iter().any(|event| {
+            event.event == EventKind::HandoffNeeded
+                && event.reason.as_deref() == Some("worker_to_worker_handoff")
+                && event.worker.as_deref() == Some("explore-1")
+        }));
     }
 
     #[test]

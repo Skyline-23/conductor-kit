@@ -576,6 +576,12 @@ impl StateStore {
             .filter(|event| event.event == EventKind::ClaimReclaimed)
             .count();
 
+        let pending_handoffs = mailbox
+            .iter()
+            .flat_map(|record| record.records.iter())
+            .filter(|message| message.to_worker != "main")
+            .filter(|message| message.delivered_at.is_none())
+            .count();
         let pending_leader_notifications = unread;
         let leader_nudge_reason = derive_leader_nudge_reason(
             stale_operator,
@@ -583,6 +589,7 @@ impl StateStore {
             all_workers_idle,
             &silent_workers,
             &worker_projections,
+            pending_handoffs,
         );
 
         let readiness = ReadinessState {
@@ -646,6 +653,7 @@ impl StateStore {
                 all_workers_idle,
                 non_reporting_workers: silent_workers.clone(),
                 reclaimed_claims,
+                pending_handoffs,
                 pending_leader_notifications,
                 leader_nudge_reason,
             },
@@ -999,6 +1007,14 @@ fn derive_operator_decision(
         };
     }
 
+    if pending_handoffs_in_flight(workers) {
+        return OperatorDecision {
+            next_action: "watch-handoffs".to_string(),
+            focus_worker: None,
+            reason: "worker-to-worker handoffs are in flight".to_string(),
+        };
+    }
+
     if let Some(worker) = workers.iter().find(|worker| {
         matches!(worker.state, crate::runtime::types::WorkerState::Working)
             && worker
@@ -1029,12 +1045,26 @@ fn derive_operator_decision(
     }
 }
 
+fn pending_handoffs_in_flight(workers: &[WorkerProjection]) -> bool {
+    workers.iter().any(|worker| {
+        worker
+            .reason
+            .as_deref()
+            .map(|reason| {
+                reason == "handoff_requested_from_lane" || reason == "operator_followup_sent"
+            })
+            .unwrap_or(false)
+            && matches!(worker.state, crate::runtime::types::WorkerState::Working)
+    })
+}
+
 fn derive_leader_nudge_reason(
     stale_operator: bool,
     pending_leader_notifications: usize,
     all_workers_idle: bool,
     silent_workers: &[String],
     workers: &[WorkerProjection],
+    pending_handoffs: usize,
 ) -> Option<String> {
     let has_stalled_worker = workers
         .iter()
@@ -1050,6 +1080,9 @@ fn derive_leader_nudge_reason(
     }
     if !silent_workers.is_empty() {
         return Some("silent_workers".to_string());
+    }
+    if pending_handoffs > 0 {
+        return Some("handoff_needed".to_string());
     }
     None
 }
