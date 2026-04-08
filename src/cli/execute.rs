@@ -3368,11 +3368,16 @@ fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String
         run_id,
     );
     let launch = resolve_surface_launch(&cfg, run_id, resume_surface)?;
+    let uses_native_codex_resume = resume_surface && cfg.surface.cli == "codex";
     let surface_cmd = build_launch_shell_command(&cwd, &launch);
     let pane_specs = vec![OpsPaneSpec {
         title: "main".to_string(),
         command: surface_cmd,
-        starter_prompt: maybe_resume_context_prompt(&store, run_id, resume_surface),
+        starter_prompt: if uses_native_codex_resume {
+            None
+        } else {
+            maybe_resume_context_prompt(&store, run_id, resume_surface)
+        },
     }];
     if tmux_session_exists(&tmux_session_name)? {
         run_tmux(["kill-session", "-t", &tmux_session_name])?;
