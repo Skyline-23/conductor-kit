@@ -1410,15 +1410,23 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
     ensure_surface_session(&store, &cfg, &run_id)?;
-    let tmux_session_name =
-        current_tmux_session_hint().unwrap_or_else(|| default_tmux_session_name(&run_id));
+    let tmux_session_name = surface_tmux_session_name(&run_id);
     if requested_width.is_some() {
         ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
-    } else if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
-        collapse_tmux_surface_to_main(&tmux_session_name)?;
+        prime_ralph_operator_loop(&run_id);
+        return run_ops_open_with_filter(&run_id, &tmux_session_name, None);
     }
+    if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
+        collapse_tmux_surface_to_main(&tmux_session_name)?;
+        prime_ralph_operator_loop(&run_id);
+        if current_tmux_session_hint().as_deref() == Some(tmux_session_name.as_str()) {
+            return Ok(());
+        }
+        return attach_tmux_ops_session(&tmux_session_name);
+    }
+    run_surface_ops_open(&run_id, false)?;
     prime_ralph_operator_loop(&run_id);
-    run_ops_open_with_filter(&run_id, &tmux_session_name, None)
+    Ok(())
 }
 
 fn prime_ralph_operator_loop(run_id: &str) {
