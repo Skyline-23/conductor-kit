@@ -1410,12 +1410,14 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
     ensure_surface_session(&store, &cfg, &run_id)?;
-    if requested_width.is_some() {
-        ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
-    }
-    prime_ralph_operator_loop(&run_id);
     let tmux_session_name =
         current_tmux_session_hint().unwrap_or_else(|| default_tmux_session_name(&run_id));
+    if requested_width.is_some() {
+        ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
+    } else if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
+        collapse_tmux_surface_to_main(&tmux_session_name)?;
+    }
+    prime_ralph_operator_loop(&run_id);
     run_ops_open_with_filter(&run_id, &tmux_session_name, None)
 }
 
@@ -7249,6 +7251,31 @@ fn rebalance_tmux_team_layout(session_name: &str) -> Result<(), String> {
         &format!("{session_name}:0"),
         "main-vertical",
     ])?;
+    run_tmux(["select-pane", "-t", &main_pane_id])?;
+    Ok(())
+}
+
+fn collapse_tmux_surface_to_main(session_name: &str) -> Result<(), String> {
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
+    ])?;
+    let main_pane_id = find_main_pane_id(session_name, &panes)?;
+    for line in panes.lines() {
+        let pane_id = line
+            .split('\t')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if pane_id.is_empty() || pane_id == main_pane_id {
+            continue;
+        }
+        let _ = run_tmux(["kill-pane", "-t", &pane_id]);
+    }
     run_tmux(["select-pane", "-t", &main_pane_id])?;
     Ok(())
 }
