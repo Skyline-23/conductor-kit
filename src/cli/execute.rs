@@ -3282,12 +3282,58 @@ fn maybe_resume_context_prompt(
     } else {
         format!("\n\nActive lane context:\n{}", lane_lines.join("\n"))
     };
+    let triage_block = build_resume_triage_block(&snapshot);
     let suggested_command = suggested_operator_command(run_id, &snapshot, focus_reason)
         .map(|command| format!("\nSuggested command: {command}"))
         .unwrap_or_default();
     Some(format!(
-        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}. Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work.{lane_block}{suggested_command}"
+        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}.{triage_block} Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work.{lane_block}{suggested_command}"
     ))
+}
+
+fn build_resume_triage_block(snapshot: &crate::runtime::types::RuntimeSnapshot) -> String {
+    let mut items = Vec::new();
+    if snapshot.readiness.pending_approvals > 0 {
+        items.push(format!(
+            "pending approvals: {}",
+            snapshot.readiness.pending_approvals
+        ));
+    }
+    let stalled = snapshot
+        .workers
+        .iter()
+        .filter(|worker| worker.reason.as_deref() == Some("stalled_non_reporting"))
+        .count();
+    if stalled > 0 {
+        items.push(format!("stalled lanes: {stalled}"));
+    }
+    let direct_handoffs = snapshot
+        .workers
+        .iter()
+        .filter(|worker| {
+            matches!(worker.state, WorkerState::Working | WorkerState::AwaitingReport)
+                && worker
+                    .reason
+                    .as_deref()
+                    .map(|reason| reason == "handoff_requested_from_lane" || reason == "handoff_received")
+                    .unwrap_or(false)
+        })
+        .count();
+    let pending_handoffs = snapshot.monitor.pending_handoffs.max(direct_handoffs);
+    if pending_handoffs > 0 {
+        items.push(format!(
+            "handoffs in flight: {}",
+            pending_handoffs
+        ));
+    }
+    if snapshot.mailbox.unread > 0 {
+        items.push(format!("unread reports: {}", snapshot.mailbox.unread));
+    }
+    if items.is_empty() {
+        String::new()
+    } else {
+        format!("\nTriage: {}.", items.join("; "))
+    }
 }
 
 fn suggested_operator_command(
@@ -3327,9 +3373,13 @@ fn suggested_operator_command(
         "relaunch-stalled" => Some(format!(
             "conductor relaunch {focus_worker} \"report progress now or declare blocked\""
         )),
+        "poke-silent" => Some(format!(
+            "conductor ask {focus_worker} \"report progress now or declare blocked in one line\""
+        )),
         "read-inbox" => Some(format!(
             "conductor handoff main {focus_worker} \"pick up the newest report and keep the lane moving\""
         )),
+        "watch-handoffs" => Some("conductor inbox".to_string()),
         "reassign-or-close" => Some(format!(
             "conductor close {focus_worker} \"closing this lane after operator review\""
         )),
@@ -7022,6 +7072,80 @@ mod tests {
     }
 
     #[test]
+    fn maybe_resume_context_prompt_surfaces_triage_counts() {
+        let root = unique_temp_dir("conductor-resume-triage");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .create_task("demo-run", "task-review-1", "Review approval", Some("review-1".to_string()))
+            .expect("failed to create task");
+        store
+            .update_task_approval(
+                "demo-run",
+                "task-review-1",
+                Some(ApprovalStatus::Pending),
+                Some("waiting for operator approval".to_string()),
+                None,
+            )
+            .expect("failed to update task approval");
+        for worker in [
+            WorkerRecord {
+                worker_id: "review-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::AwaitingReport,
+                current_task_id: Some("task-review-1".to_string()),
+                current_summary: Some("waiting on approval".to_string()),
+                terminal_label: Some("review-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("stalled_non_reporting".to_string()),
+            },
+            WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::AwaitingReport,
+                current_task_id: None,
+                current_summary: Some("handoff pending".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("handoff_requested_from_lane".to_string()),
+            },
+        ] {
+            store.upsert_worker(worker).expect("failed to upsert worker");
+        }
+        store
+            .create_mailbox_message(
+                "demo-run",
+                "msg-review-1",
+                "review-1",
+                "main",
+                "review-1: waiting on approval",
+            )
+            .expect("failed to create mailbox message");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        let prompt = maybe_resume_context_prompt(&store, "demo-run", true)
+            .expect("resume prompt should exist");
+        assert!(prompt.contains("Triage:"));
+        assert!(prompt.contains("pending approvals: 1"));
+        assert!(prompt.contains("stalled lanes: 1"));
+        assert!(prompt.contains("handoffs in flight: 1"));
+        assert!(prompt.contains("unread reports: 1"));
+    }
+
+    #[test]
     fn suggested_operator_command_prefers_relaunch_for_stalled_workers() {
         let mut snapshot = sample_snapshot();
         snapshot.decision.next_action = "relaunch-stalled".to_string();
@@ -7033,6 +7157,22 @@ mod tests {
         )
         .expect("command should exist");
         assert!(command.contains("conductor relaunch explore-1"));
+    }
+
+    #[test]
+    fn suggested_operator_command_guides_handoff_and_silent_triage() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "watch-handoffs".to_string();
+        let handoff_command =
+            suggested_operator_command("demo-run", &snapshot, None).expect("command should exist");
+        assert_eq!(handoff_command, "conductor inbox");
+
+        snapshot.decision.next_action = "poke-silent".to_string();
+        snapshot.decision.focus_worker = Some("build-1".to_string());
+        let silent_command =
+            suggested_operator_command("demo-run", &snapshot, Some("awaiting_report_nudged"))
+                .expect("command should exist");
+        assert!(silent_command.contains("conductor ask build-1"));
     }
 
     #[test]
