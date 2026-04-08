@@ -1,18 +1,19 @@
 # Ralph
 
-Use this command when the task needs the resumable Ralph-style loop.
+Use this command when the task needs the resumable Ralph-style loop that keeps iterating until one verified outcome is accepted.
 
 Loop:
 1. initialize or resume the current conductor run
 2. open the ops surface
-3. expand to a wider Codex team when the task is not trivial
-4. immediately re-enter the operator lane with the current focus and next action
-5. keep progress observable through the HUD and worker panes
-6. continue or close based on verification
+3. stay in the operator lane by default and keep iterating
+4. only widen to a team when a worker count is explicitly requested
+5. immediately re-enter the operator lane with the current focus and next action
+6. keep progress observable through the HUD and worker panes
+7. continue or close based on verification
 
 Default shape:
 - `conductor ralph`
+- `conductor ralph <run_id>`
 
 Optional:
-- `conductor ralph <run_id>`
 - `conductor ralph <run_id> <worker_count>`

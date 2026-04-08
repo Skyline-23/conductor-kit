@@ -1406,7 +1406,13 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
         .get(1)
         .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
         .transpose()?;
-    ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
+    let (_, cfg) = load_resolved_config()?;
+    let store = StateStore::new(resolve_state_root()?);
+    ensure_run_exists(&store, &run_id)?;
+    ensure_surface_session(&store, &cfg, &run_id)?;
+    if requested_width.is_some() {
+        ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
+    }
     prime_ralph_operator_loop(&run_id);
     let tmux_session_name =
         current_tmux_session_hint().unwrap_or_else(|| default_tmux_session_name(&run_id));
@@ -1441,7 +1447,7 @@ fn build_ralph_operator_prompt(
         .map(|value| format!("\nSuggested command: {value}"))
         .unwrap_or_default();
     format!(
-        "Ralph loop active for run {run_id}. Stay in the operator lane. Coordinate the team, keep lane scope narrow, and converge on one verified outcome. Current focus: {focus}. Why: {why}. Next: {next}.{suggested}"
+        "Ralph loop active for run {run_id}. Stay in the operator lane and keep iterating until one verified outcome is accepted or the run is explicitly cancelled. Do not widen into a team unless a worker count was explicitly requested. Current focus: {focus}. Why: {why}. Next: {next}.{suggested}"
     )
 }
 
@@ -9448,6 +9454,7 @@ mod tests {
         let prompt = build_ralph_operator_prompt("demo-run", &snapshot);
         assert!(prompt.contains("Ralph loop active for run demo-run."));
         assert!(prompt.contains("Current focus: explore-1."));
+        assert!(prompt.contains("Do not widen into a team unless a worker count was explicitly requested."));
         assert!(prompt.contains("Suggested command: conductor handoff main explore-1"));
     }
 
