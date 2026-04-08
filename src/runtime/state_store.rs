@@ -573,6 +573,17 @@ impl StateStore {
             .iter()
             .filter(|task| task.approval_status == Some(ApprovalStatus::Pending))
             .count();
+        let verification_gaps = workers
+            .iter()
+            .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
+            .filter(|worker| {
+                matches!(
+                    worker.state,
+                    crate::runtime::types::WorkerState::Done
+                        | crate::runtime::types::WorkerState::DonePendingVerification
+                ) && !matches!(worker.worker_kind, crate::runtime::types::WorkerKind::Verifier)
+            })
+            .count();
         let all_workers_idle = workers
             .iter()
             .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
@@ -598,6 +609,7 @@ impl StateStore {
             .filter(|message| message.to_worker != "main")
             .filter(|message| message.delivered_at.is_none())
             .count();
+        let active_handoff = derive_active_handoff(&worker_projections, mailbox.as_slice());
         let pending_leader_notifications = unread;
         let leader_nudge_reason = derive_leader_nudge_reason(
             stale_operator,
@@ -606,6 +618,7 @@ impl StateStore {
             &silent_workers,
             &worker_projections,
             pending_handoffs,
+            verification_gaps,
         );
 
         let readiness = ReadinessState {
@@ -668,9 +681,11 @@ impl StateStore {
                 leader_stale: stale_operator,
                 all_workers_idle,
                 bootstrapping_workers,
+                verification_gaps,
                 non_reporting_workers: silent_workers.clone(),
                 reclaimed_claims,
                 pending_handoffs,
+                active_handoff,
                 pending_leader_notifications,
                 leader_nudge_reason,
             },
@@ -926,7 +941,11 @@ fn derive_operator_decision(
 ) -> OperatorDecision {
     if readiness.stale_operator {
         return OperatorDecision {
-            next_action: "resume-operator".to_string(),
+            next_action: if unread_mailbox > 0 {
+                "resume-operator-now".to_string()
+            } else {
+                "resume-operator".to_string()
+            },
             focus_worker: None,
             reason: if unread_mailbox > 0 {
                 format!(
@@ -1111,6 +1130,7 @@ fn derive_leader_nudge_reason(
     silent_workers: &[String],
     workers: &[WorkerProjection],
     pending_handoffs: usize,
+    verification_gaps: usize,
 ) -> Option<String> {
     let has_bootstrapping_worker = workers.iter().any(|worker| {
         worker
@@ -1137,10 +1157,45 @@ fn derive_leader_nudge_reason(
     if pending_handoffs > 0 {
         return Some("handoff_needed".to_string());
     }
+    if verification_gaps > 0 {
+        return Some("verification_gap".to_string());
+    }
     if has_bootstrapping_worker {
         return Some("worker_bootstrapping".to_string());
     }
     None
+}
+
+fn derive_active_handoff(
+    workers: &[WorkerProjection],
+    mailbox: &[MailboxRecord],
+) -> Option<String> {
+    if let Some(worker) = workers.iter().find(|worker| {
+        matches!(
+            worker.reason.as_deref(),
+            Some("handoff_received")
+                | Some("handoff_received_for_dependency")
+                | Some("handoff_received_for_evidence")
+                | Some("handoff_received_for_verification")
+        )
+    }) {
+        let summary = worker
+            .current_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|summary| !summary.is_empty())
+            .unwrap_or("handoff received");
+        return Some(format!("{} <- {}", worker.worker_id, summary));
+    }
+
+    mailbox
+        .iter()
+        .flat_map(|record| record.records.iter().rev())
+        .find(|message| message.to_worker != "main" && message.delivered_at.is_none())
+        .map(|message| {
+            let body = message.body.trim();
+            format!("{} -> {}: {}", message.from_worker, message.to_worker, body)
+        })
 }
 
 fn worker_is_bootstrapping(worker: &WorkerRecord, now: chrono::DateTime<chrono::Utc>) -> bool {
@@ -1306,7 +1361,7 @@ mod tests {
             silent_workers: Vec::new(),
         };
         let decision = derive_operator_decision(&[], &readiness, &[], 2, false);
-        assert_eq!(decision.next_action, "resume-operator");
+        assert_eq!(decision.next_action, "resume-operator-now");
         assert!(decision.reason.contains("pending leader notifications"));
     }
 }

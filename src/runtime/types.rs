@@ -296,9 +296,11 @@ pub struct MonitorState {
     pub leader_stale: bool,
     pub all_workers_idle: bool,
     pub bootstrapping_workers: Vec<String>,
+    pub verification_gaps: usize,
     pub non_reporting_workers: Vec<String>,
     pub reclaimed_claims: usize,
     pub pending_handoffs: usize,
+    pub active_handoff: Option<String>,
     pub pending_leader_notifications: usize,
     pub leader_nudge_reason: Option<String>,
 }

@@ -3449,6 +3449,12 @@ fn build_resume_triage_block(snapshot: &crate::runtime::types::RuntimeSnapshot) 
             snapshot.readiness.pending_approvals
         ));
     }
+    if snapshot.monitor.verification_gaps > 0 {
+        items.push(format!(
+            "verification gaps: {}",
+            snapshot.monitor.verification_gaps
+        ));
+    }
     let stalled = snapshot
         .workers
         .iter()
@@ -3471,10 +3477,12 @@ fn build_resume_triage_block(snapshot: &crate::runtime::types::RuntimeSnapshot) 
         .count();
     let pending_handoffs = snapshot.monitor.pending_handoffs.max(direct_handoffs);
     if pending_handoffs > 0 {
-        items.push(format!(
-            "handoffs in flight: {}",
-            pending_handoffs
-        ));
+        let detail = snapshot
+            .monitor
+            .active_handoff
+            .as_deref()
+            .unwrap_or("pending handoff");
+        items.push(format!("handoffs in flight: {} ({detail})", pending_handoffs));
     }
     if snapshot.mailbox.unread > 0 {
         items.push(format!("unread reports: {}", snapshot.mailbox.unread));
@@ -3491,6 +3499,11 @@ fn suggested_operator_command(
     snapshot: &crate::runtime::types::RuntimeSnapshot,
     focus_reason: Option<&str>,
 ) -> Option<String> {
+    match snapshot.decision.next_action.as_str() {
+        "resume-operator-now" | "resume-operator" => Some("conductor resume".to_string()),
+        _ => {}
+    }
+
     let focus_worker = snapshot.decision.focus_worker.as_deref()?;
     let focus_task_id = snapshot
         .workers
@@ -4971,12 +4984,14 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.readiness.silent_workers.len()
     );
     println!(
-        "monitor    all_idle={} bootstrapping={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
+        "monitor    all_idle={} bootstrapping={} verification_gaps={} reclaimed={} non_reporting={} handoffs={} active_handoff={} pending_leader_notifications={} leader_nudge={}",
         snapshot.monitor.all_workers_idle,
         snapshot.monitor.bootstrapping_workers.len(),
+        snapshot.monitor.verification_gaps,
         snapshot.monitor.reclaimed_claims,
         snapshot.monitor.non_reporting_workers.len(),
         snapshot.monitor.pending_handoffs,
+        snapshot.monitor.active_handoff.as_deref().unwrap_or("-"),
         snapshot.monitor.pending_leader_notifications,
         snapshot
             .monitor
@@ -5133,12 +5148,14 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.readiness.silent_workers.len()
         );
         println!(
-            "monitor    all_idle={} bootstrapping={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
+            "monitor    all_idle={} bootstrapping={} verification_gaps={} reclaimed={} non_reporting={} handoffs={} active_handoff={} pending_leader_notifications={} leader_nudge={}",
             snapshot.monitor.all_workers_idle,
             snapshot.monitor.bootstrapping_workers.len(),
+            snapshot.monitor.verification_gaps,
             snapshot.monitor.reclaimed_claims,
             snapshot.monitor.non_reporting_workers.len(),
             snapshot.monitor.pending_handoffs,
+            snapshot.monitor.active_handoff.as_deref().unwrap_or("-"),
             snapshot.monitor.pending_leader_notifications,
             snapshot
                 .monitor
@@ -5272,7 +5289,7 @@ fn render_hud_strip(
     let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  boot:{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  boot:{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  verify:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -5289,6 +5306,7 @@ fn render_hud_strip(
             blocked_workers,
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
+            snapshot.monitor.verification_gaps,
             snapshot.monitor.reclaimed_claims,
             snapshot.monitor.pending_handoffs,
             snapshot.mailbox.unread,
@@ -5302,7 +5320,7 @@ fn render_hud_strip(
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  boot:{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  boot:{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  verify:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -5319,6 +5337,7 @@ fn render_hud_strip(
             blocked_workers,
             snapshot.readiness.pending_approvals,
             snapshot.readiness.silent_workers.len(),
+            snapshot.monitor.verification_gaps,
             snapshot.monitor.reclaimed_claims,
             snapshot.monitor.pending_handoffs,
             snapshot.mailbox.unread,
@@ -6715,9 +6734,11 @@ mod tests {
                 leader_stale: false,
                 all_workers_idle: false,
                 bootstrapping_workers: Vec::new(),
+                verification_gaps: 0,
                 non_reporting_workers: Vec::new(),
                 reclaimed_claims: 0,
                 pending_handoffs: 1,
+                active_handoff: Some("review-1 -> build-1: narrow the blocker".to_string()),
                 pending_leader_notifications: 4,
                 leader_nudge_reason: Some("read_inbox".to_string()),
             },
@@ -7376,7 +7397,7 @@ mod tests {
         assert!(prompt.contains("Triage:"));
         assert!(prompt.contains("pending approvals: 1"));
         assert!(prompt.contains("stalled lanes: 1"));
-        assert!(prompt.contains("handoffs in flight: 1"));
+        assert!(prompt.contains("handoffs in flight: 1 (review-1 -> build-1: waiting on approval)"));
         assert!(prompt.contains("unread reports: 1"));
     }
 
@@ -7408,6 +7429,16 @@ mod tests {
             suggested_operator_command("demo-run", &snapshot, Some("awaiting_report_nudged"))
                 .expect("command should exist");
         assert!(silent_command.contains("conductor ask build-1"));
+    }
+
+    #[test]
+    fn suggested_operator_command_returns_resume_for_stale_operator_with_messages() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "resume-operator-now".to_string();
+        snapshot.decision.focus_worker = None;
+        let command =
+            suggested_operator_command("demo-run", &snapshot, None).expect("command should exist");
+        assert_eq!(command, "conductor resume");
     }
 
     #[test]
