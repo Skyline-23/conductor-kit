@@ -49,7 +49,8 @@ fn team_and_ralph_skills_force_cli_routing() {
     assert!(autoresearch.contains("conductor autoresearch setup"));
     assert!(autoresearch.contains("conductor autoresearch step"));
     assert!(autoresearch.contains("conductor autoresearch summary"));
-    assert!(autoresearch.contains("lightweight Ralph-compatible loop"));
+    assert!(autoresearch.contains("lightweight experiment loop"));
+    assert!(autoresearch.contains("its own experiment loop"));
 }
 
 #[test]

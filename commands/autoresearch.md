@@ -3,7 +3,7 @@
 Use this command when the current task needs repeated measurable experiments.
 
 What it should do:
-- treat autoresearch as a lightweight Ralph-compatible loop
+- treat autoresearch as its own lightweight experiment loop
 - require a concrete metric command and extraction regex
 - keep edits inside an explicit in-scope set
 - keep `results.tsv` and `run.log` in the repo root

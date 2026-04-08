@@ -9,7 +9,7 @@ Use `$autoresearch` when the task needs repeated measurable experiments instead 
 
 ## Role & Intent
 
-`$autoresearch` is a lightweight Ralph-compatible loop, not a second orchestration stack.
+`$autoresearch` is a lightweight experiment loop, not a second orchestration stack.
 Use it when you have:
 - a clear optimization goal
 - a concrete metric command
@@ -35,7 +35,7 @@ Run the setup first, then keep using `step` until the metric stops improving.
 - do not modify files outside the declared in-scope paths
 - do not keep regressing commits; the loop should discard them
 - keep each experiment small enough to explain in one short sentence
-- treat this as a Ralph-compatible long loop, not a separate team runtime
+- treat this as its own experiment loop, not as a team or Ralph alias
 
 ## Outputs
 
