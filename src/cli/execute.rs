@@ -59,6 +59,8 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
 
     match cmd {
         "" => run_default(),
+        "install" => run_install(&args[1..]),
+        "sync-skills" => run_sync_skills(&args[1..]),
         "autoresearch" => run_autoresearch(&args[1..]),
         "init" => run_start(&args[1..]),
         "resume" => run_open(&args[1..]),
@@ -3742,6 +3744,49 @@ fn run_doctor() -> Result<(), String> {
     }
 }
 
+fn run_install(args: &[String]) -> Result<(), String> {
+    run_sync_skills(args)
+}
+
+fn run_sync_skills(_args: &[String]) -> Result<(), String> {
+    let target_root = codex_skills_root()?;
+    fs::create_dir_all(&target_root).map_err(|err| err.to_string())?;
+    let source_root = repo_skills_root();
+    let mut installed = Vec::new();
+
+    for skill in managed_skill_names() {
+        let source = source_root.join(skill);
+        let target = target_root.join(skill);
+        if !source.join("SKILL.md").is_file() {
+            return Err(format!(
+                "missing managed skill source: {}",
+                source.join("SKILL.md").display()
+            ));
+        }
+        if target.exists() || target.symlink_metadata().is_ok() {
+            remove_existing_skill_target(&target)?;
+        }
+        std::os::unix::fs::symlink(&source, &target).map_err(|err| {
+            format!(
+                "failed to link {} -> {}: {err}",
+                target.display(),
+                source.display()
+            )
+        })?;
+        installed.push(json!({
+            "name": skill,
+            "source": source.display().to_string(),
+            "target": target.display().to_string(),
+        }));
+    }
+
+    print_json(&json!({
+        "ok": true,
+        "skills_root": target_root.display().to_string(),
+        "installed": installed,
+    }))
+}
+
 fn run_autoresearch(args: &[String]) -> Result<(), String> {
     let subcommand = args
         .first()
@@ -4084,6 +4129,43 @@ fn git_repo_root() -> Result<PathBuf, String> {
         Err("git did not return a repository root".to_string())
     } else {
         Ok(PathBuf::from(root))
+    }
+}
+
+fn repo_skills_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills")
+}
+
+fn managed_skill_names() -> &'static [&'static str] {
+    &[
+        "conductor",
+        "autoresearch",
+        "team",
+        "ralph",
+        "plan",
+        "implement",
+        "review",
+        "symphony",
+    ]
+}
+
+fn codex_skills_root() -> Result<PathBuf, String> {
+    if let Ok(codex_home) = env::var("CODEX_HOME") {
+        let trimmed = codex_home.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed).join("skills"));
+        }
+    }
+    let home = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(PathBuf::from(home).join(".codex").join("skills"))
+}
+
+fn remove_existing_skill_target(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|err| err.to_string())?;
+    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path).map_err(|err| err.to_string())
+    } else {
+        fs::remove_file(path).map_err(|err| err.to_string())
     }
 }
 
@@ -9132,5 +9214,13 @@ mod tests {
         )
         .expect_err("docs change should be rejected");
         assert!(err.contains("docs/README.md"));
+    }
+
+    #[test]
+    fn managed_skill_names_include_autoresearch() {
+        let names = managed_skill_names();
+        assert!(names.contains(&"autoresearch"));
+        assert!(names.contains(&"conductor"));
+        assert!(names.contains(&"team"));
     }
 }

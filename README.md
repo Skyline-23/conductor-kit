@@ -96,6 +96,7 @@ User overrides are expected at:
 When running inside this repository, the CLI also falls back to `./config/conductor.json`.
 
 The primary surface is:
+- `conductor install`
 - `conductor`
 - `conductor init`
 - `conductor resume`
@@ -123,6 +124,7 @@ Installed skill shortcuts:
 - `$symphony`
 
 Operator commands:
+- `conductor install`
 - `conductor help`
 - `conductor status`
 - `conductor doctor`
@@ -133,6 +135,8 @@ Operator commands:
 - `conductor autoresearch setup --goal "..." --metric-command "..." --metric-regex "..." --direction lower --in-scope src`
 - `conductor autoresearch step "try a smaller code change"`
 - `conductor autoresearch summary`
+
+Run `conductor install` once to link the managed skill shims into your active Codex home.
 
 The default team profiles now include:
 - `explore`

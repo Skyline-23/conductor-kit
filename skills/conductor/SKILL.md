@@ -8,6 +8,7 @@ description: Lean orchestration for multi-step coding work.
 Use conductor when the task is large enough to benefit from explicit orchestration.
 
 Primary entrypoints:
+- `conductor install`
 - `conductor`
 - `conductor init`
 - `conductor resume`
