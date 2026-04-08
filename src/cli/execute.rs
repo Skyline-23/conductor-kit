@@ -215,6 +215,7 @@ struct AutoresearchConfig {
     experiment_count: usize,
     started_at: chrono::DateTime<Utc>,
     updated_at: chrono::DateTime<Utc>,
+    stopped_at: Option<chrono::DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1406,9 +1407,42 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
         .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
         .transpose()?;
     ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
+    prime_ralph_operator_loop(&run_id);
     let tmux_session_name =
         current_tmux_session_hint().unwrap_or_else(|| default_tmux_session_name(&run_id));
     run_ops_open_with_filter(&run_id, &tmux_session_name, None)
+}
+
+fn prime_ralph_operator_loop(run_id: &str) {
+    let store = match resolve_state_root() {
+        Ok(root) => StateStore::new(root),
+        Err(_) => return,
+    };
+    let snapshot = match store.read_snapshot(run_id) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return,
+    };
+    let prompt = build_ralph_operator_prompt(run_id, &snapshot);
+    let _ = push_text_to_main_pane(run_id, &prompt);
+}
+
+fn build_ralph_operator_prompt(
+    run_id: &str,
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+) -> String {
+    let focus = snapshot
+        .decision
+        .focus_worker
+        .as_deref()
+        .unwrap_or("the most active lane");
+    let why = snapshot.decision.reason.trim();
+    let next = snapshot.decision.next_action.trim();
+    let suggested = suggested_operator_command(run_id, snapshot, None)
+        .map(|value| format!("\nSuggested command: {value}"))
+        .unwrap_or_default();
+    format!(
+        "Ralph loop active for run {run_id}. Stay in the operator lane. Coordinate the team, keep lane scope narrow, and converge on one verified outcome. Current focus: {focus}. Why: {why}. Next: {next}.{suggested}"
+    )
 }
 
 fn ensure_team_sessions(
@@ -3815,18 +3849,21 @@ fn run_remove_skills(_args: &[String]) -> Result<(), String> {
 }
 
 fn run_autoresearch(args: &[String]) -> Result<(), String> {
-    let subcommand = args
-        .first()
-        .map(String::as_str)
-        .unwrap_or("summary")
-        .trim();
+    if args.is_empty() {
+        let run_id = default_run_id();
+        return match read_autoresearch_config(&run_id) {
+            Ok(_) => run_autoresearch_status(&run_id),
+            Err(_) => run_autoresearch_wizard(&run_id),
+        };
+    }
+    let subcommand = args.first().map(String::as_str).unwrap_or("").trim();
     match subcommand {
         "setup" => run_autoresearch_setup(&args[1..]),
         "step" => run_autoresearch_step(&args[1..]),
-        "summary" => run_autoresearch_summary(&args[1..]),
-        _ => Err(
-            "autoresearch requires setup, step, or summary".to_string(),
-        ),
+        "continue" => run_autoresearch_continue(&args[1..]),
+        "status" | "summary" => run_autoresearch_summary(&args[1..]),
+        "stop" => run_autoresearch_stop(&args[1..]),
+        _ => Err("autoresearch requires setup, step, continue, status, summary, or stop".to_string()),
     }
 }
 
@@ -3867,6 +3904,7 @@ fn run_autoresearch_setup(args: &[String]) -> Result<(), String> {
         experiment_count: 0,
         started_at: now,
         updated_at: now,
+        stopped_at: None,
     };
     write_autoresearch_config(&cfg)?;
     append_results_row(
@@ -3935,6 +3973,7 @@ fn run_autoresearch_step(args: &[String]) -> Result<(), String> {
 
     cfg.experiment_count = experiment_number;
     cfg.updated_at = Utc::now();
+    cfg.stopped_at = None;
     write_autoresearch_config(&cfg)?;
     append_results_row(
         &repo_root,
@@ -3962,12 +4001,17 @@ fn run_autoresearch_step(args: &[String]) -> Result<(), String> {
 
 fn run_autoresearch_summary(args: &[String]) -> Result<(), String> {
     let run_id = parse_optional_run_id(args).unwrap_or_else(default_run_id);
+    run_autoresearch_status(&run_id)
+}
+
+fn run_autoresearch_status(run_id: &str) -> Result<(), String> {
     let cfg = read_autoresearch_config(&run_id)?;
     let repo_root = PathBuf::from(&cfg.repo_root);
     let rows = read_results_rows(&repo_root)?;
     let delta = cfg.best_metric - cfg.baseline_metric;
     let direction = MetricDirection::from_stored(&cfg.metric_direction)?;
     let improved = metric_improved(cfg.best_metric, cfg.baseline_metric, direction);
+    let next_action = autoresearch_next_action(&cfg);
     print_json(&json!({
         "ok": true,
         "run_id": cfg.run_id,
@@ -3983,8 +4027,121 @@ fn run_autoresearch_summary(args: &[String]) -> Result<(), String> {
         "best_commit": cfg.best_commit,
         "experiment_count": cfg.experiment_count,
         "max_experiments": cfg.max_experiments,
+        "stopped_at": cfg.stopped_at,
+        "next_action": next_action,
         "rows": rows,
     }))
+}
+
+fn autoresearch_next_action(cfg: &AutoresearchConfig) -> &'static str {
+    if cfg.stopped_at.is_some() {
+        "resume with `conductor autoresearch continue` after deciding the next experiment"
+    } else if cfg.experiment_count == 0 {
+        "make one focused change in scope, then run `conductor autoresearch continue`"
+    } else {
+        "inspect the latest result, try one bounded change, then run `conductor autoresearch continue`"
+    }
+}
+
+fn run_autoresearch_continue(args: &[String]) -> Result<(), String> {
+    if args.is_empty() && stdin().is_terminal() {
+        let run_id = default_run_id();
+        let description = prompt_required_line(
+            "Experiment description",
+            Some("try the smallest plausible change"),
+        )?;
+        return run_autoresearch_step(&["--run".to_string(), run_id, description]);
+    }
+    run_autoresearch_step(args)
+}
+
+fn run_autoresearch_stop(args: &[String]) -> Result<(), String> {
+    let run_id = parse_optional_run_id(args).unwrap_or_else(default_run_id);
+    let mut cfg = read_autoresearch_config(&run_id)?;
+    cfg.stopped_at = Some(Utc::now());
+    cfg.updated_at = Utc::now();
+    write_autoresearch_config(&cfg)?;
+    run_autoresearch_status(&run_id)
+}
+
+fn run_autoresearch_wizard(run_id: &str) -> Result<(), String> {
+    if !stdin().is_terminal() {
+        return Err("autoresearch is not initialized; run `conductor autoresearch setup ...`".to_string());
+    }
+    let goal = prompt_required_line("Goal", None)?;
+    let metric_command = prompt_required_line("Metric command", None)?;
+    let metric_regex = prompt_required_line("Metric regex", Some("([0-9]+(?:\\.[0-9]+)?)"))?;
+    let direction = prompt_required_line("Direction (lower|higher)", Some("lower"))?;
+    let in_scope = prompt_required_line("In-scope path", Some("src"))?;
+    let out_of_scope = prompt_optional_line("Out-of-scope path (optional)")?;
+    let constraints = prompt_optional_line("Constraint (optional)")?;
+    let max_experiments = prompt_optional_line("Max experiments (optional)")?;
+    let simplicity_policy = prompt_required_line(
+        "Simplicity policy",
+        Some("Prefer the smallest experiment that materially improves the metric."),
+    )?;
+
+    let mut setup_args = vec![
+        "--run".to_string(),
+        run_id.to_string(),
+        "--goal".to_string(),
+        goal,
+        "--metric-command".to_string(),
+        metric_command,
+        "--metric-regex".to_string(),
+        metric_regex,
+        "--direction".to_string(),
+        direction,
+        "--in-scope".to_string(),
+        in_scope,
+        "--simplicity-policy".to_string(),
+        simplicity_policy,
+    ];
+    if let Some(value) = out_of_scope {
+        setup_args.extend(["--out-of-scope".to_string(), value]);
+    }
+    if let Some(value) = constraints {
+        setup_args.extend(["--constraint".to_string(), value]);
+    }
+    if let Some(value) = max_experiments {
+        setup_args.extend(["--max-experiments".to_string(), value]);
+    }
+    run_autoresearch_setup(&setup_args)
+}
+
+fn prompt_required_line(label: &str, default: Option<&str>) -> Result<String, String> {
+    let value = prompt_line(label, default)?;
+    if value.trim().is_empty() {
+        return Err(format!("{label} is required"));
+    }
+    Ok(value)
+}
+
+fn prompt_optional_line(label: &str) -> Result<Option<String>, String> {
+    let value = prompt_line(label, None)?;
+    if value.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
+fn prompt_line(label: &str, default: Option<&str>) -> Result<String, String> {
+    let mut prompt = format!("{label}");
+    if let Some(default) = default {
+        prompt.push_str(&format!(" [{default}]"));
+    }
+    prompt.push_str(": ");
+    print!("{prompt}");
+    stdout().flush().map_err(|err| err.to_string())?;
+    let mut buffer = String::new();
+    stdin().read_line(&mut buffer).map_err(|err| err.to_string())?;
+    let trimmed = buffer.trim().to_string();
+    if trimmed.is_empty() {
+        Ok(default.unwrap_or("").to_string())
+    } else {
+        Ok(trimmed)
+    }
 }
 
 fn parse_autoresearch_setup_args(args: &[String]) -> Result<AutoresearchSetupArgs, String> {
@@ -9233,6 +9390,7 @@ mod tests {
             experiment_count: 0,
             started_at: Utc::now(),
             updated_at: Utc::now(),
+            stopped_at: None,
         };
 
         let err = validate_autoresearch_scope(
@@ -9249,6 +9407,48 @@ mod tests {
         assert!(names.contains(&"autoresearch"));
         assert!(names.contains(&"conductor"));
         assert!(names.contains(&"team"));
+    }
+
+    #[test]
+    fn autoresearch_next_action_guides_setup_progress_and_resume() {
+        let now = Utc::now();
+        let mut cfg = AutoresearchConfig {
+            schema_version: 1,
+            run_id: "demo".to_string(),
+            repo_root: "/tmp/demo".to_string(),
+            branch: "feat/autoresearch-20260408".to_string(),
+            goal: "reduce benchmark time".to_string(),
+            metric_command: "cargo bench".to_string(),
+            metric_regex: "([0-9.]+)".to_string(),
+            metric_direction: "lower".to_string(),
+            in_scope_files: vec!["src".to_string()],
+            out_of_scope_files: Vec::new(),
+            constraints: Vec::new(),
+            max_experiments: None,
+            simplicity_policy: "smallest change wins".to_string(),
+            baseline_metric: 10.0,
+            best_metric: 10.0,
+            baseline_commit: "abc".to_string(),
+            best_commit: "abc".to_string(),
+            experiment_count: 0,
+            started_at: now,
+            updated_at: now,
+            stopped_at: None,
+        };
+        assert!(autoresearch_next_action(&cfg).contains("make one focused change"));
+        cfg.experiment_count = 2;
+        assert!(autoresearch_next_action(&cfg).contains("inspect the latest result"));
+        cfg.stopped_at = Some(now);
+        assert!(autoresearch_next_action(&cfg).contains("resume with `conductor autoresearch continue`"));
+    }
+
+    #[test]
+    fn build_ralph_operator_prompt_includes_focus_and_next_command() {
+        let snapshot = sample_snapshot();
+        let prompt = build_ralph_operator_prompt("demo-run", &snapshot);
+        assert!(prompt.contains("Ralph loop active for run demo-run."));
+        assert!(prompt.contains("Current focus: explore-1."));
+        assert!(prompt.contains("Suggested command: conductor handoff main explore-1"));
     }
 
     #[test]

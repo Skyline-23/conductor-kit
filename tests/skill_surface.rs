@@ -46,9 +46,11 @@ fn team_and_ralph_skills_force_cli_routing() {
     assert!(ralph.contains("conductor ralph"));
     assert!(ralph.contains("do not call built-in sub-agent or delegation tools"));
     assert!(ralph.contains("## Recovery & Lifecycle"));
+    assert!(autoresearch.contains("conductor autoresearch"));
     assert!(autoresearch.contains("conductor autoresearch setup"));
-    assert!(autoresearch.contains("conductor autoresearch step"));
-    assert!(autoresearch.contains("conductor autoresearch summary"));
+    assert!(autoresearch.contains("conductor autoresearch continue"));
+    assert!(autoresearch.contains("conductor autoresearch status"));
+    assert!(autoresearch.contains("conductor autoresearch stop"));
     assert!(autoresearch.contains("lightweight experiment loop"));
     assert!(autoresearch.contains("its own experiment loop"));
 }

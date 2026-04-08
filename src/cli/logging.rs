@@ -18,7 +18,7 @@ Commands:
   settings            Open the conductor settings editor
   autoresearch        Run the lightweight autonomous experiment loop
   team                Start a configured team: team <count> <profile> [profile...]
-  ralph               Start the wider ralph-style orchestration layout
+  ralph               Start the resumable ralph operator loop
   report              Report a worker finding back to the main conductor run
   ask                 Send a direct follow-up to a worker lane
   handoff             Reassign a narrow follow-up from one worker lane to another
