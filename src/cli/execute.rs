@@ -18,8 +18,8 @@ use crate::runtime::sessions::{
 };
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
-    ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, SCHEMA_VERSION,
-    SessionStatus, TaskRecord, WorkerKind, WorkerRecord, WorkerState,
+    ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, RunRecord,
+    SCHEMA_VERSION, SessionStatus, TaskRecord, WorkerKind, WorkerRecord, WorkerState,
 };
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
@@ -1187,8 +1187,15 @@ fn run_open(args: &[String]) -> Result<(), String> {
         .filter(|value| !value.trim().is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id);
+    let (_, cfg) = load_resolved_config()?;
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
+    let run = store.read_run(&run_id)?;
+    if should_use_native_resume(&cfg, &run) {
+        cleanup_default_surface_state(&store, &run_id)?;
+        cleanup_surface_tmux_session(&run_id)?;
+        return run_native_surface_resume(&cfg, &run_id);
+    }
     ensure_active_ralph_watch(&run_id)?;
     cleanup_default_surface_state(&store, &run_id)?;
     run_surface_ops_open(&run_id, true)
@@ -1688,6 +1695,52 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
     }
     let _ = result;
     Ok(())
+}
+
+fn should_use_native_resume(cfg: &Config, run: &RunRecord) -> bool {
+    cfg.surface.cli == "codex"
+        && (!run.active
+            || matches!(
+                run.current_phase,
+                RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
+            ))
+}
+
+fn cleanup_surface_tmux_session(run_id: &str) -> Result<(), String> {
+    let session_name = surface_tmux_session_name(run_id);
+    if tmux_session_exists(&session_name)? {
+        run_tmux(["kill-session", "-t", &session_name])?;
+    }
+    Ok(())
+}
+
+fn run_native_surface_resume(cfg: &Config, run_id: &str) -> Result<(), String> {
+    if !stdin().is_terminal() || !stdout().is_terminal() {
+        return Err("codex resume requires an interactive terminal".to_string());
+    }
+    let mut launch = resolve_surface_launch(cfg, run_id, true)?;
+    launch.env.remove("CONDUCTOR_TMUX_SESSION");
+    let mut command = Command::new(&launch.program);
+    command.args(&launch.args);
+    if let Some(cwd) = launch.cwd.as_deref() {
+        command.current_dir(cwd);
+    }
+    command.envs(&launch.env);
+    command.stdin(Stdio::inherit());
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+    let status = command.status().map_err(|err| err.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "native codex resume exited with status {}",
+            status
+                .code()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -7782,9 +7835,8 @@ mod tests {
     use crate::cli::host_catalog::{HostCatalog, VendorCatalog};
     use crate::runtime::types::{
         AuthorityLease, DispatchCounts, MailboxCounts, ReadinessState, ReplayState, RunPhase,
-        RunSnapshot, RuntimeSnapshot, SessionRecord, SessionStatus, TaskCounts, TaskStatus,
-        WorkerKind,
-        WorkerRecord, WorkerState,
+        RunRecord, RunSnapshot, RuntimeSnapshot, SessionRecord, SessionStatus, TaskCounts,
+        TaskStatus, WorkerKind, WorkerRecord, WorkerState,
     };
     use chrono::Utc;
     use std::collections::BTreeMap;
@@ -9442,6 +9494,40 @@ mod tests {
         assert!(launch.program.ends_with("codex"));
         assert_eq!(launch.args, vec!["resume".to_string()]);
         assert!(launch.stdin_payload.is_none());
+    }
+
+    #[test]
+    fn native_resume_is_used_for_terminal_codex_runs() {
+        let cfg = sample_config_with_workers(BTreeMap::new());
+        let run = RunRecord {
+            run_id: "demo-run".to_string(),
+            active: false,
+            current_phase: RunPhase::Complete,
+            started_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: Some(Utc::now()),
+            stop_reason: Some("done".to_string()),
+            authority: None,
+            snapshot_ref: Some("snapshot.json".to_string()),
+        };
+        assert!(should_use_native_resume(&cfg, &run));
+    }
+
+    #[test]
+    fn native_resume_is_not_used_for_active_runs() {
+        let cfg = sample_config_with_workers(BTreeMap::new());
+        let run = RunRecord {
+            run_id: "demo-run".to_string(),
+            active: true,
+            current_phase: RunPhase::Executing,
+            started_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+            stop_reason: None,
+            authority: None,
+            snapshot_ref: Some("snapshot.json".to_string()),
+        };
+        assert!(!should_use_native_resume(&cfg, &run));
     }
 
     #[test]
