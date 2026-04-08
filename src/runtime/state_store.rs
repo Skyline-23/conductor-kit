@@ -17,6 +17,7 @@ pub struct StateStore {
 
 const OPERATOR_STALE_AFTER_SECS: i64 = 120;
 const SILENT_WORKER_AFTER_SECS: i64 = 120;
+const BOOTSTRAP_GRACE_SECS: i64 = 45;
 
 impl StateStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
@@ -552,6 +553,7 @@ impl StateStore {
                         | crate::runtime::types::WorkerState::AwaitingReport
                 )
             })
+            .filter(|worker| !worker_is_bootstrapping(worker, now))
             .filter(|worker| {
                 worker
                     .last_event_at
@@ -559,6 +561,12 @@ impl StateStore {
                     .map(|seen_at| seen_at < now - Duration::seconds(SILENT_WORKER_AFTER_SECS))
                     .unwrap_or(true)
             })
+            .map(|worker| worker.worker_id.clone())
+            .collect::<Vec<_>>();
+        let bootstrapping_workers = workers
+            .iter()
+            .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
+            .filter(|worker| worker_is_bootstrapping(worker, now))
             .map(|worker| worker.worker_id.clone())
             .collect::<Vec<_>>();
         let pending_approvals = tasks
@@ -659,6 +667,7 @@ impl StateStore {
             monitor: MonitorState {
                 leader_stale: stale_operator,
                 all_workers_idle,
+                bootstrapping_workers,
                 non_reporting_workers: silent_workers.clone(),
                 reclaimed_claims,
                 pending_handoffs,
@@ -961,6 +970,21 @@ fn derive_operator_decision(
     }
 
     if let Some(worker) = workers.iter().find(|worker| {
+        worker
+            .reason
+            .as_deref()
+            .map(|reason| reason == "direct_team_bootstrapping" || reason == "direct_team_pane_respawned")
+            .unwrap_or(false)
+            && matches!(worker.state, crate::runtime::types::WorkerState::AwaitingReport)
+    }) {
+        return OperatorDecision {
+            next_action: "watch-bootstraps".to_string(),
+            focus_worker: Some(worker.worker_id.clone()),
+            reason: "worker lane is still bootstrapping".to_string(),
+        };
+    }
+
+    if let Some(worker) = workers.iter().find(|worker| {
         matches!(worker.state, crate::runtime::types::WorkerState::Blocked)
     }) {
         let reason = blocked_decision_reason(worker);
@@ -1088,6 +1112,13 @@ fn derive_leader_nudge_reason(
     workers: &[WorkerProjection],
     pending_handoffs: usize,
 ) -> Option<String> {
+    let has_bootstrapping_worker = workers.iter().any(|worker| {
+        worker
+            .reason
+            .as_deref()
+            .map(|reason| reason == "direct_team_bootstrapping" || reason == "direct_team_pane_respawned")
+            .unwrap_or(false)
+    });
     let has_stalled_worker = workers
         .iter()
         .any(|worker| worker.reason.as_deref() == Some("stalled_non_reporting"));
@@ -1106,7 +1137,26 @@ fn derive_leader_nudge_reason(
     if pending_handoffs > 0 {
         return Some("handoff_needed".to_string());
     }
+    if has_bootstrapping_worker {
+        return Some("worker_bootstrapping".to_string());
+    }
     None
+}
+
+fn worker_is_bootstrapping(worker: &WorkerRecord, now: chrono::DateTime<chrono::Utc>) -> bool {
+    let is_bootstrapping = worker
+        .reason
+        .as_deref()
+        .map(|reason| reason == "direct_team_bootstrapping" || reason == "direct_team_pane_respawned")
+        .unwrap_or(false);
+    if !is_bootstrapping {
+        return false;
+    }
+    worker
+        .last_event_at
+        .or(worker.last_heartbeat_at)
+        .map(|seen_at| seen_at >= now - Duration::seconds(BOOTSTRAP_GRACE_SECS))
+        .unwrap_or(true)
 }
 
 fn blocked_decision_reason(worker: &WorkerProjection) -> String {

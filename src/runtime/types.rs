@@ -74,6 +74,7 @@ pub enum EventKind {
     AuthorityAcquired,
     AuthorityRenewed,
     ClaimReclaimed,
+    WorkerBootstrapStarted,
     WorkerSpawned,
     WorkerSessionStarted,
     WorkerSessionStopped,
@@ -294,6 +295,7 @@ pub struct ReadinessState {
 pub struct MonitorState {
     pub leader_stale: bool,
     pub all_workers_idle: bool,
+    pub bootstrapping_workers: Vec<String>,
     pub non_reporting_workers: Vec<String>,
     pub reclaimed_claims: usize,
     pub pending_handoffs: usize,

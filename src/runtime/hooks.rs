@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 pub fn is_wakeable_event(event: &EventEnvelope) -> bool {
     matches!(
         event.event,
-        crate::runtime::types::EventKind::WorkerStateChanged
+        crate::runtime::types::EventKind::WorkerBootstrapStarted
+            | crate::runtime::types::EventKind::WorkerStateChanged
             | crate::runtime::types::EventKind::MailboxMessageCreated
             | crate::runtime::types::EventKind::MailboxMessageDelivered
             | crate::runtime::types::EventKind::HandoffNeeded
@@ -45,6 +46,7 @@ pub fn event_name_of(event: &EventEnvelope) -> &'static str {
         crate::runtime::types::EventKind::AuthorityAcquired => "authority_acquired",
         crate::runtime::types::EventKind::AuthorityRenewed => "authority_renewed",
         crate::runtime::types::EventKind::ClaimReclaimed => "claim_reclaimed",
+        crate::runtime::types::EventKind::WorkerBootstrapStarted => "worker_bootstrap_started",
         crate::runtime::types::EventKind::WorkerSpawned => "worker_spawned",
         crate::runtime::types::EventKind::WorkerSessionStarted => "worker_session_started",
         crate::runtime::types::EventKind::WorkerSessionStopped => "worker_session_stopped",

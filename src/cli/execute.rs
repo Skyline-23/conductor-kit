@@ -1475,8 +1475,13 @@ fn prepare_direct_team_panes(
         let launch = resolve_worker_adapter(&adapter, run_id, &worker_id, None, None)?;
         stop_worker_session_if_present(store, run_id, &worker_id);
         let summary = Some(format!("direct {} pane ready", worker_type));
-        let starter_prompt =
-            render_team_starter_prompt(run_id, &worker_id, &worker_type, team_prompt);
+        let starter_prompt = render_team_starter_prompt(
+            run_id,
+            &worker_id,
+            &worker_type,
+            team_prompt,
+            Some((&adapter.cli, &adapter.model)),
+        );
         let use_inline_prompt = launch_uses_inline_prompt(&launch);
         store.upsert_worker(WorkerRecord {
             worker_id: worker_id.clone(),
@@ -1490,8 +1495,27 @@ fn prepare_direct_team_panes(
             last_heartbeat_at: Some(Utc::now()),
             last_stdout_at: None,
             last_event_at: Some(Utc::now()),
-            reason: Some("direct_team_pane".to_string()),
+            reason: Some("direct_team_bootstrapping".to_string()),
         })?;
+        let _ = store.append_runtime_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::WorkerBootstrapStarted,
+                timestamp: Utc::now(),
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "team".to_string(),
+                worker: Some(worker_id.clone()),
+                task_id: None,
+                message_id: None,
+                reason: Some("direct_team_bootstrapping".to_string()),
+                context: serde_json::Map::from_iter([
+                    ("worker_type".to_string(), json!(worker_type)),
+                    ("model".to_string(), json!(adapter.model)),
+                ]),
+            },
+        );
         pane_specs.push(OpsPaneSpec {
             title: worker_id.clone(),
             command: build_direct_launch_shell_command(
@@ -1538,6 +1562,7 @@ fn render_team_starter_prompt(
     worker_id: &str,
     worker_type: &str,
     team_prompt: Option<&str>,
+    provider: Option<(&str, &str)>,
 ) -> String {
     let first_step = match worker_type {
         "explore" => "Map dirs, entry points, boundaries, and likely files. Stay read-only.",
@@ -1550,7 +1575,7 @@ fn render_team_starter_prompt(
         Some(prompt) => format!("Current task: {prompt}"),
         None => "Current task: inspect the repository and produce a fast situational summary.".to_string(),
     };
-    format!(
+    let base = format!(
         "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}.\n\
 {current_task}\n\
 {first_step}\n\
@@ -1558,13 +1583,32 @@ Stay in your lane. Do not use built-in sub-agent tools. Do not act like the oper
 Report progress fast with `conductor report {worker_id} \"<short result>\"`.\n\
 After reporting, continue assigned work or the next feasible task.\n\
 If blocked, report `blocked: <reason>`. When truly finished, report `done: <result>`."
-    )
+    );
+    let Some((cli, model)) = provider else {
+        return base;
+    };
+    if cli != "codex" {
+        return base;
+    }
+    if let Some(followup) = build_provider_bootstrap_followup(worker_id, model) {
+        return format!("{followup}\n{base}");
+    }
+    base
 }
 
 fn build_team_report_nudge_prompt(worker_id: &str) -> String {
     format!(
         "Act now. Continue your lane, report progress with `conductor report {worker_id} \"<short result>\"`, report `blocked: <reason>` if stuck, or `done: <result>` when truly finished."
     )
+}
+
+fn build_provider_bootstrap_followup(worker_id: &str, model: &str) -> Option<String> {
+    match model {
+        "gpt-5.3-codex-spark" | "gpt-5.4-mini" => Some(format!(
+            "First reply: one short ack and the first concrete finding. Then continue the lane and use `conductor report {worker_id} \"<short result>\"` early."
+        )),
+        _ => None,
+    }
 }
 
 fn advance_team_nudge_reason(reason: Option<&str>) -> (&'static str, bool) {
@@ -1821,6 +1865,7 @@ fn build_relaunch_prompt_for_worker(worker: &WorkerRecord) -> String {
                     &worker.worker_id,
                     infer_worker_profile(&worker.worker_id),
                     None,
+                    None,
                 )
             } else {
                 summary.to_string()
@@ -1831,6 +1876,7 @@ fn build_relaunch_prompt_for_worker(worker: &WorkerRecord) -> String {
             &worker.worker_id,
             infer_worker_profile(&worker.worker_id),
             if summary.is_empty() { None } else { Some(summary) },
+            None,
         ),
     }
 }
@@ -2782,6 +2828,25 @@ fn respawn_direct_team_worker_pane(
     next.current_summary = Some(format!("direct {} pane relaunched", worker_type));
     next.terminal_label = Some(worker_id.to_string());
     store.upsert_worker(next)?;
+    let _ = store.append_runtime_event(
+        run_id,
+        EventEnvelope {
+            schema_version: SCHEMA_VERSION,
+            event: EventKind::WorkerBootstrapStarted,
+            timestamp: Utc::now(),
+            run_id: Some(run_id.to_string()),
+            session_id: None,
+            source: "relaunch".to_string(),
+            worker: Some(worker_id.to_string()),
+            task_id: None,
+            message_id: None,
+            reason: Some("direct_team_pane_respawned".to_string()),
+            context: serde_json::Map::from_iter([
+                ("worker_type".to_string(), json!(worker_type)),
+                ("prompt".to_string(), json!(prompt)),
+            ]),
+        },
+    );
     rebalance_tmux_team_layout(&tmux_session_name)?;
     Ok(true)
 }
@@ -3457,6 +3522,9 @@ fn suggested_operator_command(
         )),
         "relaunch-stalled" => Some(format!(
             "conductor relaunch {focus_worker} \"report progress now or declare blocked\""
+        )),
+        "watch-bootstraps" => Some(format!(
+            "conductor ask {focus_worker} \"reply with one short ack and the first concrete finding\""
         )),
         "poke-silent" => Some(format!(
             "conductor ask {focus_worker} \"report progress now or declare blocked in one line\""
@@ -4903,8 +4971,9 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
         snapshot.readiness.silent_workers.len()
     );
     println!(
-        "monitor    all_idle={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
+        "monitor    all_idle={} bootstrapping={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
         snapshot.monitor.all_workers_idle,
+        snapshot.monitor.bootstrapping_workers.len(),
         snapshot.monitor.reclaimed_claims,
         snapshot.monitor.non_reporting_workers.len(),
         snapshot.monitor.pending_handoffs,
@@ -5064,8 +5133,9 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
             snapshot.readiness.silent_workers.len()
         );
         println!(
-            "monitor    all_idle={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
+            "monitor    all_idle={} bootstrapping={} reclaimed={} non_reporting={} handoffs={} pending_leader_notifications={} leader_nudge={}",
             snapshot.monitor.all_workers_idle,
+            snapshot.monitor.bootstrapping_workers.len(),
             snapshot.monitor.reclaimed_claims,
             snapshot.monitor.non_reporting_workers.len(),
             snapshot.monitor.pending_handoffs,
@@ -5183,6 +5253,11 @@ fn render_hud_strip(
         .iter()
         .filter(|worker| worker_lane_status(worker) == "awaiting-report")
         .count();
+    let bootstrapping_workers = snapshot
+        .workers
+        .iter()
+        .filter(|worker| worker_lane_status(worker) == "bootstrapping")
+        .count();
     let stalled_workers = snapshot
         .workers
         .iter()
@@ -5197,7 +5272,7 @@ fn render_hud_strip(
     let focus = snapshot.decision.focus_worker.as_deref().unwrap_or("-");
     if ansi {
         format!(
-            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
+            "\x1b[38;5;111m{}\x1b[0m  \x1b[38;5;150m{:?}\x1b[0m  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  boot:{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -5208,6 +5283,7 @@ fn render_hud_strip(
             snapshot.tasks.failed,
             active_workers,
             snapshot.workers.len(),
+            bootstrapping_workers,
             awaiting_reports,
             stalled_workers,
             blocked_workers,
@@ -5226,7 +5302,7 @@ fn render_hud_strip(
         )
     } else {
         format!(
-            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
+            "{}  {:?}  auth:{}  tasks {}/{}/{}/{}/{}  workers {}/{}  boot:{}  await:{}  stalled:{}  blocked:{}  approvals:{}  silent:{}  reclaimed:{}  handoffs:{}  mail:{}  leader:{}  next:{}  focus:{}",
             snapshot.run.run_id,
             snapshot.run.phase,
             authority,
@@ -5237,6 +5313,7 @@ fn render_hud_strip(
             snapshot.tasks.failed,
             active_workers,
             snapshot.workers.len(),
+            bootstrapping_workers,
             awaiting_reports,
             stalled_workers,
             blocked_workers,
@@ -5259,7 +5336,14 @@ fn render_hud_strip(
 fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'static str {
     match worker.state {
         WorkerState::AwaitingReport => {
-            if worker.reason.as_deref() == Some("stalled_non_reporting") {
+            if worker
+                .reason
+                .as_deref()
+                .map(|reason| reason == "direct_team_bootstrapping" || reason == "direct_team_pane_respawned")
+                .unwrap_or(false)
+            {
+                "bootstrapping"
+            } else if worker.reason.as_deref() == Some("stalled_non_reporting") {
                 "stalled"
             } else {
                 "awaiting-report"
@@ -6630,6 +6714,7 @@ mod tests {
             monitor: crate::runtime::types::MonitorState {
                 leader_stale: false,
                 all_workers_idle: false,
+                bootstrapping_workers: Vec::new(),
                 non_reporting_workers: Vec::new(),
                 reclaimed_claims: 0,
                 pending_handoffs: 1,
@@ -6762,10 +6847,12 @@ mod tests {
             "explore-1",
             "explore",
             Some("inspect the repository and find the likely bug"),
+            Some(("codex", "gpt-5.3-codex-spark")),
         );
         assert!(prompt.contains("explore-1"));
         assert!(prompt.contains("Profile: explore"));
         assert!(prompt.contains("inspect the repository and find the likely bug"));
+        assert!(prompt.contains("First reply: one short ack"));
         assert!(prompt.contains("conductor report explore-1"));
         assert!(prompt.contains("continue assigned work or the next feasible task"));
         assert!(prompt.contains("blocked: <reason>"));
@@ -7054,6 +7141,21 @@ mod tests {
             reason: Some("stalled_non_reporting".to_string()),
         };
         assert_eq!(worker_lane_status(&worker), "stalled");
+    }
+
+    #[test]
+    fn worker_lane_status_marks_bootstrapping_workers() {
+        let worker = crate::runtime::types::WorkerProjection {
+            worker_id: "explore-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::AwaitingReport,
+            current_task_id: None,
+            current_summary: Some("direct explore pane ready".to_string()),
+            last_heartbeat_at: None,
+            terminal_label: Some("explore-1".to_string()),
+            reason: Some("direct_team_bootstrapping".to_string()),
+        };
+        assert_eq!(worker_lane_status(&worker), "bootstrapping");
     }
 
     #[test]
