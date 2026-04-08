@@ -29,8 +29,9 @@ Use it when the task should keep iterating until one verified outcome is accepte
 2. Treat `conductor ralph` and `conductor ralph <run_id>` as surface-only operator loops.
 3. Only use `conductor ralph <run_id> <worker_count>` when you explicitly want Ralph to widen into a team.
 4. Expect Ralph to immediately re-enter the operator lane with the current focus, reason, and next command.
-5. Keep the operator lane focused on coordination, rerouting, verification, and closure.
-6. Continue iterating until one verified outcome is accepted or the run is explicitly cancelled.
+5. Expect Ralph to keep re-priming the operator lane automatically when wakeable events, idle convergence, stalled work, or verification pressure appear.
+6. Keep the operator lane focused on coordination, rerouting, verification, and closure.
+7. Continue iterating until one verified outcome is accepted or the run is explicitly cancelled.
 
 ## Constraints & Safety
 

@@ -46,7 +46,7 @@ use std::io::{IsTerminal, Stdout, stdin, stdout};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -69,6 +69,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "team-nudge" => run_team_nudge(&args[1..]),
         "team-followup" => run_team_followup(&args[1..]),
         "ralph" => run_ralph(&args[1..]),
+        "ralph-watch" => run_ralph_watch(&args[1..]),
         "report" => run_report(&args[1..]),
         "ask" => run_ask(&args[1..]),
         "handoff" => run_handoff(&args[1..]),
@@ -1188,6 +1189,7 @@ fn run_open(args: &[String]) -> Result<(), String> {
         .unwrap_or_else(default_run_id);
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
+    ensure_active_ralph_watch(&run_id)?;
     cleanup_default_surface_state(&store, &run_id)?;
     run_surface_ops_open(&run_id, true)
 }
@@ -1410,6 +1412,8 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
     ensure_surface_session(&store, &cfg, &run_id)?;
+    enable_ralph_loop(&run_id)?;
+    ensure_active_ralph_watch(&run_id)?;
     let tmux_session_name = surface_tmux_session_name(&run_id);
     if requested_width.is_some() {
         ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
@@ -1426,6 +1430,145 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     }
     run_surface_ops_open(&run_id, false)?;
     prime_ralph_operator_loop(&run_id);
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct RalphLoopState {
+    enabled: bool,
+    watcher_pid: Option<u32>,
+}
+
+fn ralph_loop_file(run_id: &str) -> Result<PathBuf, String> {
+    Ok(resolve_state_root()?.join("runs").join(run_id).join("ralph_loop.json"))
+}
+
+fn read_ralph_loop_state(run_id: &str) -> Result<RalphLoopState, String> {
+    let path = ralph_loop_file(run_id)?;
+    if !path.exists() {
+        return Ok(RalphLoopState::default());
+    }
+    let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    serde_json::from_str(&raw).map_err(|err| err.to_string())
+}
+
+fn write_ralph_loop_state(run_id: &str, state: &RalphLoopState) -> Result<(), String> {
+    let path = ralph_loop_file(run_id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let payload = serde_json::to_vec_pretty(state).map_err(|err| err.to_string())?;
+    fs::write(path, payload).map_err(|err| err.to_string())
+}
+
+fn enable_ralph_loop(run_id: &str) -> Result<(), String> {
+    let mut state = read_ralph_loop_state(run_id)?;
+    state.enabled = true;
+    write_ralph_loop_state(run_id, &state)
+}
+
+fn disable_ralph_loop(run_id: &str) -> Result<(), String> {
+    let mut state = read_ralph_loop_state(run_id)?;
+    state.enabled = false;
+    state.watcher_pid = None;
+    write_ralph_loop_state(run_id, &state)
+}
+
+fn process_is_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn ensure_active_ralph_watch(run_id: &str) -> Result<(), String> {
+    let mut state = read_ralph_loop_state(run_id)?;
+    if !state.enabled {
+        return Ok(());
+    }
+    if state
+        .watcher_pid
+        .map(process_is_alive)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let state_root = resolve_state_root()?;
+    let config_path = resolve_config_path().ok();
+    let mut child = Command::new(conductor_bin);
+    child
+        .arg("ralph-watch")
+        .arg(run_id)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env("CONDUCTOR_STATE_DIR", state_root);
+    if let Some(config_path) = config_path {
+        child.env("CONDUCTOR_CONFIG", config_path);
+    }
+    let child = child.spawn().map_err(|err| err.to_string())?;
+    state.watcher_pid = Some(child.id());
+    write_ralph_loop_state(run_id, &state)
+}
+
+fn run_ralph_watch(args: &[String]) -> Result<(), String> {
+    let run_id = required_arg(args, 0, "ralph-watch requires <run_id>")?;
+    let store = StateStore::new(resolve_state_root()?);
+    let mut cursor = 0usize;
+    let mut last_prime_at: Option<chrono::DateTime<Utc>> = None;
+
+    loop {
+        let state = read_ralph_loop_state(run_id)?;
+        if !state.enabled {
+            break;
+        }
+        let run = match store.read_run(run_id) {
+            Ok(run) => run,
+            Err(_) => break,
+        };
+        if !run.active
+            || matches!(
+                run.current_phase,
+                RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
+            )
+        {
+            let _ = disable_ralph_loop(run_id);
+            break;
+        }
+        let snapshot = match store.read_snapshot(run_id) {
+            Ok(snapshot) => snapshot,
+            Err(_) => break,
+        };
+        let events = store.read_events(run_id)?;
+        let new_events = if cursor < events.len() {
+            events[cursor..].to_vec()
+        } else {
+            Vec::new()
+        };
+        cursor = events.len();
+        let wakeable = !filter_events(new_events, None, true).is_empty();
+        let orchestration_pressure = snapshot.readiness.stale_operator
+            || snapshot.monitor.all_workers_idle
+            || snapshot.monitor.pending_leader_notifications > 0
+            || snapshot.monitor.pending_handoffs > 0
+            || snapshot.monitor.verification_gaps > 0;
+        let should_prime = (wakeable || orchestration_pressure)
+            && last_prime_at
+                .map(|last| Utc::now() - last >= chrono::Duration::seconds(8))
+                .unwrap_or(true);
+        if should_prime {
+            prime_ralph_operator_loop(run_id);
+            last_prime_at = Some(Utc::now());
+        }
+        thread::sleep(Duration::from_millis(1500));
+    }
+
     Ok(())
 }
 
