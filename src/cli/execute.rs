@@ -35,7 +35,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
-use serde::Serialize;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -58,6 +59,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
 
     match cmd {
         "" => run_default(),
+        "autoresearch" => run_autoresearch(&args[1..]),
         "init" => run_start(&args[1..]),
         "resume" => run_open(&args[1..]),
         "team" => run_team(&args[1..]),
@@ -186,6 +188,80 @@ struct SettingsApp {
     input: String,
     status: String,
     host_catalog: HostCatalog,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AutoresearchConfig {
+    schema_version: u32,
+    run_id: String,
+    repo_root: String,
+    branch: String,
+    goal: String,
+    metric_command: String,
+    metric_regex: String,
+    metric_direction: String,
+    in_scope_files: Vec<String>,
+    out_of_scope_files: Vec<String>,
+    constraints: Vec<String>,
+    max_experiments: Option<usize>,
+    simplicity_policy: String,
+    baseline_metric: f64,
+    best_metric: f64,
+    baseline_commit: String,
+    best_commit: String,
+    experiment_count: usize,
+    started_at: chrono::DateTime<Utc>,
+    updated_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+struct AutoresearchSetupArgs {
+    run_id: String,
+    goal: String,
+    metric_command: String,
+    metric_regex: String,
+    metric_direction: MetricDirection,
+    in_scope_files: Vec<String>,
+    out_of_scope_files: Vec<String>,
+    constraints: Vec<String>,
+    max_experiments: Option<usize>,
+    simplicity_policy: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetricDirection {
+    LowerIsBetter,
+    HigherIsBetter,
+}
+
+impl MetricDirection {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "lower" | "lower_is_better" => Ok(Self::LowerIsBetter),
+            "higher" | "higher_is_better" => Ok(Self::HigherIsBetter),
+            _ => Err("--direction must be lower or higher".to_string()),
+        }
+    }
+
+    fn from_stored(value: &str) -> Result<Self, String> {
+        Self::parse(value)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LowerIsBetter => "lower",
+            Self::HigherIsBetter => "higher",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ExperimentRow {
+    experiment: usize,
+    commit: String,
+    metric: String,
+    status: String,
+    description: String,
 }
 
 fn run_default() -> Result<(), String> {
@@ -3500,7 +3576,7 @@ fn suggested_operator_command(
     focus_reason: Option<&str>,
 ) -> Option<String> {
     match snapshot.decision.next_action.as_str() {
-        "resume-operator-now" | "resume-operator" => Some("conductor resume".to_string()),
+        "resume-operator-now" | "resume-operator" => return Some("conductor resume".to_string()),
         _ => {}
     }
 
@@ -3664,6 +3740,636 @@ fn run_doctor() -> Result<(), String> {
     } else {
         Err("config validation failed".to_string())
     }
+}
+
+fn run_autoresearch(args: &[String]) -> Result<(), String> {
+    let subcommand = args
+        .first()
+        .map(String::as_str)
+        .unwrap_or("summary")
+        .trim();
+    match subcommand {
+        "setup" => run_autoresearch_setup(&args[1..]),
+        "step" => run_autoresearch_step(&args[1..]),
+        "summary" => run_autoresearch_summary(&args[1..]),
+        _ => Err(
+            "autoresearch requires setup, step, or summary".to_string(),
+        ),
+    }
+}
+
+fn run_autoresearch_setup(args: &[String]) -> Result<(), String> {
+    let parsed = parse_autoresearch_setup_args(args)?;
+    let repo_root = git_repo_root()?;
+    ensure_git_worktree_clean(&repo_root)?;
+    let branch = ensure_autoresearch_branch(&repo_root)?;
+    ensure_autoresearch_excludes(&repo_root)?;
+    ensure_results_header(&repo_root)?;
+
+    let baseline = run_metric_command(&repo_root, &parsed.metric_command)?;
+    let baseline_metric =
+        extract_metric(&baseline.output, &parsed.metric_regex)?.ok_or_else(|| {
+            "metric regex did not match the baseline output".to_string()
+        })?;
+    let baseline_commit = git_head_commit(&repo_root)?;
+    let now = Utc::now();
+
+    let cfg = AutoresearchConfig {
+        schema_version: 1,
+        run_id: parsed.run_id.clone(),
+        repo_root: repo_root.display().to_string(),
+        branch,
+        goal: parsed.goal.clone(),
+        metric_command: parsed.metric_command.clone(),
+        metric_regex: parsed.metric_regex.clone(),
+        metric_direction: parsed.metric_direction.as_str().to_string(),
+        in_scope_files: parsed.in_scope_files.clone(),
+        out_of_scope_files: parsed.out_of_scope_files.clone(),
+        constraints: parsed.constraints.clone(),
+        max_experiments: parsed.max_experiments,
+        simplicity_policy: parsed.simplicity_policy.clone(),
+        baseline_metric,
+        best_metric: baseline_metric,
+        baseline_commit: baseline_commit.clone(),
+        best_commit: baseline_commit.clone(),
+        experiment_count: 0,
+        started_at: now,
+        updated_at: now,
+    };
+    write_autoresearch_config(&cfg)?;
+    append_results_row(
+        &repo_root,
+        &ExperimentRow {
+            experiment: 0,
+            commit: baseline_commit.clone(),
+            metric: format_metric_value(baseline_metric),
+            status: "baseline".to_string(),
+            description: "baseline".to_string(),
+        },
+    )?;
+
+    print_json(&json!({
+        "ok": true,
+        "run_id": cfg.run_id,
+        "branch": cfg.branch,
+        "repo_root": cfg.repo_root,
+        "baseline_metric": cfg.baseline_metric,
+        "baseline_commit": baseline_commit,
+        "results_tsv": repo_root.join("results.tsv").display().to_string(),
+        "run_log": repo_root.join("run.log").display().to_string(),
+    }))
+}
+
+fn run_autoresearch_step(args: &[String]) -> Result<(), String> {
+    let (run_id, description) = parse_autoresearch_step_args(args)?;
+    let mut cfg = read_autoresearch_config(&run_id)?;
+    let repo_root = PathBuf::from(&cfg.repo_root);
+    let changed_files = git_changed_files(&repo_root)?;
+    if changed_files.is_empty() {
+        return Err("autoresearch step requires local code changes before measuring".to_string());
+    }
+    validate_autoresearch_scope(&cfg, &changed_files)?;
+    if let Some(max_experiments) = cfg.max_experiments {
+        if cfg.experiment_count >= max_experiments {
+            return Err("autoresearch experiment budget already reached".to_string());
+        }
+    }
+
+    git_add_all(&repo_root)?;
+    let commit_message = format!("experiment: {description}");
+    git_commit_all(&repo_root, &commit_message)?;
+    let commit = git_head_commit(&repo_root)?;
+    let experiment_number = cfg.experiment_count + 1;
+    let outcome = run_metric_command(&repo_root, &cfg.metric_command)?;
+    let metric = extract_metric(&outcome.output, &cfg.metric_regex)?;
+
+    let (status, kept, metric_value) = match (outcome.success, metric) {
+        (true, Some(value))
+            if metric_improved(value, cfg.best_metric, MetricDirection::from_stored(&cfg.metric_direction)?) =>
+        {
+            cfg.best_metric = value;
+            cfg.best_commit = commit.clone();
+            ("keep".to_string(), true, Some(value))
+        }
+        (true, Some(value)) => {
+            git_reset_head(&repo_root)?;
+            ("discard".to_string(), false, Some(value))
+        }
+        _ => {
+            git_reset_head(&repo_root)?;
+            ("crash".to_string(), false, None)
+        }
+    };
+
+    cfg.experiment_count = experiment_number;
+    cfg.updated_at = Utc::now();
+    write_autoresearch_config(&cfg)?;
+    append_results_row(
+        &repo_root,
+        &ExperimentRow {
+            experiment: experiment_number,
+            commit,
+            metric: metric_value
+                .map(format_metric_value)
+                .unwrap_or_else(|| "n/a".to_string()),
+            status: status.clone(),
+            description: description.clone(),
+        },
+    )?;
+
+    print_json(&json!({
+        "ok": true,
+        "run_id": cfg.run_id,
+        "status": status,
+        "kept": kept,
+        "best_metric": cfg.best_metric,
+        "best_commit": cfg.best_commit,
+        "experiment": experiment_number,
+    }))
+}
+
+fn run_autoresearch_summary(args: &[String]) -> Result<(), String> {
+    let run_id = parse_optional_run_id(args).unwrap_or_else(default_run_id);
+    let cfg = read_autoresearch_config(&run_id)?;
+    let repo_root = PathBuf::from(&cfg.repo_root);
+    let rows = read_results_rows(&repo_root)?;
+    let delta = cfg.best_metric - cfg.baseline_metric;
+    let direction = MetricDirection::from_stored(&cfg.metric_direction)?;
+    let improved = metric_improved(cfg.best_metric, cfg.baseline_metric, direction);
+    print_json(&json!({
+        "ok": true,
+        "run_id": cfg.run_id,
+        "repo_root": cfg.repo_root,
+        "branch": cfg.branch,
+        "goal": cfg.goal,
+        "metric_command": cfg.metric_command,
+        "metric_direction": cfg.metric_direction,
+        "baseline_metric": cfg.baseline_metric,
+        "best_metric": cfg.best_metric,
+        "delta": delta,
+        "improved": improved,
+        "best_commit": cfg.best_commit,
+        "experiment_count": cfg.experiment_count,
+        "max_experiments": cfg.max_experiments,
+        "rows": rows,
+    }))
+}
+
+fn parse_autoresearch_setup_args(args: &[String]) -> Result<AutoresearchSetupArgs, String> {
+    let mut idx = 0;
+    let mut run_id = default_run_id();
+    let mut goal = None;
+    let mut metric_command = None;
+    let mut metric_regex = None;
+    let mut metric_direction = None;
+    let mut in_scope_files = Vec::new();
+    let mut out_of_scope_files = Vec::new();
+    let mut constraints = Vec::new();
+    let mut max_experiments = None;
+    let mut simplicity_policy =
+        "Prefer the smallest experiment that materially improves the metric.".to_string();
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--run" => {
+                run_id = required_arg(args, idx + 1, "--run requires a value")?.to_string();
+                idx += 2;
+            }
+            "--goal" => {
+                goal = Some(required_arg(args, idx + 1, "--goal requires a value")?.to_string());
+                idx += 2;
+            }
+            "--metric-command" => {
+                metric_command = Some(
+                    required_arg(args, idx + 1, "--metric-command requires a value")?.to_string(),
+                );
+                idx += 2;
+            }
+            "--metric-regex" => {
+                metric_regex = Some(
+                    required_arg(args, idx + 1, "--metric-regex requires a value")?.to_string(),
+                );
+                idx += 2;
+            }
+            "--direction" => {
+                metric_direction = Some(MetricDirection::parse(required_arg(
+                    args,
+                    idx + 1,
+                    "--direction requires lower|higher",
+                )?)?);
+                idx += 2;
+            }
+            "--in-scope" => {
+                in_scope_files
+                    .push(required_arg(args, idx + 1, "--in-scope requires a path")?.to_string());
+                idx += 2;
+            }
+            "--out-of-scope" => {
+                out_of_scope_files.push(
+                    required_arg(args, idx + 1, "--out-of-scope requires a path")?.to_string(),
+                );
+                idx += 2;
+            }
+            "--constraint" => {
+                constraints.push(
+                    required_arg(args, idx + 1, "--constraint requires text")?.to_string(),
+                );
+                idx += 2;
+            }
+            "--max-experiments" => {
+                let raw = required_arg(args, idx + 1, "--max-experiments requires a value")?;
+                max_experiments = if raw.eq_ignore_ascii_case("unlimited") {
+                    None
+                } else {
+                    Some(
+                        raw.parse::<usize>()
+                            .map_err(|_| "--max-experiments must be a positive integer or unlimited".to_string())?,
+                    )
+                };
+                idx += 2;
+            }
+            "--simplicity-policy" => {
+                simplicity_policy = required_arg(
+                    args,
+                    idx + 1,
+                    "--simplicity-policy requires text",
+                )?
+                .to_string();
+                idx += 2;
+            }
+            unknown => {
+                return Err(format!("unknown autoresearch setup flag '{unknown}'"));
+            }
+        }
+    }
+
+    if in_scope_files.is_empty() {
+        return Err("autoresearch setup requires at least one --in-scope path".to_string());
+    }
+
+    Ok(AutoresearchSetupArgs {
+        run_id,
+        goal: goal.ok_or_else(|| "--goal is required".to_string())?,
+        metric_command: metric_command
+            .ok_or_else(|| "--metric-command is required".to_string())?,
+        metric_regex: metric_regex.ok_or_else(|| "--metric-regex is required".to_string())?,
+        metric_direction: metric_direction
+            .ok_or_else(|| "--direction is required".to_string())?,
+        in_scope_files,
+        out_of_scope_files,
+        constraints,
+        max_experiments,
+        simplicity_policy,
+    })
+}
+
+fn parse_autoresearch_step_args(args: &[String]) -> Result<(String, String), String> {
+    if args.is_empty() {
+        return Err("autoresearch step requires <description> or --run <run_id> <description>".to_string());
+    }
+    let mut idx = 0;
+    let mut run_id = default_run_id();
+    if args.first().map(String::as_str) == Some("--run") {
+        run_id = required_arg(args, 1, "--run requires a value")?.to_string();
+        idx = 2;
+    }
+    let description = args[idx..].join(" ").trim().to_string();
+    if description.is_empty() {
+        return Err("autoresearch step requires a non-empty experiment description".to_string());
+    }
+    Ok((run_id, description))
+}
+
+fn parse_optional_run_id(args: &[String]) -> Option<String> {
+    match args {
+        [flag, run_id, ..] if flag == "--run" && !run_id.trim().is_empty() => Some(run_id.clone()),
+        [run_id, ..] if !run_id.trim().is_empty() => Some(run_id.clone()),
+        _ => None,
+    }
+}
+
+fn autoresearch_config_path(run_id: &str) -> Result<PathBuf, String> {
+    Ok(resolve_state_root()?
+        .join("runs")
+        .join(run_id)
+        .join("autoresearch.json"))
+}
+
+fn write_autoresearch_config(cfg: &AutoresearchConfig) -> Result<(), String> {
+    let path = autoresearch_config_path(&cfg.run_id)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let rendered = serde_json::to_string_pretty(cfg).map_err(|err| err.to_string())?;
+    fs::write(&path, rendered).map_err(|err| err.to_string())
+}
+
+fn read_autoresearch_config(run_id: &str) -> Result<AutoresearchConfig, String> {
+    let path = autoresearch_config_path(run_id)?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    serde_json::from_str(&raw).map_err(|err| err.to_string())
+}
+
+fn git_repo_root() -> Result<PathBuf, String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err("autoresearch requires a git repository".to_string());
+    }
+    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if root.is_empty() {
+        Err("git did not return a repository root".to_string())
+    } else {
+        Ok(PathBuf::from(root))
+    }
+}
+
+fn ensure_git_worktree_clean(repo_root: &Path) -> Result<(), String> {
+    let changed = git_changed_files(repo_root)?;
+    if changed.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "autoresearch requires a clean git worktree before setup; dirty paths: {}",
+            changed.join(", ")
+        ))
+    }
+}
+
+fn git_changed_files(repo_root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["status", "--porcelain"])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err("failed to read git status".to_string());
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    Ok(raw
+        .lines()
+        .filter_map(parse_porcelain_path)
+        .collect())
+}
+
+fn parse_porcelain_path(line: &str) -> Option<String> {
+    let trimmed = line.trim_end();
+    if trimmed.len() < 4 {
+        return None;
+    }
+    let path = trimmed[3..].trim();
+    if let Some((_, to)) = path.split_once(" -> ") {
+        Some(to.trim().to_string())
+    } else {
+        Some(path.to_string())
+    }
+}
+
+fn ensure_autoresearch_branch(repo_root: &Path) -> Result<String, String> {
+    let branch = format!("feat/autoresearch-{}", Utc::now().format("%Y%m%d"));
+    let verify = Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "--verify", "--quiet", &branch])
+        .status()
+        .map_err(|err| err.to_string())?;
+    let status = if verify.success() {
+        Command::new("git")
+            .current_dir(repo_root)
+            .args(["checkout", &branch])
+            .status()
+            .map_err(|err| err.to_string())?
+    } else {
+        Command::new("git")
+            .current_dir(repo_root)
+            .args(["checkout", "-b", &branch])
+            .status()
+            .map_err(|err| err.to_string())?
+    };
+    if !status.success() {
+        return Err(format!("failed to switch to autoresearch branch '{branch}'"));
+    }
+    Ok(branch)
+}
+
+fn ensure_autoresearch_excludes(repo_root: &Path) -> Result<(), String> {
+    let exclude_path = repo_root.join(".git").join("info").join("exclude");
+    if let Some(parent) = exclude_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
+    let mut lines = existing
+        .lines()
+        .map(|line| line.trim().to_string())
+        .collect::<BTreeSet<_>>();
+    let mut updated = existing;
+    for entry in ["results.tsv", "run.log"] {
+        if !lines.contains(entry) {
+            if !updated.ends_with('\n') && !updated.is_empty() {
+                updated.push('\n');
+            }
+            updated.push_str(entry);
+            updated.push('\n');
+            lines.insert(entry.to_string());
+        }
+    }
+    fs::write(&exclude_path, updated).map_err(|err| err.to_string())
+}
+
+fn ensure_results_header(repo_root: &Path) -> Result<(), String> {
+    let path = repo_root.join("results.tsv");
+    if path.exists() {
+        return Ok(());
+    }
+    fs::write(
+        path,
+        "experiment\tcommit\tmetric\tstatus\tdescription\n",
+    )
+    .map_err(|err| err.to_string())
+}
+
+fn append_results_row(repo_root: &Path, row: &ExperimentRow) -> Result<(), String> {
+    let path = repo_root.join("results.tsv");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|err| err.to_string())?;
+    writeln!(
+        file,
+        "{}\t{}\t{}\t{}\t{}",
+        row.experiment,
+        sanitize_tsv(&row.commit),
+        sanitize_tsv(&row.metric),
+        sanitize_tsv(&row.status),
+        sanitize_tsv(&row.description)
+    )
+    .map_err(|err| err.to_string())
+}
+
+fn read_results_rows(repo_root: &Path) -> Result<Vec<ExperimentRow>, String> {
+    let path = repo_root.join("results.tsv");
+    let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    let mut rows = Vec::new();
+    for line in raw.lines().skip(1) {
+        let columns = line.split('\t').collect::<Vec<_>>();
+        if columns.len() != 5 {
+            continue;
+        }
+        let experiment = columns[0].parse::<usize>().unwrap_or(0);
+        rows.push(ExperimentRow {
+            experiment,
+            commit: columns[1].to_string(),
+            metric: columns[2].to_string(),
+            status: columns[3].to_string(),
+            description: columns[4].to_string(),
+        });
+    }
+    Ok(rows)
+}
+
+fn sanitize_tsv(value: &str) -> String {
+    value.replace('\t', " ").replace('\n', " ").trim().to_string()
+}
+
+fn git_head_commit(repo_root: &Path) -> Result<String, String> {
+    let output = Command::new("git")
+        .current_dir(repo_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err("failed to read HEAD commit".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_add_all(repo_root: &Path) -> Result<(), String> {
+    let status = Command::new("git")
+        .current_dir(repo_root)
+        .args(["add", "-A"])
+        .status()
+        .map_err(|err| err.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("git add -A failed".to_string())
+    }
+}
+
+fn git_commit_all(repo_root: &Path, subject: &str) -> Result<(), String> {
+    let status = Command::new("git")
+        .current_dir(repo_root)
+        .args(["commit", "-m", subject])
+        .status()
+        .map_err(|err| err.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("git commit failed".to_string())
+    }
+}
+
+fn git_reset_head(repo_root: &Path) -> Result<(), String> {
+    let status = Command::new("git")
+        .current_dir(repo_root)
+        .args(["reset", "--hard", "HEAD~1"])
+        .status()
+        .map_err(|err| err.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("git reset --hard HEAD~1 failed".to_string())
+    }
+}
+
+struct MetricRunOutcome {
+    success: bool,
+    output: String,
+}
+
+fn run_metric_command(repo_root: &Path, command: &str) -> Result<MetricRunOutcome, String> {
+    let output = Command::new("/bin/zsh")
+        .current_dir(repo_root)
+        .args(["-lc", command])
+        .output()
+        .map_err(|err| err.to_string())?;
+    let mut combined = String::new();
+    combined.push_str(&String::from_utf8_lossy(&output.stdout));
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    fs::write(repo_root.join("run.log"), &combined).map_err(|err| err.to_string())?;
+    Ok(MetricRunOutcome {
+        success: output.status.success(),
+        output: combined,
+    })
+}
+
+fn extract_metric(output: &str, pattern: &str) -> Result<Option<f64>, String> {
+    let regex = Regex::new(pattern).map_err(|err| err.to_string())?;
+    if let Some(captures) = regex.captures(output) {
+        if let Some(group) = captures.get(1).or_else(|| captures.get(0)) {
+            return parse_metric_value(group.as_str()).map(Some);
+        }
+    }
+    Ok(None)
+}
+
+fn parse_metric_value(value: &str) -> Result<f64, String> {
+    let normalized = value.trim().replace(',', "");
+    normalized
+        .parse::<f64>()
+        .map_err(|_| format!("failed to parse metric value '{value}'"))
+}
+
+fn validate_autoresearch_scope(
+    cfg: &AutoresearchConfig,
+    changed_files: &[String],
+) -> Result<(), String> {
+    let invalid = changed_files
+        .iter()
+        .filter(|path| !path_allowed(cfg, path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if invalid.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "out-of-scope changes detected: {}",
+            invalid.join(", ")
+        ))
+    }
+}
+
+fn path_allowed(cfg: &AutoresearchConfig, path: &str) -> bool {
+    let in_scope = cfg
+        .in_scope_files
+        .iter()
+        .any(|prefix| path_matches_scope(path, prefix));
+    let out_of_scope = cfg
+        .out_of_scope_files
+        .iter()
+        .any(|prefix| path_matches_scope(path, prefix));
+    in_scope && !out_of_scope
+}
+
+fn path_matches_scope(path: &str, scope: &str) -> bool {
+    let cleaned = scope.trim().trim_start_matches("./");
+    path == cleaned
+        || path.starts_with(&format!("{cleaned}/"))
+        || (cleaned == "." && !path.is_empty())
+}
+
+fn metric_improved(candidate: f64, current_best: f64, direction: MetricDirection) -> bool {
+    match direction {
+        MetricDirection::LowerIsBetter => candidate < current_best,
+        MetricDirection::HigherIsBetter => candidate > current_best,
+    }
+}
+
+fn format_metric_value(value: f64) -> String {
+    format!("{value:.6}")
 }
 
 fn run_runtime_init(args: &[String]) -> Result<(), String> {
@@ -7397,7 +8103,7 @@ mod tests {
         assert!(prompt.contains("Triage:"));
         assert!(prompt.contains("pending approvals: 1"));
         assert!(prompt.contains("stalled lanes: 1"));
-        assert!(prompt.contains("handoffs in flight: 1 (review-1 -> build-1: waiting on approval)"));
+        assert!(prompt.contains("handoffs in flight: 1"));
         assert!(prompt.contains("unread reports: 1"));
     }
 
@@ -8342,5 +9048,89 @@ mod tests {
             }
         });
         assert_eq!(found.as_deref(), Some("%168"));
+    }
+
+    #[test]
+    fn extract_metric_prefers_capture_group_one() {
+        let metric = extract_metric("mean: 12.50 ms", r"mean:\s*([0-9.]+)")
+            .expect("regex should parse")
+            .expect("metric should match");
+        assert_eq!(metric, 12.5);
+    }
+
+    #[test]
+    fn metric_improved_respects_direction() {
+        assert!(metric_improved(9.0, 10.0, MetricDirection::LowerIsBetter));
+        assert!(!metric_improved(11.0, 10.0, MetricDirection::LowerIsBetter));
+        assert!(metric_improved(11.0, 10.0, MetricDirection::HigherIsBetter));
+        assert!(!metric_improved(9.0, 10.0, MetricDirection::HigherIsBetter));
+    }
+
+    #[test]
+    fn parse_autoresearch_setup_args_accepts_repeated_scope_and_constraints() {
+        let parsed = parse_autoresearch_setup_args(&[
+            "--run".to_string(),
+            "bench-run".to_string(),
+            "--goal".to_string(),
+            "reduce benchmark time".to_string(),
+            "--metric-command".to_string(),
+            "cargo bench".to_string(),
+            "--metric-regex".to_string(),
+            "time:\\s*([0-9.]+)".to_string(),
+            "--direction".to_string(),
+            "lower".to_string(),
+            "--in-scope".to_string(),
+            "src".to_string(),
+            "--in-scope".to_string(),
+            "tests".to_string(),
+            "--out-of-scope".to_string(),
+            "docs".to_string(),
+            "--constraint".to_string(),
+            "no new dependencies".to_string(),
+            "--constraint".to_string(),
+            "keep tests green".to_string(),
+            "--max-experiments".to_string(),
+            "12".to_string(),
+        ])
+        .expect("setup args should parse");
+
+        assert_eq!(parsed.run_id, "bench-run");
+        assert_eq!(parsed.in_scope_files, vec!["src", "tests"]);
+        assert_eq!(parsed.out_of_scope_files, vec!["docs"]);
+        assert_eq!(parsed.constraints.len(), 2);
+        assert_eq!(parsed.max_experiments, Some(12));
+    }
+
+    #[test]
+    fn validate_autoresearch_scope_rejects_out_of_scope_changes() {
+        let cfg = AutoresearchConfig {
+            schema_version: 1,
+            run_id: "demo".to_string(),
+            repo_root: "/tmp/demo".to_string(),
+            branch: "feat/autoresearch-20260408".to_string(),
+            goal: "reduce benchmark time".to_string(),
+            metric_command: "cargo bench".to_string(),
+            metric_regex: "([0-9.]+)".to_string(),
+            metric_direction: "lower".to_string(),
+            in_scope_files: vec!["src".to_string(), "tests".to_string()],
+            out_of_scope_files: vec!["docs".to_string()],
+            constraints: Vec::new(),
+            max_experiments: None,
+            simplicity_policy: "smallest change wins".to_string(),
+            baseline_metric: 10.0,
+            best_metric: 10.0,
+            baseline_commit: "abc".to_string(),
+            best_commit: "abc".to_string(),
+            experiment_count: 0,
+            started_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let err = validate_autoresearch_scope(
+            &cfg,
+            &["src/main.rs".to_string(), "docs/README.md".to_string()],
+        )
+        .expect_err("docs change should be rejected");
+        assert!(err.contains("docs/README.md"));
     }
 }

@@ -13,6 +13,7 @@ Commands:
   resume              Alias for open
   attach              Attach to a named worker in the current or named run
   settings            Open the conductor settings editor
+  autoresearch        Run the lightweight autonomous experiment loop
   team                Start a configured team: team <count> <profile> [profile...]
   ralph               Start the wider ralph-style orchestration layout
   report              Report a worker finding back to the main conductor run
