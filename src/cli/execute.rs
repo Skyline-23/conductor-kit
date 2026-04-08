@@ -19,7 +19,7 @@ use crate::runtime::sessions::{
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
     ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, SCHEMA_VERSION,
-    SessionStatus, WorkerKind, WorkerRecord, WorkerState,
+    SessionStatus, TaskRecord, WorkerKind, WorkerRecord, WorkerState,
 };
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
@@ -1783,6 +1783,58 @@ fn build_scope_reset_prompt(worker_id: &str, summary: &str) -> String {
     )
 }
 
+fn infer_worker_profile(worker_id: &str) -> &str {
+    worker_id
+        .rsplit_once('-')
+        .map(|(stem, _)| stem)
+        .unwrap_or(worker_id)
+}
+
+fn build_relaunch_prompt_for_worker(worker: &WorkerRecord) -> String {
+    let summary = worker.current_summary.as_deref().unwrap_or("").trim();
+    match worker.reason.as_deref() {
+        Some("blocked_scope_reported_to_operator") => {
+            build_scope_reset_prompt(&worker.worker_id, summary)
+        }
+        Some("blocked_dependency_reported_to_operator") => {
+            build_dependency_handoff_prompt(&worker.worker_id, summary)
+        }
+        Some("blocked_evidence_reported_to_operator") => {
+            build_verify_blocker_prompt(&worker.worker_id, summary)
+        }
+        Some("completion_reported_to_operator")
+            if !matches!(worker.worker_kind, WorkerKind::Verifier) =>
+        {
+            build_verify_handoff_prompt(&worker.worker_id, summary)
+        }
+        Some("handoff_requested_from_lane")
+        | Some("handoff_received")
+        | Some("handoff_received_for_dependency")
+        | Some("handoff_received_for_evidence")
+        | Some("handoff_received_for_verification")
+        | Some("operator_followup_sent")
+        | Some("operator_relaunch_requested")
+        | Some("scope_retry_requested") => {
+            if summary.is_empty() {
+                render_team_starter_prompt(
+                    &worker.run_id,
+                    &worker.worker_id,
+                    infer_worker_profile(&worker.worker_id),
+                    None,
+                )
+            } else {
+                summary.to_string()
+            }
+        }
+        _ => render_team_starter_prompt(
+            &worker.run_id,
+            &worker.worker_id,
+            infer_worker_profile(&worker.worker_id),
+            if summary.is_empty() { None } else { Some(summary) },
+        ),
+    }
+}
+
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
         return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
@@ -1929,18 +1981,51 @@ fn run_close(args: &[String]) -> Result<(), String> {
 }
 
 fn run_relaunch(args: &[String]) -> Result<(), String> {
-    if args.len() < 2 {
+    let store = StateStore::new(resolve_state_root()?);
+    let (run_id, worker_id, prompt) = parse_relaunch_args(&store, args)?;
+    let payload = relaunch_worker_lane(&store, &run_id, &worker_id, &prompt)?;
+    print_json(&payload)
+}
+
+fn parse_relaunch_args(
+    store: &StateStore,
+    args: &[String],
+) -> Result<(String, String, String), String> {
+    if args.is_empty() {
         return Err(
-            "relaunch requires <worker_id> <prompt> or <run_id> <worker_id> <prompt>".to_string(),
+            "relaunch requires <worker_id> [prompt] or <run_id> <worker_id> [prompt]"
+                .to_string(),
         );
     }
-    let (run_id, worker_id, prompt) = parse_worker_message_args(args, "relaunch")?;
+    let default_run = default_run_id();
+    let (run_id, worker_id, prompt) = match args {
+        [worker_id] => {
+            let worker = store.read_worker(&default_run, worker_id)?;
+            (
+                default_run,
+                worker_id.clone(),
+                build_relaunch_prompt_for_worker(&worker),
+            )
+        }
+        [run_id, worker_id]
+            if worker_id.contains('-')
+                || worker_id == "main"
+                || worker_id == "surface"
+                || worker_id == "orchestrator-main" =>
+        {
+            let worker = store.read_worker(run_id, worker_id)?;
+            (
+                run_id.clone(),
+                worker_id.clone(),
+                build_relaunch_prompt_for_worker(&worker),
+            )
+        }
+        _ => parse_worker_message_args(args, "relaunch")?,
+    };
     if prompt.trim().is_empty() {
         return Err("relaunch prompt must not be empty".to_string());
     }
-    let store = StateStore::new(resolve_state_root()?);
-    let payload = relaunch_worker_lane(&store, &run_id, &worker_id, &prompt)?;
-    print_json(&payload)
+    Ok((run_id, worker_id, prompt))
 }
 
 fn parse_worker_message_args(
@@ -4104,7 +4189,55 @@ fn run_task_approval(args: &[String]) -> Result<(), String> {
             )
         }
     };
+    maybe_resume_lane_after_approval(&store, run_id, task_id, action, &task);
     print_json(&task)
+}
+
+fn maybe_resume_lane_after_approval(
+    store: &StateStore,
+    run_id: &str,
+    task_id: &str,
+    action: &str,
+    task: &TaskRecord,
+) {
+    let Some(owner) = task.owner.as_deref() else {
+        return;
+    };
+    match action {
+        "approved" => {
+            let reason = task
+                .approval_reason
+                .as_deref()
+                .filter(|reason| !reason.trim().is_empty())
+                .unwrap_or("continue from the current blocker");
+            let _ = ask_worker(
+                store,
+                run_id,
+                owner,
+                &format!(
+                    "Approval granted for task {task_id}. Resume the lane from the blocker, keep the scope narrow, and report progress with `conductor report {owner} \"<short result>\"`. Context: {reason}"
+                ),
+            );
+            let _ = push_text_to_main_pane(run_id, &format!("{owner}: approval cleared for {task_id}"));
+        }
+        "rejected" => {
+            let reason = task
+                .approval_reason
+                .as_deref()
+                .filter(|reason| !reason.trim().is_empty())
+                .unwrap_or("operator rejected the approval request");
+            let _ = ask_worker(
+                store,
+                run_id,
+                owner,
+                &format!(
+                    "Approval rejected for task {task_id}. Re-scope the lane or report a narrower blocker with `conductor report {owner} \"blocked: <reason>\"`. Context: {reason}"
+                ),
+            );
+            let _ = push_text_to_main_pane(run_id, &format!("{owner}: approval rejected for {task_id}"));
+        }
+        _ => {}
+    }
 }
 
 fn run_worker_upsert(args: &[String]) -> Result<(), String> {
@@ -7782,6 +7915,90 @@ mod tests {
                 && event.reason.as_deref() == Some("worker_to_worker_handoff")
                 && event.worker.as_deref() == Some("explore-1")
         }));
+    }
+
+    #[test]
+    fn build_relaunch_prompt_for_worker_recovers_the_last_lane_assignment() {
+        let worker = WorkerRecord {
+            worker_id: "explore-1".to_string(),
+            run_id: "demo-run".to_string(),
+            worker_kind: WorkerKind::Worker,
+            session_ref: None,
+            state: WorkerState::AwaitingReport,
+            current_task_id: None,
+            current_summary: Some(
+                "Inspect this repository for structure only. Identify top-level directories."
+                    .to_string(),
+            ),
+            terminal_label: Some("explore-1".to_string()),
+            last_heartbeat_at: Some(Utc::now()),
+            last_stdout_at: None,
+            last_event_at: Some(Utc::now()),
+            reason: Some("operator_followup_sent".to_string()),
+        };
+
+        let prompt = build_relaunch_prompt_for_worker(&worker);
+        assert!(prompt.contains("Inspect this repository for structure only."));
+    }
+
+    #[test]
+    fn approval_resumption_requeues_the_owner_lane() {
+        let root = unique_temp_dir("conductor-approval-resume");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Blocked,
+                current_task_id: Some("task-build-1".to_string()),
+                current_summary: Some("blocked: waiting for operator approval".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("blocked_approval_reported_to_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+        let task = TaskRecord {
+            task_id: "task-build-1".to_string(),
+            run_id: "demo-run".to_string(),
+            title: "Ship the build lane".to_string(),
+            description: None,
+            status: crate::runtime::types::TaskStatus::Pending,
+            owner: Some("build-1".to_string()),
+            claim: None,
+            depends_on: Vec::new(),
+            blocked_by: Vec::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            completed_at: None,
+            result: None,
+            error: None,
+            approval_status: Some(ApprovalStatus::Approved),
+            approval_reason: Some("approval granted".to_string()),
+            approval_reviewer: Some("operator".to_string()),
+            approval_updated_at: Some(Utc::now()),
+            metadata: serde_json::Map::new(),
+        };
+
+        maybe_resume_lane_after_approval(&store, "demo-run", "task-build-1", "approved", &task);
+
+        let worker = store
+            .read_worker("demo-run", "build-1")
+            .expect("worker should be readable");
+        assert_eq!(worker.state, WorkerState::AwaitingReport);
+        assert_eq!(worker.reason.as_deref(), Some("operator_followup_sent"));
+        let mailbox = store
+            .read_mailbox("demo-run", "build-1")
+            .expect("mailbox should be readable");
+        assert_eq!(mailbox.records.len(), 1);
+        assert!(mailbox.records[0].body.contains("Approval granted"));
     }
 
     #[test]
