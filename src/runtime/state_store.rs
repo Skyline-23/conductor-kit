@@ -545,7 +545,13 @@ impl StateStore {
         let silent_workers = workers
             .iter()
             .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
-            .filter(|worker| matches!(worker.state, crate::runtime::types::WorkerState::Working))
+            .filter(|worker| {
+                matches!(
+                    worker.state,
+                    crate::runtime::types::WorkerState::Working
+                        | crate::runtime::types::WorkerState::AwaitingReport
+                )
+            })
             .filter(|worker| {
                 worker
                     .last_event_at
@@ -567,6 +573,8 @@ impl StateStore {
                     worker.state,
                     crate::runtime::types::WorkerState::Idle
                         | crate::runtime::types::WorkerState::Done
+                        | crate::runtime::types::WorkerState::DonePendingVerification
+                        | crate::runtime::types::WorkerState::VerifiedComplete
                         | crate::runtime::types::WorkerState::Stopped
                         | crate::runtime::types::WorkerState::Unknown
                 )
@@ -964,7 +972,10 @@ fn derive_operator_decision(
     }
 
     if let Some(worker) = workers.iter().find(|worker| {
-        matches!(worker.state, crate::runtime::types::WorkerState::Done)
+        matches!(
+            worker.state,
+            crate::runtime::types::WorkerState::VerifiedComplete
+        )
             && matches!(worker.worker_kind, crate::runtime::types::WorkerKind::Verifier)
     }) {
         let reason = worker
@@ -982,7 +993,11 @@ fn derive_operator_decision(
     }
 
     if let Some(worker) = workers.iter().find(|worker| {
-        matches!(worker.state, crate::runtime::types::WorkerState::Done)
+        matches!(
+            worker.state,
+            crate::runtime::types::WorkerState::Done
+                | crate::runtime::types::WorkerState::DonePendingVerification
+        )
             && !matches!(worker.worker_kind, crate::runtime::types::WorkerKind::Verifier)
     }) {
         let reason = worker
@@ -1016,12 +1031,15 @@ fn derive_operator_decision(
     }
 
     if let Some(worker) = workers.iter().find(|worker| {
-        matches!(worker.state, crate::runtime::types::WorkerState::Working)
-            && worker
-                .reason
-                .as_deref()
-                .map(|reason| reason.starts_with("awaiting_report_nudged"))
-                .unwrap_or(false)
+        matches!(
+            worker.state,
+            crate::runtime::types::WorkerState::Working
+                | crate::runtime::types::WorkerState::AwaitingReport
+        ) && worker
+            .reason
+            .as_deref()
+            .map(|reason| reason.starts_with("awaiting_report_nudged"))
+            .unwrap_or(false)
     }) {
         return OperatorDecision {
             next_action: "wait-report".to_string(),
@@ -1054,7 +1072,11 @@ fn pending_handoffs_in_flight(workers: &[WorkerProjection]) -> bool {
                 reason == "handoff_requested_from_lane" || reason == "operator_followup_sent"
             })
             .unwrap_or(false)
-            && matches!(worker.state, crate::runtime::types::WorkerState::Working)
+            && matches!(
+                worker.state,
+                crate::runtime::types::WorkerState::Working
+                    | crate::runtime::types::WorkerState::AwaitingReport
+            )
     })
 }
 
@@ -1136,7 +1158,7 @@ mod tests {
         let workers = vec![WorkerProjection {
             worker_id: "build-1".to_string(),
             worker_kind: WorkerKind::Worker,
-            state: WorkerState::Done,
+            state: WorkerState::DonePendingVerification,
             current_task_id: None,
             current_summary: Some("done: prepared a staged migration plan".to_string()),
             last_heartbeat_at: None,
@@ -1189,7 +1211,7 @@ mod tests {
         let workers = vec![WorkerProjection {
             worker_id: "build-1".to_string(),
             worker_kind: WorkerKind::Worker,
-            state: WorkerState::Done,
+            state: WorkerState::DonePendingVerification,
             current_task_id: Some("task-1".to_string()),
             current_summary: Some("done: prepared a staged migration plan".to_string()),
             last_heartbeat_at: None,

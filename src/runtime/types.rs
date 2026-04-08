@@ -23,8 +23,11 @@ pub enum RunPhase {
 pub enum WorkerState {
     Idle,
     Working,
+    AwaitingReport,
     Blocked,
     Done,
+    DonePendingVerification,
+    VerifiedComplete,
     Failed,
     Stopped,
     Unknown,

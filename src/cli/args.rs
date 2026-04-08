@@ -221,13 +221,16 @@ pub fn parse_worker_state(value: &str) -> Result<WorkerState, String> {
     match value {
         "idle" => Ok(WorkerState::Idle),
         "working" => Ok(WorkerState::Working),
+        "awaiting_report" => Ok(WorkerState::AwaitingReport),
         "blocked" => Ok(WorkerState::Blocked),
         "done" => Ok(WorkerState::Done),
+        "done_pending_verification" => Ok(WorkerState::DonePendingVerification),
+        "verified_complete" => Ok(WorkerState::VerifiedComplete),
         "failed" => Ok(WorkerState::Failed),
         "stopped" => Ok(WorkerState::Stopped),
         "unknown" => Ok(WorkerState::Unknown),
         _ => Err(
-            "worker state must be idle, working, blocked, done, failed, stopped, or unknown"
+            "worker state must be idle, working, awaiting_report, blocked, done, done_pending_verification, verified_complete, failed, stopped, or unknown"
                 .to_string(),
         ),
     }

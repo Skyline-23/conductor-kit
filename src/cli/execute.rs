@@ -1483,7 +1483,7 @@ fn prepare_direct_team_panes(
             run_id: run_id.to_string(),
             worker_kind: worker_kind_for_type(&worker_type, &worker_id),
             session_ref: None,
-            state: WorkerState::Working,
+            state: WorkerState::AwaitingReport,
             current_task_id: None,
             current_summary: summary,
             terminal_label: Some(worker_id.clone()),
@@ -1631,7 +1631,7 @@ fn classify_worker_report(summary: &str) -> (WorkerState, String, WorkerReportKi
         || normalized.starts_with("final ")
     {
         (
-            WorkerState::Done,
+            WorkerState::DonePendingVerification,
             "completion_reported_to_operator".to_string(),
             WorkerReportKind::Done,
         )
@@ -1666,7 +1666,7 @@ fn classify_structured_worker_report(
             )
         }
         WorkerReportKind::Done => (
-            WorkerState::Done,
+            WorkerState::DonePendingVerification,
             "completion_reported_to_operator".to_string(),
             WorkerReportKind::Done,
         ),
@@ -2111,6 +2111,10 @@ fn report_to_main(
     let (next_state, next_reason, report_kind) = report_kind_override
         .map(|kind| classify_structured_worker_report(kind, summary))
         .unwrap_or_else(|| classify_worker_report(summary));
+    let next_state = match (report_kind, worker.worker_kind.clone()) {
+        (WorkerReportKind::Done, WorkerKind::Verifier) => WorkerState::VerifiedComplete,
+        _ => next_state,
+    };
     worker.current_summary = Some(summary.to_string());
     worker.state = next_state;
     worker.last_event_at = Some(now);
@@ -2602,7 +2606,13 @@ fn maybe_complete_run_after_operator_settlement(
     let has_live_lane = snapshot.workers.iter().any(|worker| {
         worker.worker_id != "main"
             && worker.worker_id != "orchestrator-main"
-            && matches!(worker.state, WorkerState::Working | WorkerState::Blocked | WorkerState::Idle)
+            && matches!(
+                worker.state,
+                WorkerState::Working
+                    | WorkerState::AwaitingReport
+                    | WorkerState::Blocked
+                    | WorkerState::Idle
+            )
     });
     if has_live_lane
         || snapshot.tasks.pending > 0
@@ -2873,7 +2883,12 @@ fn maybe_prompt_all_workers_idle(
     let all_idle = workers.iter().all(|worker| {
         matches!(
             worker.state,
-            WorkerState::Idle | WorkerState::Done | WorkerState::Stopped | WorkerState::Unknown
+            WorkerState::Idle
+                | WorkerState::Done
+                | WorkerState::DonePendingVerification
+                | WorkerState::VerifiedComplete
+                | WorkerState::Stopped
+                | WorkerState::Unknown
         )
     });
     if !all_idle || recently_prompted_all_idle(store, run_id, 60)? {
@@ -3231,10 +3246,14 @@ fn maybe_resume_context_prompt(
                 return None;
             }
             match worker.state {
-                WorkerState::Blocked | WorkerState::Done | WorkerState::Working => Some(format!(
-                    "- {} ({:?}): {}",
-                    worker.worker_id, worker.state, summary
-                )),
+                WorkerState::Blocked
+                | WorkerState::Done
+                | WorkerState::DonePendingVerification
+                | WorkerState::VerifiedComplete
+                | WorkerState::AwaitingReport
+                | WorkerState::Working => {
+                    Some(format!("- {} ({:?}): {}", worker.worker_id, worker.state, summary))
+                }
                 _ => None,
             }
         })
@@ -4964,7 +4983,9 @@ fn render_hud_strip(
         .filter(|worker| {
             matches!(
                 worker.state,
-                crate::runtime::types::WorkerState::Working | crate::runtime::types::WorkerState::Blocked
+                crate::runtime::types::WorkerState::Working
+                    | crate::runtime::types::WorkerState::AwaitingReport
+                    | crate::runtime::types::WorkerState::Blocked
             )
         })
         .count();
@@ -5048,6 +5069,13 @@ fn render_hud_strip(
 
 fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'static str {
     match worker.state {
+        WorkerState::AwaitingReport => {
+            if worker.reason.as_deref() == Some("stalled_non_reporting") {
+                "stalled"
+            } else {
+                "awaiting-report"
+            }
+        }
         WorkerState::Blocked => "blocked",
         WorkerState::Working => {
             if worker.reason.as_deref() == Some("stalled_non_reporting") {
@@ -5081,6 +5109,8 @@ fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'sta
             }
         }
         WorkerState::Done => "done",
+        WorkerState::DonePendingVerification => "done-awaiting-verify",
+        WorkerState::VerifiedComplete => "verified",
         WorkerState::Failed => "failed",
         WorkerState::Stopped => "stopped",
         WorkerState::Unknown => "unknown",
@@ -6728,7 +6758,7 @@ mod tests {
         assert_eq!(
             classify_worker_report("done: mapped the key docs and likely change files"),
             (
-                WorkerState::Done,
+                WorkerState::DonePendingVerification,
                 "completion_reported_to_operator".to_string(),
                 WorkerReportKind::Done
             )
@@ -6966,7 +6996,7 @@ mod tests {
                 run_id: "demo-run".to_string(),
                 worker_kind: WorkerKind::Verifier,
                 session_ref: None,
-                state: WorkerState::Done,
+                state: WorkerState::VerifiedComplete,
                 current_task_id: None,
                 current_summary: Some("done: verified the branch and it is clean".to_string()),
                 terminal_label: Some("verify-1".to_string()),
@@ -7013,7 +7043,7 @@ mod tests {
                 run_id: "demo-run".to_string(),
                 worker_kind: WorkerKind::Worker,
                 session_ref: None,
-                state: WorkerState::Done,
+                state: WorkerState::DonePendingVerification,
                 current_task_id: None,
                 current_summary: Some("done: built the migration path".to_string()),
                 terminal_label: Some("build-1".to_string()),
@@ -7049,7 +7079,7 @@ mod tests {
             .find("review-1 (Blocked)")
             .expect("blocked line should exist");
         let done_index = prompt
-            .find("build-1 (Done)")
+            .find("build-1 (DonePendingVerification)")
             .expect("done line should exist");
         assert!(blocked_index < done_index);
     }
@@ -7068,7 +7098,7 @@ mod tests {
                 run_id: "demo-run".to_string(),
                 worker_kind: WorkerKind::Worker,
                 session_ref: None,
-                state: WorkerState::Done,
+                state: WorkerState::DonePendingVerification,
                 current_task_id: None,
                 current_summary: Some("done: found the main risks".to_string()),
                 terminal_label: Some("review-1".to_string()),
