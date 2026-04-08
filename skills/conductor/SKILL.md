@@ -13,6 +13,7 @@ Primary entrypoints:
 - `conductor resume`
 - `conductor team`
 - `conductor ralph`
+- `conductor autoresearch`
 
 Default `conductor` usage should stay narrow. Start the primary surface session
 first, then expand with `$team` or `$ralph` only when orchestration is needed.
@@ -23,6 +24,7 @@ as `conductor team 4 explore build review verify`.
 Command shortcuts:
 - `$team`
 - `$ralph`
+- `$autoresearch`
 
 ## Intent
 

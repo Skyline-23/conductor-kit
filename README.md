@@ -29,6 +29,8 @@ Everything else is intentionally stripped away. No giant prompt hierarchy. No tm
   Expands the current run into a configured multi-worker team.
 - `skills/ralph/SKILL.md`
   Starts the wider resumable orchestration loop.
+- `skills/autoresearch/SKILL.md`
+  Runs a lightweight experiment loop on top of the conductor surface.
 - `skills/plan/SKILL.md`, `skills/implement/SKILL.md`,
   `skills/review/SKILL.md`, `skills/symphony/SKILL.md`
   Thin skill shims for the shared command surface.
@@ -99,6 +101,7 @@ The primary surface is:
 - `conductor resume`
 - `conductor team`
 - `conductor ralph`
+- `conductor autoresearch`
 - `conductor attach`
 
 `conductor` and `conductor init` bring up the primary surface session by default.
@@ -113,6 +116,7 @@ and description from the terminal.
 Installed skill shortcuts:
 - `$team`
 - `$ralph`
+- `$autoresearch`
 - `$plan`
 - `$implement`
 - `$review`
@@ -126,6 +130,9 @@ Operator commands:
 - `conductor hud-view`
 - `conductor hud-watch`
 - `conductor worker-log`
+- `conductor autoresearch setup --goal "..." --metric-command "..." --metric-regex "..." --direction lower --in-scope src`
+- `conductor autoresearch step "try a smaller code change"`
+- `conductor autoresearch summary`
 
 The default team profiles now include:
 - `explore`

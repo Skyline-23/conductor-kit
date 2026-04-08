@@ -9,6 +9,7 @@ fn repo_root() -> &'static Path {
 fn expected_skill_shims_exist() {
     for relative in [
         "skills/conductor/SKILL.md",
+        "skills/autoresearch/SKILL.md",
         "skills/team/SKILL.md",
         "skills/ralph/SKILL.md",
         "skills/plan/SKILL.md",
@@ -29,6 +30,8 @@ fn team_and_ralph_skills_force_cli_routing() {
         .expect("failed to read team skill");
     let ralph = fs::read_to_string(repo_root().join("skills/ralph/SKILL.md"))
         .expect("failed to read ralph skill");
+    let autoresearch = fs::read_to_string(repo_root().join("skills/autoresearch/SKILL.md"))
+        .expect("failed to read autoresearch skill");
 
     assert!(team.contains("conductor team <count> <profile> [profile...]"));
     assert!(team.contains("conductor team --prompt \"<current task>\""));
@@ -43,11 +46,15 @@ fn team_and_ralph_skills_force_cli_routing() {
     assert!(ralph.contains("conductor ralph"));
     assert!(ralph.contains("do not call built-in sub-agent or delegation tools"));
     assert!(ralph.contains("## Recovery & Lifecycle"));
+    assert!(autoresearch.contains("conductor autoresearch setup"));
+    assert!(autoresearch.contains("conductor autoresearch step"));
+    assert!(autoresearch.contains("conductor autoresearch summary"));
+    assert!(autoresearch.contains("lightweight Ralph-compatible loop"));
 }
 
 #[test]
 fn team_and_ralph_commands_exist() {
-    for relative in ["commands/team.md", "commands/ralph.md"] {
+    for relative in ["commands/team.md", "commands/ralph.md", "commands/autoresearch.md"] {
         assert!(
             repo_root().join(relative).is_file(),
             "missing required command doc: {relative}"
