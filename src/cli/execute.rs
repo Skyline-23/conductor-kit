@@ -2366,7 +2366,7 @@ fn ask_worker(
     let now = Utc::now();
     worker.last_event_at = Some(now);
     if !matches!(worker.state, WorkerState::Failed | WorkerState::Stopped) {
-        worker.state = WorkerState::Working;
+        worker.state = WorkerState::AwaitingReport;
     }
     worker.reason = Some("operator_followup_sent".to_string());
     let worker = store.upsert_worker(worker)?;
@@ -2690,7 +2690,7 @@ fn respawn_direct_team_worker_pane(
     }
 
     let mut next = worker;
-    next.state = WorkerState::Working;
+    next.state = WorkerState::AwaitingReport;
     next.last_event_at = Some(Utc::now());
     next.last_heartbeat_at = Some(Utc::now());
     next.reason = Some("direct_team_pane_respawned".to_string());
@@ -3262,12 +3262,18 @@ fn maybe_resume_context_prompt(
         let lower = line.to_ascii_lowercase();
         if lower.contains("(blocked)") {
             0
-        } else if lower.contains("(done)") {
+        } else if lower.contains("(awaitingreport)") {
             1
-        } else if lower.contains("(working)") {
+        } else if lower.contains("(donependingverification)") {
             2
-        } else {
+        } else if lower.contains("(verifiedcomplete)") {
             3
+        } else if lower.contains("(done)") {
+            4
+        } else if lower.contains("(working)") {
+            5
+        } else {
+            6
         }
     });
     lane_lines.truncate(4);
@@ -7317,7 +7323,7 @@ mod tests {
         let verify_worker = store
             .read_worker("demo-run", "verify-1")
             .expect("verify worker should be readable");
-        assert_eq!(verify_worker.state, WorkerState::Working);
+        assert_eq!(verify_worker.state, WorkerState::AwaitingReport);
         assert_eq!(
             verify_worker.reason.as_deref(),
             Some("operator_followup_sent")
@@ -7432,7 +7438,7 @@ mod tests {
         let verify_worker = store
             .read_worker("demo-run", "verify-1")
             .expect("verify worker should be readable");
-        assert_eq!(verify_worker.state, WorkerState::Working);
+        assert_eq!(verify_worker.state, WorkerState::AwaitingReport);
         assert_eq!(
             verify_worker.reason.as_deref(),
             Some("operator_followup_sent")
@@ -7498,7 +7504,7 @@ mod tests {
         let explore_worker = store
             .read_worker("demo-run", "explore-1")
             .expect("explore worker should be readable");
-        assert_eq!(explore_worker.state, WorkerState::Working);
+        assert_eq!(explore_worker.state, WorkerState::AwaitingReport);
         assert_eq!(
             explore_worker.reason.as_deref(),
             Some("operator_followup_sent")
@@ -7548,7 +7554,7 @@ mod tests {
         let review_worker = store
             .read_worker("demo-run", "review-1")
             .expect("review worker should be readable");
-        assert_eq!(review_worker.state, WorkerState::Working);
+        assert_eq!(review_worker.state, WorkerState::AwaitingReport);
         assert_eq!(review_worker.reason.as_deref(), Some("operator_followup_sent"));
     }
 
@@ -7628,7 +7634,7 @@ mod tests {
         let explore_worker = store
             .read_worker("demo-run", "explore-1")
             .expect("explore worker should be readable");
-        assert_eq!(explore_worker.state, WorkerState::Working);
+        assert_eq!(explore_worker.state, WorkerState::AwaitingReport);
         assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
         let events = store.read_events("demo-run").expect("events should be readable");
         assert!(events.iter().any(|event| {
