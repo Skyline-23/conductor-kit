@@ -134,9 +134,10 @@ Operator commands:
 - `conductor hud-view`
 - `conductor hud-watch`
 - `conductor worker-log`
-- `conductor autoresearch setup --goal "..." --metric-command "..." --metric-regex "..." --direction lower --in-scope src`
-- `conductor autoresearch step "try a smaller code change"`
-- `conductor autoresearch summary`
+- `conductor autoresearch`
+- `conductor autoresearch continue "try a smaller code change"`
+- `conductor autoresearch status`
+- `conductor autoresearch stop`
 
 Run `conductor install` once to link the managed skill shims into your active Codex home.
 Use `conductor uninstall` to remove only the conductor-managed skill shims from that Codex home.

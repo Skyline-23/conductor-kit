@@ -6,8 +6,9 @@ Loop:
 1. initialize or resume the current conductor run
 2. open the ops surface
 3. expand to a wider Codex team when the task is not trivial
-4. keep progress observable through the HUD and worker panes
-5. continue or close based on verification
+4. immediately re-enter the operator lane with the current focus and next action
+5. keep progress observable through the HUD and worker panes
+6. continue or close based on verification
 
 Default shape:
 - `conductor ralph`

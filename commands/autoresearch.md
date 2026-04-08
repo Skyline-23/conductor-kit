@@ -10,6 +10,8 @@ What it should do:
 - discard regressions automatically
 
 Core commands:
+- `conductor autoresearch`
 - `conductor autoresearch setup --goal "<goal>" --metric-command "<command>" --metric-regex "<regex>" --direction lower|higher --in-scope <path>`
-- `conductor autoresearch step "<short experiment description>"`
-- `conductor autoresearch summary`
+- `conductor autoresearch continue "<short experiment description>"`
+- `conductor autoresearch status`
+- `conductor autoresearch stop`

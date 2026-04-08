@@ -15,19 +15,20 @@ Use it when you have:
 - a concrete metric command
 - a bounded edit scope
 
-Run the setup first, then keep using `step` until the metric stops improving.
+Use `$autoresearch` as a single-entry loop. If the current run is not initialized yet, it should guide setup. If it is already initialized, it should show the current experiment state and continue from there.
 
 ## Execution Protocol
 
-1. Establish the experiment contract with:
+1. Start with:
+   - `conductor autoresearch`
+2. If setup is still needed, establish the experiment contract with:
    - `conductor autoresearch setup --goal "<goal>" --metric-command "<command>" --metric-regex "<regex>" --direction lower|higher --in-scope <path>`
-2. Confirm the baseline with:
-   - `conductor autoresearch summary`
 3. For each experiment attempt:
    - make one focused code change inside the allowed scope
-   - run `conductor autoresearch step "<short description>"`
-4. Periodically inspect the loop state with:
-   - `conductor autoresearch summary`
+   - run `conductor autoresearch continue "<short description>"`
+4. Periodically inspect or pause the loop with:
+   - `conductor autoresearch status`
+   - `conductor autoresearch stop`
 
 ## Constraints & Safety
 

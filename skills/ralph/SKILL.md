@@ -26,8 +26,9 @@ Use it when the task needs multi-step convergence, not just one fan-out.
    - `conductor ralph <run_id>`
    - `conductor ralph <run_id> <worker_count>`
 2. Let conductor widen the team only as much as the task justifies.
-3. Keep the operator lane focused on coordination, rerouting, and convergence.
-4. Wait for worker reports, then decide whether to continue, verify, or shut down.
+3. Expect Ralph to immediately re-enter the operator lane with the current focus, reason, and next command.
+4. Keep the operator lane focused on coordination, rerouting, and convergence.
+5. Wait for worker reports, then decide whether to continue, verify, or shut down.
 
 ## Constraints & Safety
 
