@@ -9,6 +9,7 @@ Use conductor when the task is large enough to benefit from explicit orchestrati
 
 Primary entrypoints:
 - `conductor install`
+- `conductor uninstall`
 - `conductor`
 - `conductor init`
 - `conductor resume`

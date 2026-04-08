@@ -8,6 +8,7 @@ conductor <command>
 Commands:
   conductor           Open the current run, or initialize it if missing
   install             Link the managed conductor skills into the active Codex home
+  uninstall           Remove the managed conductor skills from the active Codex home
   start               Start the lead Codex session and open the ops view
   init                Alias for start
   open                Open the ops view for the current or named run

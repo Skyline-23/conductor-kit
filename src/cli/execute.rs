@@ -60,6 +60,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
     match cmd {
         "" => run_default(),
         "install" => run_install(&args[1..]),
+        "uninstall" => run_uninstall(&args[1..]),
         "sync-skills" => run_sync_skills(&args[1..]),
         "autoresearch" => run_autoresearch(&args[1..]),
         "init" => run_start(&args[1..]),
@@ -3748,6 +3749,10 @@ fn run_install(args: &[String]) -> Result<(), String> {
     run_sync_skills(args)
 }
 
+fn run_uninstall(args: &[String]) -> Result<(), String> {
+    run_remove_skills(args)
+}
+
 fn run_sync_skills(_args: &[String]) -> Result<(), String> {
     let target_root = codex_skills_root()?;
     fs::create_dir_all(&target_root).map_err(|err| err.to_string())?;
@@ -3784,6 +3789,28 @@ fn run_sync_skills(_args: &[String]) -> Result<(), String> {
         "ok": true,
         "skills_root": target_root.display().to_string(),
         "installed": installed,
+    }))
+}
+
+fn run_remove_skills(_args: &[String]) -> Result<(), String> {
+    let target_root = codex_skills_root()?;
+    let mut removed = Vec::new();
+
+    for skill in managed_skill_names() {
+        let target = target_root.join(skill);
+        if target.symlink_metadata().is_ok() {
+            remove_existing_skill_target(&target)?;
+            removed.push(json!({
+                "name": skill,
+                "target": target.display().to_string(),
+            }));
+        }
+    }
+
+    print_json(&json!({
+        "ok": true,
+        "skills_root": target_root.display().to_string(),
+        "removed": removed,
     }))
 }
 
@@ -9222,5 +9249,18 @@ mod tests {
         assert!(names.contains(&"autoresearch"));
         assert!(names.contains(&"conductor"));
         assert!(names.contains(&"team"));
+    }
+
+    #[test]
+    fn remove_existing_skill_target_handles_symlink() {
+        let root = unique_temp_dir("conductor-remove-symlink");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let source = root.join("source");
+        fs::create_dir_all(&source).expect("failed to create source");
+        let target = root.join("target");
+        std::os::unix::fs::symlink(&source, &target).expect("failed to create symlink");
+
+        remove_existing_skill_target(&target).expect("failed to remove symlink");
+        assert!(!target.exists());
     }
 }

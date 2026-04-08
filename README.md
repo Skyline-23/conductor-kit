@@ -97,6 +97,7 @@ When running inside this repository, the CLI also falls back to `./config/conduc
 
 The primary surface is:
 - `conductor install`
+- `conductor uninstall`
 - `conductor`
 - `conductor init`
 - `conductor resume`
@@ -125,6 +126,7 @@ Installed skill shortcuts:
 
 Operator commands:
 - `conductor install`
+- `conductor uninstall`
 - `conductor help`
 - `conductor status`
 - `conductor doctor`
@@ -137,6 +139,7 @@ Operator commands:
 - `conductor autoresearch summary`
 
 Run `conductor install` once to link the managed skill shims into your active Codex home.
+Use `conductor uninstall` to remove only the conductor-managed skill shims from that Codex home.
 
 The default team profiles now include:
 - `explore`
