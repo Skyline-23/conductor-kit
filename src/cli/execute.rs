@@ -18,14 +18,14 @@ use crate::runtime::sessions::{
 };
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
-    ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, RunRecord,
-    SCHEMA_VERSION, SessionStatus, TaskRecord, WorkerKind, WorkerRecord, WorkerState,
+    ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, RunRecord, SCHEMA_VERSION,
+    SessionStatus, TaskRecord, WorkerKind, WorkerRecord, WorkerState,
 };
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
 use chrono::Utc;
+use crossterm::cursor::MoveTo;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
-use crossterm::cursor::MoveTo;
 use crossterm::terminal::{
     Clear as TerminalClear, ClearType as TerminalClearType, disable_raw_mode, enable_raw_mode,
 };
@@ -281,7 +281,9 @@ fn run_default() -> Result<(), String> {
     let surface_exists = tmux_session_exists(&surface_tmux_session_name(&run_id)).unwrap_or(false);
     match decide_default_entry_action(run_exists, surface_exists) {
         DefaultEntryAction::Start => run_start(&[]),
-        DefaultEntryAction::AttachSurface => attach_tmux_ops_session(&surface_tmux_session_name(&run_id)),
+        DefaultEntryAction::AttachSurface => {
+            attach_tmux_ops_session(&surface_tmux_session_name(&run_id))
+        }
     }
 }
 
@@ -1235,7 +1237,8 @@ fn run_attach_alias(args: &[String]) -> Result<(), String> {
 fn run_team(args: &[String]) -> Result<(), String> {
     let (_, cfg) = load_resolved_config()?;
     let available_profiles = configured_team_profiles(&cfg);
-    let (run_id, team_size, agent_names, prompt) = parse_team_invocation(args, &available_profiles)?;
+    let (run_id, team_size, agent_names, prompt) =
+        parse_team_invocation(args, &available_profiles)?;
 
     if team_size == 0 {
         return Err("team count must be at least 1".to_string());
@@ -1360,7 +1363,15 @@ fn infer_team_shape(available_profiles: &[String], prompt: Option<&str>) -> Vec<
     let lower = prompt.unwrap_or("").to_ascii_lowercase();
     let reconnaissance = matches_any(
         &lower,
-        &["map", "structure", "repository", "repo", "codebase", "inspect", "analyze"],
+        &[
+            "map",
+            "structure",
+            "repository",
+            "repo",
+            "codebase",
+            "inspect",
+            "analyze",
+        ],
     );
 
     if has("explore") {
@@ -1368,7 +1379,10 @@ fn infer_team_shape(available_profiles: &[String], prompt: Option<&str>) -> Vec<
     }
     if has("build")
         && !reconnaissance
-        && !matches_any(&lower, &["review", "verify", "audit", "regression", "test-only"])
+        && !matches_any(
+            &lower,
+            &["review", "verify", "audit", "regression", "test-only"],
+        )
     {
         inferred.push("build".to_string());
     }
@@ -1380,7 +1394,17 @@ fn infer_team_shape(available_profiles: &[String], prompt: Option<&str>) -> Vec<
         inferred.push("review".to_string());
     }
     if has("verify")
-        && matches_any(&lower, &["verify", "validation", "test", "evidence", "confirm", "repro"])
+        && matches_any(
+            &lower,
+            &[
+                "verify",
+                "validation",
+                "test",
+                "evidence",
+                "confirm",
+                "repro",
+            ],
+        )
     {
         inferred.push("verify".to_string());
     }
@@ -1447,7 +1471,10 @@ struct RalphLoopState {
 }
 
 fn ralph_loop_file(run_id: &str) -> Result<PathBuf, String> {
-    Ok(resolve_state_root()?.join("runs").join(run_id).join("ralph_loop.json"))
+    Ok(resolve_state_root()?
+        .join("runs")
+        .join(run_id)
+        .join("ralph_loop.json"))
 }
 
 fn read_ralph_loop_state(run_id: &str) -> Result<RalphLoopState, String> {
@@ -1496,11 +1523,7 @@ fn ensure_active_ralph_watch(run_id: &str) -> Result<(), String> {
     if !state.enabled {
         return Ok(());
     }
-    if state
-        .watcher_pid
-        .map(process_is_alive)
-        .unwrap_or(false)
-    {
+    if state.watcher_pid.map(process_is_alive).unwrap_or(false) {
         return Ok(());
     }
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
@@ -1667,15 +1690,11 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
             worker.worker_kind = desired_kind.clone();
             let _ = store.upsert_worker(worker)?;
         }
-        if existing.status == SessionStatus::Running || existing.status == SessionStatus::Starting
-        {
+        if existing.status == SessionStatus::Running || existing.status == SessionStatus::Starting {
             if existing.program == launch.program && existing.args == launch.args {
                 return Ok(());
             }
-            let _ = send_session_command(
-                Path::new(&existing.socket_path),
-                &SessionCommand::Stop,
-            );
+            let _ = send_session_command(Path::new(&existing.socket_path), &SessionCommand::Stop);
         }
     }
     let result = spawn_session(
@@ -1704,6 +1723,76 @@ fn should_use_native_resume(cfg: &Config, run: &RunRecord) -> bool {
                 run.current_phase,
                 RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
             ))
+}
+
+fn worker_host_pids_for_run(run_id: &str) -> Result<Vec<u32>, String> {
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,command="])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err("failed to inspect worker-host processes".to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let current_pid = std::process::id();
+    let pids = stdout
+        .lines()
+        .filter_map(|line| parse_worker_host_pid(line, run_id))
+        .filter(|pid| *pid != current_pid)
+        .collect::<Vec<_>>();
+    Ok(pids)
+}
+
+fn parse_worker_host_pid(line: &str, run_id: &str) -> Option<u32> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut parts = trimmed.splitn(2, char::is_whitespace);
+    let pid = parts.next()?.trim().parse::<u32>().ok()?;
+    let command = parts.next()?.trim();
+    if command.contains("conductor worker-host ")
+        && command.contains(&format!("worker-host {run_id} "))
+    {
+        return Some(pid);
+    }
+    None
+}
+
+fn process_exists(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn terminate_pid(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+}
+
+fn force_kill_pid(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status();
+}
+
+fn cleanup_orphaned_worker_hosts(run_id: &str) -> Result<(), String> {
+    let pids = worker_host_pids_for_run(run_id)?;
+    for pid in &pids {
+        terminate_pid(*pid);
+    }
+    if !pids.is_empty() {
+        thread::sleep(Duration::from_millis(250));
+    }
+    for pid in pids {
+        if process_exists(pid) {
+            force_kill_pid(pid);
+        }
+    }
+    Ok(())
 }
 
 fn cleanup_surface_tmux_session(run_id: &str) -> Result<(), String> {
@@ -1878,6 +1967,7 @@ fn cleanup_default_surface_state(store: &StateStore, run_id: &str) -> Result<(),
 
     stop_worker_session_if_present(store, run_id, "main");
     store.delete_session(run_id, "session-main")?;
+    cleanup_orphaned_worker_hosts(run_id)?;
     store.refresh_snapshot(run_id)?;
     Ok(())
 }
@@ -1898,7 +1988,8 @@ fn render_team_starter_prompt(
     };
     let current_task = match team_prompt {
         Some(prompt) => format!("Current task: {prompt}"),
-        None => "Current task: inspect the repository and produce a fast situational summary.".to_string(),
+        None => "Current task: inspect the repository and produce a fast situational summary."
+            .to_string(),
     };
     let base = format!(
         "You are {worker_id} in conductor run {run_id}. Profile: {worker_type}.\n\
@@ -2200,7 +2291,11 @@ fn build_relaunch_prompt_for_worker(worker: &WorkerRecord) -> String {
             &worker.run_id,
             &worker.worker_id,
             infer_worker_profile(&worker.worker_id),
-            if summary.is_empty() { None } else { Some(summary) },
+            if summary.is_empty() {
+                None
+            } else {
+                Some(summary)
+            },
             None,
         ),
     }
@@ -2208,7 +2303,9 @@ fn build_relaunch_prompt_for_worker(worker: &WorkerRecord) -> String {
 
 fn run_report(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string());
+        return Err(
+            "report requires <worker_id> <summary> or <run_id> <worker_id> <summary>".to_string(),
+        );
     }
 
     let (report_kind_override, args) = parse_report_kind(args)?;
@@ -2241,13 +2338,19 @@ fn run_report(args: &[String]) -> Result<(), String> {
 
 fn run_ask(args: &[String]) -> Result<(), String> {
     if args.len() < 2 {
-        return Err("ask requires <worker_id> <prompt> or <run_id> <worker_id> <prompt>".to_string());
+        return Err(
+            "ask requires <worker_id> <prompt> or <run_id> <worker_id> <prompt>".to_string(),
+        );
     }
 
     let (run_id, worker_id, prompt) = if args.len() >= 3 {
         let first = &args[0];
         let second = &args[1];
-        if second.contains('-') || second == "main" || second == "surface" || second == "orchestrator-main" {
+        if second.contains('-')
+            || second == "main"
+            || second == "surface"
+            || second == "orchestrator-main"
+        {
             (first.clone(), second.clone(), args[2..].join(" "))
         } else {
             (default_run_id(), first.clone(), args[1..].join(" "))
@@ -2277,7 +2380,12 @@ fn run_handoff(args: &[String]) -> Result<(), String> {
         let second = &args[1];
         let third = &args[2];
         if second.contains('-') || second == "main" || second == "surface" {
-            (first.clone(), second.clone(), third.clone(), args[3..].join(" "))
+            (
+                first.clone(),
+                second.clone(),
+                third.clone(),
+                args[3..].join(" "),
+            )
         } else {
             (
                 default_run_id(),
@@ -2314,7 +2422,7 @@ fn parse_report_kind(args: &[String]) -> Result<(Option<WorkerReportKind>, &[Str
         Some(other) => {
             return Err(format!(
                 "report --kind must be progress, blocked, done, or handoff; got {other}"
-            ))
+            ));
         }
         None => return Err("report --kind requires a value".to_string()),
     };
@@ -2364,8 +2472,7 @@ fn parse_relaunch_args(
 ) -> Result<(String, String, String), String> {
     if args.is_empty() {
         return Err(
-            "relaunch requires <worker_id> [prompt] or <run_id> <worker_id> [prompt]"
-                .to_string(),
+            "relaunch requires <worker_id> [prompt] or <run_id> <worker_id> [prompt]".to_string(),
         );
     }
     let default_run = default_run_id();
@@ -2411,7 +2518,11 @@ fn parse_worker_message_args(
     let (run_id, worker_id, text) = if args.len() >= 3 {
         let first = &args[0];
         let second = &args[1];
-        if second.contains('-') || second == "main" || second == "surface" || second == "orchestrator-main" {
+        if second.contains('-')
+            || second == "main"
+            || second == "surface"
+            || second == "orchestrator-main"
+        {
             (first.clone(), second.clone(), args[2..].join(" "))
         } else {
             (default_run_id(), first.clone(), args[1..].join(" "))
@@ -2468,21 +2579,14 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
         if !should_nudge {
             continue;
         }
-        if recently_emitted_reason(
-            &store,
-            run_id,
-            Some(&worker_id),
-            "worker_report_nudged",
-            20,
-        )? {
+        if recently_emitted_reason(&store, run_id, Some(&worker_id), "worker_report_nudged", 20)? {
             continue;
         }
         if let Some(pane_id) = pane_map.get(&worker_id) {
             let prompt = build_team_report_nudge_prompt(&worker_id);
             let _ = send_prompt_to_tmux_pane(pane_id, &prompt);
             let mut worker = worker;
-            let (next_reason, stalled) =
-                advance_team_nudge_reason(worker.reason.as_deref());
+            let (next_reason, stalled) = advance_team_nudge_reason(worker.reason.as_deref());
             worker.reason = Some(next_reason.to_string());
             worker.last_event_at = Some(Utc::now());
             let _ = store.upsert_worker(worker);
@@ -2499,10 +2603,7 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
                     task_id: None,
                     message_id: None,
                     reason: Some("worker_report_nudged".to_string()),
-                    context: serde_json::Map::from_iter([(
-                        "prompt".to_string(),
-                        json!(prompt),
-                    )]),
+                    context: serde_json::Map::from_iter([("prompt".to_string(), json!(prompt))]),
                 },
             );
             if stalled {
@@ -2513,10 +2614,8 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
                     "worker_stalled_waiting_for_report",
                     60,
                 )? {
-                    let _ = push_text_to_main_pane(
-                        run_id,
-                        &build_stalled_worker_prompt(&worker_id),
-                    );
+                    let _ =
+                        push_text_to_main_pane(run_id, &build_stalled_worker_prompt(&worker_id));
                     let _ = store.append_runtime_event(
                         run_id,
                         EventEnvelope {
@@ -2541,9 +2640,16 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
 }
 
 fn run_team_followup(args: &[String]) -> Result<(), String> {
-    let run_id = required_arg(args, 0, "team-followup requires <run_id> <tmux_session_name>")?;
-    let tmux_session_name =
-        required_arg(args, 1, "team-followup requires <run_id> <tmux_session_name>")?;
+    let run_id = required_arg(
+        args,
+        0,
+        "team-followup requires <run_id> <tmux_session_name>",
+    )?;
+    let tmux_session_name = required_arg(
+        args,
+        1,
+        "team-followup requires <run_id> <tmux_session_name>",
+    )?;
     let store = StateStore::new(resolve_state_root()?);
     if !tmux_session_exists(tmux_session_name)? {
         return Ok(());
@@ -2579,13 +2685,8 @@ fn report_to_main(
     let worker = store.upsert_worker(worker)?;
 
     let message_id = format!("report-{}-{}", worker_id, now.timestamp_millis());
-    let message = store.create_mailbox_message(
-        &run_id,
-        &message_id,
-        &worker_id,
-        "main",
-        &summary,
-    )?;
+    let message =
+        store.create_mailbox_message(&run_id, &message_id, &worker_id, "main", &summary)?;
     let _ = store.update_mailbox_status(&run_id, "main", &message_id, false)?;
     let event = EventEnvelope {
         schema_version: SCHEMA_VERSION,
@@ -2697,7 +2798,12 @@ fn maybe_handoff_blocked_lane(
                 &prompt,
             );
             if delivered {
-                let _ = mark_worker_reason(store, run_id, &verify_worker_id, "handoff_received_for_evidence");
+                let _ = mark_worker_reason(
+                    store,
+                    run_id,
+                    &verify_worker_id,
+                    "handoff_received_for_evidence",
+                );
             }
             let _ = push_text_to_main_pane(
                 run_id,
@@ -2733,7 +2839,12 @@ fn maybe_handoff_blocked_lane(
                 &prompt,
             );
             if delivered {
-                let _ = mark_worker_reason(store, run_id, &explore_worker_id, "handoff_received_for_dependency");
+                let _ = mark_worker_reason(
+                    store,
+                    run_id,
+                    &explore_worker_id,
+                    "handoff_received_for_dependency",
+                );
             }
             let _ = push_text_to_main_pane(
                 run_id,
@@ -2752,7 +2863,12 @@ fn maybe_handoff_blocked_lane(
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
             if delivered {
-                let _ = mark_worker_reason(store, run_id, &blocked_worker.worker_id, "scope_retry_requested");
+                let _ = mark_worker_reason(
+                    store,
+                    run_id,
+                    &blocked_worker.worker_id,
+                    "scope_retry_requested",
+                );
             }
             let _ = push_text_to_main_pane(
                 run_id,
@@ -2800,7 +2916,12 @@ fn maybe_handoff_completion_to_verify(
         &prompt,
     );
     if delivered {
-        let _ = mark_worker_reason(store, run_id, &verify_worker_id, "handoff_received_for_verification");
+        let _ = mark_worker_reason(
+            store,
+            run_id,
+            &verify_worker_id,
+            "handoff_received_for_verification",
+        );
     }
     let _ = push_text_to_main_pane(
         run_id,
@@ -2960,14 +3081,18 @@ fn handoff_worker_lane(
         .get("delivered")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let _ = append_handoff_event(store, run_id, from_worker, to_worker, "worker_to_worker_handoff", prompt);
+    let _ = append_handoff_event(
+        store,
+        run_id,
+        from_worker,
+        to_worker,
+        "worker_to_worker_handoff",
+        prompt,
+    );
     if delivered {
         let _ = mark_worker_reason(store, run_id, to_worker, "handoff_received");
     }
-    let _ = push_text_to_main_pane(
-        run_id,
-        &format!("{from_worker} -> {to_worker}: handoff"),
-    );
+    let _ = push_text_to_main_pane(run_id, &format!("{from_worker} -> {to_worker}: handoff"));
     Ok(json!({
         "run_id": run_id,
         "from_worker": from_worker,
@@ -3045,7 +3170,8 @@ fn settle_worker_lane(
 
     if let Some(session_id) = worker.session_ref.as_deref() {
         if let Ok(session) = store.read_session(run_id, session_id) {
-            let response = send_session_command(Path::new(&session.socket_path), &SessionCommand::Stop)?;
+            let response =
+                send_session_command(Path::new(&session.socket_path), &SessionCommand::Stop)?;
             return Ok(response.ok);
         }
     }
@@ -3079,15 +3205,39 @@ fn maybe_complete_run_after_operator_settlement(
         return Ok(false);
     }
 
+    let ralph_enabled = read_ralph_loop_state(run_id)
+        .map(|state| state.enabled)
+        .unwrap_or(false);
+    if ralph_enabled {
+        let settled = store.read_worker(run_id, worker_id).ok();
+        let accepted_outcome = settled
+            .as_ref()
+            .and_then(|worker| worker.reason.as_deref())
+            .map(|reason| reason == "accepted_by_operator")
+            .unwrap_or(false);
+        if !accepted_outcome {
+            let _ = push_text_to_main_pane(
+                run_id,
+                "ralph: all lanes settled; stay in the operator lane and decide the next move before closing the run",
+            );
+            return Ok(false);
+        }
+    }
+
     let mut run = store.read_run(run_id)?;
     run.active = false;
     run.current_phase = RunPhase::Complete;
     run.updated_at = Utc::now();
     run.completed_at = Some(Utc::now());
-    run.stop_reason = Some(format!("all lanes settled after operator closed {worker_id}"));
+    run.stop_reason = Some(format!(
+        "all lanes settled after operator closed {worker_id}"
+    ));
     store.write_run(&run)?;
     let _ = store.refresh_snapshot(run_id)?;
-    let _ = push_text_to_main_pane(run_id, "run: all lanes settled; closing the orchestration loop");
+    let _ = push_text_to_main_pane(
+        run_id,
+        "run: all lanes settled; closing the orchestration loop",
+    );
     Ok(true)
 }
 
@@ -3116,18 +3266,19 @@ fn respawn_direct_team_worker_pane(
     }
 
     let (_, cfg) = load_resolved_config()?;
-    let Some(worker_type) = cfg.workers.keys().find(|profile| sanitize_worker_stem(profile) == worker_stem) else {
+    let Some(worker_type) = cfg
+        .workers
+        .keys()
+        .find(|profile| sanitize_worker_stem(profile) == worker_stem)
+    else {
         return Ok(false);
     };
     let adapter = worker_adapter_config(&cfg, worker_type)?;
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
     let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, None)?;
     let use_inline_prompt = launch_uses_inline_prompt(&launch);
-    let pane_command = build_direct_launch_shell_command(
-        &cwd,
-        &launch,
-        use_inline_prompt.then_some(prompt),
-    );
+    let pane_command =
+        build_direct_launch_shell_command(&cwd, &launch, use_inline_prompt.then_some(prompt));
     let new_pane_id = run_tmux_capture([
         "split-window",
         "-h",
@@ -3201,7 +3352,11 @@ fn deliver_operator_followup(
     Ok(false)
 }
 
-fn push_worker_report_to_main_pane(run_id: &str, worker_id: &str, summary: &str) -> Result<bool, String> {
+fn push_worker_report_to_main_pane(
+    run_id: &str,
+    worker_id: &str,
+    summary: &str,
+) -> Result<bool, String> {
     let prompt = build_operator_report_prompt(worker_id, summary);
     push_text_to_main_pane(run_id, &prompt)
 }
@@ -3260,12 +3415,10 @@ fn schedule_team_report_nudge(run_id: &str, tmux_session_name: &str) -> Result<(
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let state_root = resolve_state_root()?;
     let config_path = resolve_config_path().ok();
-    let mut env_parts = vec![
-        format!(
-            "CONDUCTOR_STATE_DIR={}",
-            shell_quote_str(&state_root.display().to_string())
-        ),
-    ];
+    let mut env_parts = vec![format!(
+        "CONDUCTOR_STATE_DIR={}",
+        shell_quote_str(&state_root.display().to_string())
+    )];
     if let Some(config_path) = config_path {
         env_parts.push(format!(
             "CONDUCTOR_CONFIG={}",
@@ -3292,12 +3445,10 @@ fn schedule_team_followup_loop(run_id: &str, tmux_session_name: &str) -> Result<
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let state_root = resolve_state_root()?;
     let config_path = resolve_config_path().ok();
-    let mut env_parts = vec![
-        format!(
-            "CONDUCTOR_STATE_DIR={}",
-            shell_quote_str(&state_root.display().to_string())
-        ),
-    ];
+    let mut env_parts = vec![format!(
+        "CONDUCTOR_STATE_DIR={}",
+        shell_quote_str(&state_root.display().to_string())
+    )];
     if let Some(config_path) = config_path {
         env_parts.push(format!(
             "CONDUCTOR_CONFIG={}",
@@ -3319,8 +3470,18 @@ fn schedule_team_followup_loop(run_id: &str, tmux_session_name: &str) -> Result<
     Ok(())
 }
 
-fn recently_prompted_all_idle(store: &StateStore, run_id: &str, cooldown_secs: i64) -> Result<bool, String> {
-    recently_emitted_reason(store, run_id, Some("main"), "all_workers_idle_prompted", cooldown_secs)
+fn recently_prompted_all_idle(
+    store: &StateStore,
+    run_id: &str,
+    cooldown_secs: i64,
+) -> Result<bool, String> {
+    recently_emitted_reason(
+        store,
+        run_id,
+        Some("main"),
+        "all_workers_idle_prompted",
+        cooldown_secs,
+    )
 }
 
 fn recently_emitted_reason(
@@ -3489,14 +3650,21 @@ fn rebuild_direct_team_surface(
     ])?
     .trim()
     .to_string();
-    run_tmux(["select-pane", "-t", &first_pane_id, "-T", &pane_specs[0].title])?;
+    run_tmux([
+        "select-pane",
+        "-t",
+        &first_pane_id,
+        "-T",
+        &pane_specs[0].title,
+    ])?;
     if let Some(prompt) = &pane_specs[0].starter_prompt {
         send_prompt_to_tmux_pane(&first_pane_id, prompt)?;
     }
 
     let mut worker_pane_ids = vec![first_pane_id.clone()];
     for spec in pane_specs.iter().skip(1) {
-        let split_target = tallest_tmux_pane(&worker_pane_ids)?.unwrap_or_else(|| first_pane_id.clone());
+        let split_target =
+            tallest_tmux_pane(&worker_pane_ids)?.unwrap_or_else(|| first_pane_id.clone());
         let current_target_height = tmux_pane_height(&split_target)?;
         let desired_height = if current_target_height > 0 {
             std::cmp::max(3_u64, current_target_height / 2)
@@ -3628,9 +3796,21 @@ fn run_surface_attached_tmux_session(
         "#{pane_id}",
     ])?;
     run_tmux(["set-option", "-t", session_name, "status", "on"])?;
-    run_tmux(["set-option", "-t", session_name, "status-position", "bottom"])?;
+    run_tmux([
+        "set-option",
+        "-t",
+        session_name,
+        "status-position",
+        "bottom",
+    ])?;
     run_tmux(["set-option", "-t", session_name, "status-justify", "left"])?;
-    run_tmux(["set-option", "-t", session_name, "status-left-length", "240"])?;
+    run_tmux([
+        "set-option",
+        "-t",
+        session_name,
+        "status-left-length",
+        "240",
+    ])?;
     run_tmux(["set-option", "-t", session_name, "status-right", ""])?;
     run_tmux(["set-option", "-t", session_name, "status-interval", "1"])?;
     run_tmux([
@@ -3731,9 +3911,10 @@ fn maybe_resume_context_prompt(
                 | WorkerState::DonePendingVerification
                 | WorkerState::VerifiedComplete
                 | WorkerState::AwaitingReport
-                | WorkerState::Working => {
-                    Some(format!("- {} ({:?}): {}", worker.worker_id, worker.state, summary))
-                }
+                | WorkerState::Working => Some(format!(
+                    "- {} ({:?}): {}",
+                    worker.worker_id, worker.state, summary
+                )),
                 _ => None,
             }
         })
@@ -3797,12 +3978,16 @@ fn build_resume_triage_block(snapshot: &crate::runtime::types::RuntimeSnapshot) 
         .workers
         .iter()
         .filter(|worker| {
-            matches!(worker.state, WorkerState::Working | WorkerState::AwaitingReport)
-                && worker
-                    .reason
-                    .as_deref()
-                    .map(|reason| reason == "handoff_requested_from_lane" || reason == "handoff_received")
-                    .unwrap_or(false)
+            matches!(
+                worker.state,
+                WorkerState::Working | WorkerState::AwaitingReport
+            ) && worker
+                .reason
+                .as_deref()
+                .map(|reason| {
+                    reason == "handoff_requested_from_lane" || reason == "handoff_received"
+                })
+                .unwrap_or(false)
         })
         .count();
     let pending_handoffs = snapshot.monitor.pending_handoffs.max(direct_handoffs);
@@ -3812,7 +3997,10 @@ fn build_resume_triage_block(snapshot: &crate::runtime::types::RuntimeSnapshot) 
             .active_handoff
             .as_deref()
             .unwrap_or("pending handoff");
-        items.push(format!("handoffs in flight: {} ({detail})", pending_handoffs));
+        items.push(format!(
+            "handoffs in flight: {} ({detail})",
+            pending_handoffs
+        ));
     }
     if snapshot.mailbox.unread > 0 {
         items.push(format!("unread reports: {}", snapshot.mailbox.unread));
@@ -4080,7 +4268,9 @@ fn run_autoresearch(args: &[String]) -> Result<(), String> {
         "continue" => run_autoresearch_continue(&args[1..]),
         "status" | "summary" => run_autoresearch_summary(&args[1..]),
         "stop" => run_autoresearch_stop(&args[1..]),
-        _ => Err("autoresearch requires setup, step, continue, status, summary, or stop".to_string()),
+        _ => {
+            Err("autoresearch requires setup, step, continue, status, summary, or stop".to_string())
+        }
     }
 }
 
@@ -4093,10 +4283,8 @@ fn run_autoresearch_setup(args: &[String]) -> Result<(), String> {
     ensure_results_header(&repo_root)?;
 
     let baseline = run_metric_command(&repo_root, &parsed.metric_command)?;
-    let baseline_metric =
-        extract_metric(&baseline.output, &parsed.metric_regex)?.ok_or_else(|| {
-            "metric regex did not match the baseline output".to_string()
-        })?;
+    let baseline_metric = extract_metric(&baseline.output, &parsed.metric_regex)?
+        .ok_or_else(|| "metric regex did not match the baseline output".to_string())?;
     let baseline_commit = git_head_commit(&repo_root)?;
     let now = Utc::now();
 
@@ -4172,7 +4360,11 @@ fn run_autoresearch_step(args: &[String]) -> Result<(), String> {
 
     let (status, kept, metric_value) = match (outcome.success, metric) {
         (true, Some(value))
-            if metric_improved(value, cfg.best_metric, MetricDirection::from_stored(&cfg.metric_direction)?) =>
+            if metric_improved(
+                value,
+                cfg.best_metric,
+                MetricDirection::from_stored(&cfg.metric_direction)?,
+            ) =>
         {
             cfg.best_metric = value;
             cfg.best_commit = commit.clone();
@@ -4283,7 +4475,9 @@ fn run_autoresearch_stop(args: &[String]) -> Result<(), String> {
 
 fn run_autoresearch_wizard(run_id: &str) -> Result<(), String> {
     if !stdin().is_terminal() {
-        return Err("autoresearch is not initialized; run `conductor autoresearch setup ...`".to_string());
+        return Err(
+            "autoresearch is not initialized; run `conductor autoresearch setup ...`".to_string(),
+        );
     }
     let goal = prompt_required_line("Goal", None)?;
     let metric_command = prompt_required_line("Metric command", None)?;
@@ -4352,7 +4546,9 @@ fn prompt_line(label: &str, default: Option<&str>) -> Result<String, String> {
     print!("{prompt}");
     stdout().flush().map_err(|err| err.to_string())?;
     let mut buffer = String::new();
-    stdin().read_line(&mut buffer).map_err(|err| err.to_string())?;
+    stdin()
+        .read_line(&mut buffer)
+        .map_err(|err| err.to_string())?;
     let trimmed = buffer.trim().to_string();
     if trimmed.is_empty() {
         Ok(default.unwrap_or("").to_string())
@@ -4417,9 +4613,8 @@ fn parse_autoresearch_setup_args(args: &[String]) -> Result<AutoresearchSetupArg
                 idx += 2;
             }
             "--constraint" => {
-                constraints.push(
-                    required_arg(args, idx + 1, "--constraint requires text")?.to_string(),
-                );
+                constraints
+                    .push(required_arg(args, idx + 1, "--constraint requires text")?.to_string());
                 idx += 2;
             }
             "--max-experiments" => {
@@ -4427,20 +4622,15 @@ fn parse_autoresearch_setup_args(args: &[String]) -> Result<AutoresearchSetupArg
                 max_experiments = if raw.eq_ignore_ascii_case("unlimited") {
                     None
                 } else {
-                    Some(
-                        raw.parse::<usize>()
-                            .map_err(|_| "--max-experiments must be a positive integer or unlimited".to_string())?,
-                    )
+                    Some(raw.parse::<usize>().map_err(|_| {
+                        "--max-experiments must be a positive integer or unlimited".to_string()
+                    })?)
                 };
                 idx += 2;
             }
             "--simplicity-policy" => {
-                simplicity_policy = required_arg(
-                    args,
-                    idx + 1,
-                    "--simplicity-policy requires text",
-                )?
-                .to_string();
+                simplicity_policy =
+                    required_arg(args, idx + 1, "--simplicity-policy requires text")?.to_string();
                 idx += 2;
             }
             unknown => {
@@ -4456,11 +4646,9 @@ fn parse_autoresearch_setup_args(args: &[String]) -> Result<AutoresearchSetupArg
     Ok(AutoresearchSetupArgs {
         run_id,
         goal: goal.ok_or_else(|| "--goal is required".to_string())?,
-        metric_command: metric_command
-            .ok_or_else(|| "--metric-command is required".to_string())?,
+        metric_command: metric_command.ok_or_else(|| "--metric-command is required".to_string())?,
         metric_regex: metric_regex.ok_or_else(|| "--metric-regex is required".to_string())?,
-        metric_direction: metric_direction
-            .ok_or_else(|| "--direction is required".to_string())?,
+        metric_direction: metric_direction.ok_or_else(|| "--direction is required".to_string())?,
         in_scope_files,
         out_of_scope_files,
         constraints,
@@ -4471,7 +4659,9 @@ fn parse_autoresearch_setup_args(args: &[String]) -> Result<AutoresearchSetupArg
 
 fn parse_autoresearch_step_args(args: &[String]) -> Result<(String, String), String> {
     if args.is_empty() {
-        return Err("autoresearch step requires <description> or --run <run_id> <description>".to_string());
+        return Err(
+            "autoresearch step requires <description> or --run <run_id> <description>".to_string(),
+        );
     }
     let mut idx = 0;
     let mut run_id = default_run_id();
@@ -4592,10 +4782,7 @@ fn git_changed_files(repo_root: &Path) -> Result<Vec<String>, String> {
         return Err("failed to read git status".to_string());
     }
     let raw = String::from_utf8_lossy(&output.stdout);
-    Ok(raw
-        .lines()
-        .filter_map(parse_porcelain_path)
-        .collect())
+    Ok(raw.lines().filter_map(parse_porcelain_path).collect())
 }
 
 fn parse_porcelain_path(line: &str) -> Option<String> {
@@ -4632,7 +4819,9 @@ fn ensure_autoresearch_branch(repo_root: &Path) -> Result<String, String> {
             .map_err(|err| err.to_string())?
     };
     if !status.success() {
-        return Err(format!("failed to switch to autoresearch branch '{branch}'"));
+        return Err(format!(
+            "failed to switch to autoresearch branch '{branch}'"
+        ));
     }
     Ok(branch)
 }
@@ -4666,11 +4855,8 @@ fn ensure_results_header(repo_root: &Path) -> Result<(), String> {
     if path.exists() {
         return Ok(());
     }
-    fs::write(
-        path,
-        "experiment\tcommit\tmetric\tstatus\tdescription\n",
-    )
-    .map_err(|err| err.to_string())
+    fs::write(path, "experiment\tcommit\tmetric\tstatus\tdescription\n")
+        .map_err(|err| err.to_string())
 }
 
 fn append_results_row(repo_root: &Path, row: &ExperimentRow) -> Result<(), String> {
@@ -4714,7 +4900,11 @@ fn read_results_rows(repo_root: &Path) -> Result<Vec<ExperimentRow>, String> {
 }
 
 fn sanitize_tsv(value: &str) -> String {
-    value.replace('\t', " ").replace('\n', " ").trim().to_string()
+    value
+        .replace('\t', " ")
+        .replace('\n', " ")
+        .trim()
+        .to_string()
 }
 
 fn git_head_commit(repo_root: &Path) -> Result<String, String> {
@@ -5456,7 +5646,7 @@ fn run_task_approval(args: &[String]) -> Result<(), String> {
         _ => {
             return Err(
                 "task-approval action must be pending, approved, rejected, or clear".to_string(),
-            )
+            );
         }
     };
     maybe_resume_lane_after_approval(&store, run_id, task_id, action, &task);
@@ -5488,7 +5678,8 @@ fn maybe_resume_lane_after_approval(
                     "Approval granted for task {task_id}. Resume the lane from the blocker, keep the scope narrow, and report progress with `conductor report {owner} \"<short result>\"`. Context: {reason}"
                 ),
             );
-            let _ = push_text_to_main_pane(run_id, &format!("{owner}: approval cleared for {task_id}"));
+            let _ =
+                push_text_to_main_pane(run_id, &format!("{owner}: approval cleared for {task_id}"));
         }
         "rejected" => {
             let reason = task
@@ -5504,7 +5695,10 @@ fn maybe_resume_lane_after_approval(
                     "Approval rejected for task {task_id}. Re-scope the lane or report a narrower blocker with `conductor report {owner} \"blocked: <reason>\"`. Context: {reason}"
                 ),
             );
-            let _ = push_text_to_main_pane(run_id, &format!("{owner}: approval rejected for {task_id}"));
+            let _ = push_text_to_main_pane(
+                run_id,
+                &format!("{owner}: approval rejected for {task_id}"),
+            );
         }
         _ => {}
     }
@@ -6191,25 +6385,15 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
     println!("next       {}", next_operator_action(&snapshot));
     println!(
         "focus      {}",
-        snapshot
-            .decision
-            .focus_worker
-            .as_deref()
-            .unwrap_or("-")
+        snapshot.decision.focus_worker.as_deref().unwrap_or("-")
     );
     println!("why        {}", snapshot.decision.reason);
     println!();
     println!("workers");
     println!("-------");
     for worker in snapshot.workers {
-        let task_id = worker
-            .current_task_id
-            .as_deref()
-            .unwrap_or("-");
-        let summary = worker
-            .current_summary
-            .as_deref()
-            .unwrap_or("-");
+        let task_id = worker.current_task_id.as_deref().unwrap_or("-");
+        let summary = worker.current_summary.as_deref().unwrap_or("-");
         println!(
             "{} | kind={:?} | state={:?} | task={} | summary={} | lane={}",
             worker.worker_id,
@@ -6224,10 +6408,7 @@ fn run_hud_view(args: &[String]) -> Result<(), String> {
 }
 
 fn run_next(args: &[String]) -> Result<(), String> {
-    let run_id = args
-        .first()
-        .cloned()
-        .unwrap_or_else(default_run_id);
+    let run_id = args.first().cloned().unwrap_or_else(default_run_id);
     let store = StateStore::new(resolve_state_root()?);
     let snapshot = store.read_snapshot(&run_id)?;
     let focus_reason = snapshot
@@ -6355,25 +6536,15 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
         println!("next       {}", next_operator_action(&snapshot));
         println!(
             "focus      {}",
-            snapshot
-                .decision
-                .focus_worker
-                .as_deref()
-                .unwrap_or("-")
+            snapshot.decision.focus_worker.as_deref().unwrap_or("-")
         );
         println!("why        {}", snapshot.decision.reason);
         println!();
         println!("workers");
         println!("-------");
         for worker in snapshot.workers {
-            let task_id = worker
-                .current_task_id
-                .as_deref()
-                .unwrap_or("-");
-            let summary = worker
-                .current_summary
-                .as_deref()
-                .unwrap_or("-");
+            let task_id = worker.current_task_id.as_deref().unwrap_or("-");
+            let summary = worker.current_summary.as_deref().unwrap_or("-");
             println!(
                 "{} | kind={:?} | state={:?} | task={} | summary={} | lane={}",
                 worker.worker_id,
@@ -6433,10 +6604,7 @@ fn run_hud_strip_once(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn render_hud_strip(
-    snapshot: &crate::runtime::types::RuntimeSnapshot,
-    ansi: bool,
-) -> String {
+fn render_hud_strip(snapshot: &crate::runtime::types::RuntimeSnapshot, ansi: bool) -> String {
     let authority = snapshot
         .authority
         .as_ref()
@@ -6547,7 +6715,9 @@ fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'sta
             if worker
                 .reason
                 .as_deref()
-                .map(|reason| reason == "direct_team_bootstrapping" || reason == "direct_team_pane_respawned")
+                .map(|reason| {
+                    reason == "direct_team_bootstrapping" || reason == "direct_team_pane_respawned"
+                })
                 .unwrap_or(false)
             {
                 "bootstrapping"
@@ -6569,12 +6739,12 @@ fn worker_lane_status(worker: &crate::runtime::types::WorkerProjection) -> &'sta
             {
                 "awaiting-report"
             } else {
-            let summary = worker.current_summary.as_deref().unwrap_or("");
-            if summary.starts_with("direct ") {
-                "awaiting-report"
-            } else {
-                "active"
-            }
+                let summary = worker.current_summary.as_deref().unwrap_or("");
+                if summary.starts_with("direct ") {
+                    "awaiting-report"
+                } else {
+                    "active"
+                }
             }
         }
         WorkerState::Idle => {
@@ -7038,7 +7208,10 @@ fn build_launch_shell_command(
     let mut command_parts = vec![shell_quote_str(&launch.program)];
     command_parts.extend(launch.args.iter().map(|arg| shell_quote_str(arg)));
     if let Some(payload) = &launch.stdin_payload {
-        env_parts.push(format!("CONDUCTOR_WORKER_STDIN={}", shell_quote_str(payload)));
+        env_parts.push(format!(
+            "CONDUCTOR_WORKER_STDIN={}",
+            shell_quote_str(payload)
+        ));
     }
     let env_prefix = if env_parts.is_empty() {
         String::new()
@@ -7260,12 +7433,7 @@ fn ensure_tmux_ops_session(
     }
 
     if include_hud && pane_specs.len() > 1 {
-        run_tmux([
-            "select-layout",
-            "-t",
-            &format!("{session_name}:0"),
-            "tiled",
-        ])?;
+        run_tmux(["select-layout", "-t", &format!("{session_name}:0"), "tiled"])?;
         run_tmux([
             "resize-pane",
             "-t",
@@ -7339,7 +7507,12 @@ fn sync_existing_tmux_ops_session(
     }
     let mut stack_target = title_to_pane
         .iter()
-        .filter(|(title, _)| title.starts_with("explore-") || title.starts_with("build-") || title.starts_with("review-") || title.starts_with("verify-"))
+        .filter(|(title, _)| {
+            title.starts_with("explore-")
+                || title.starts_with("build-")
+                || title.starts_with("review-")
+                || title.starts_with("verify-")
+        })
         .map(|(_, pane_id)| pane_id.clone())
         .last()
         .unwrap_or_else(|| main_pane_id.clone());
@@ -7348,7 +7521,11 @@ fn sync_existing_tmux_ops_session(
         if title_to_pane.contains_key(&spec.title) {
             continue;
         }
-        let split_direction = if stack_target == main_pane_id { "-h" } else { "-v" };
+        let split_direction = if stack_target == main_pane_id {
+            "-h"
+        } else {
+            "-v"
+        };
         let new_pane_id = run_tmux_capture([
             "split-window",
             split_direction,
@@ -7491,7 +7668,14 @@ fn collapse_tmux_surface_to_main(session_name: &str) -> Result<(), String> {
 
 fn find_main_pane_id(session_name: &str, panes: &str) -> Result<String, String> {
     let target = format!("{session_name}:0");
-    if let Ok(configured) = run_tmux_capture(["show-options", "-w", "-v", "-t", &target, "@conductor_main_pane"]) {
+    if let Ok(configured) = run_tmux_capture([
+        "show-options",
+        "-w",
+        "-v",
+        "-t",
+        &target,
+        "@conductor_main_pane",
+    ]) {
         let configured = configured.trim().to_string();
         if !configured.is_empty()
             && panes
@@ -7508,12 +7692,18 @@ fn find_main_pane_id(session_name: &str, panes: &str) -> Result<String, String> 
         let pane_index = parts.next().unwrap_or_default().trim();
         let pane_title = parts.next().unwrap_or_default().trim();
         let pane_command = parts.next().unwrap_or_default().trim();
-        if pane_title == "main" || pane_title == "conductor-kit" || pane_index == "0" || pane_command.contains("codex") {
+        if pane_title == "main"
+            || pane_title == "conductor-kit"
+            || pane_index == "0"
+            || pane_command.contains("codex")
+        {
             return Ok(pane_id);
         }
     }
 
-    Err(format!("could not find the main pane in tmux session {session_name}"))
+    Err(format!(
+        "could not find the main pane in tmux session {session_name}"
+    ))
 }
 
 fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
@@ -7976,7 +8166,10 @@ mod tests {
         let mut host_catalog = HostCatalog::default();
         host_catalog.claude = VendorCatalog {
             default_model: Some("claude-sonnet-4-6".to_string()),
-            models: vec!["claude-sonnet-4-6".to_string(), "claude-opus-4-1".to_string()],
+            models: vec![
+                "claude-sonnet-4-6".to_string(),
+                "claude-opus-4-1".to_string(),
+            ],
             reasoning_levels: BTreeMap::from([(
                 "claude-sonnet-4-6".to_string(),
                 vec!["low".to_string(), "medium".to_string(), "high".to_string()],
@@ -8206,7 +8399,11 @@ mod tests {
                 && event.reason.as_deref() == Some("main_pane_unavailable")
         }));
         assert!(events.iter().any(|event| {
-            event.message_id.as_deref().map(|id| id.starts_with("report-explore-1-")).unwrap_or(false)
+            event
+                .message_id
+                .as_deref()
+                .map(|id| id.starts_with("report-explore-1-"))
+                .unwrap_or(false)
                 && matches!(
                     event.event,
                     EventKind::MailboxMessageNotified | EventKind::MailboxMessageDelivered
@@ -8293,12 +8490,14 @@ mod tests {
 
     #[test]
     fn build_operator_followup_prompt_only_expands_terminal_reports() {
-        assert!(build_operator_followup_prompt(
-            "explore-1",
-            "mapped the key docs",
-            WorkerReportKind::Progress
-        )
-        .is_none());
+        assert!(
+            build_operator_followup_prompt(
+                "explore-1",
+                "mapped the key docs",
+                WorkerReportKind::Progress
+            )
+            .is_none()
+        );
         let blocked = build_operator_followup_prompt(
             "review-1",
             "blocked: waiting on approval",
@@ -8324,10 +8523,8 @@ mod tests {
 
     #[test]
     fn build_verify_handoff_prompt_keeps_the_completion_scope_narrow() {
-        let prompt = build_verify_handoff_prompt(
-            "build-1",
-            "done: prepared a staged migration plan",
-        );
+        let prompt =
+            build_verify_handoff_prompt("build-1", "done: prepared a staged migration plan");
         assert!(prompt.contains("Verify the completion report from build-1."));
         assert!(prompt.contains("Completion report: done: prepared a staged migration plan"));
     }
@@ -8344,20 +8541,16 @@ mod tests {
 
     #[test]
     fn build_dependency_handoff_prompt_targets_the_explore_lane() {
-        let prompt = build_dependency_handoff_prompt(
-            "build-1",
-            "blocked: waiting on an MCP dependency",
-        );
+        let prompt =
+            build_dependency_handoff_prompt("build-1", "blocked: waiting on an MCP dependency");
         assert!(prompt.contains("Unblock the dependency reported by build-1."));
         assert!(prompt.contains("conductor report explore-1"));
     }
 
     #[test]
     fn build_scope_reset_prompt_keeps_the_retry_narrow() {
-        let prompt = build_scope_reset_prompt(
-            "review-1",
-            "blocked: scope is too broad and needs context",
-        );
+        let prompt =
+            build_scope_reset_prompt("review-1", "blocked: scope is too broad and needs context");
         assert!(prompt.contains("Narrow the scope for review-1."));
         assert!(prompt.contains("conductor report review-1"));
     }
@@ -8425,8 +8618,14 @@ mod tests {
         let prompt = build_all_workers_idle_prompt(
             "demo-run",
             &[
-                ("explore-1".to_string(), "mapped the entry points".to_string()),
-                ("review-1".to_string(), "flagged two risky seams".to_string()),
+                (
+                    "explore-1".to_string(),
+                    "mapped the entry points".to_string(),
+                ),
+                (
+                    "review-1".to_string(),
+                    "flagged two risky seams".to_string(),
+                ),
             ],
         );
         assert!(prompt.contains("All team workers in run demo-run are idle."));
@@ -8470,7 +8669,9 @@ mod tests {
         assert!(prompt.contains("operator approval"));
         assert!(prompt.contains("Active lane context:"));
         assert!(prompt.contains("review-1 (Blocked):"));
-        assert!(prompt.contains("Suggested command: conductor task-approval demo-run task-review-1"));
+        assert!(
+            prompt.contains("Suggested command: conductor task-approval demo-run task-review-1")
+        );
     }
 
     #[test]
@@ -8549,7 +8750,12 @@ mod tests {
             .init_run("demo-run", "orchestrator-main")
             .expect("failed to init run");
         store
-            .create_task("demo-run", "task-review-1", "Review approval", Some("review-1".to_string()))
+            .create_task(
+                "demo-run",
+                "task-review-1",
+                "Review approval",
+                Some("review-1".to_string()),
+            )
             .expect("failed to create task");
         store
             .update_task_approval(
@@ -8590,7 +8796,9 @@ mod tests {
                 reason: Some("handoff_requested_from_lane".to_string()),
             },
         ] {
-            store.upsert_worker(worker).expect("failed to upsert worker");
+            store
+                .upsert_worker(worker)
+                .expect("failed to upsert worker");
         }
         store
             .create_mailbox_message(
@@ -8619,12 +8827,9 @@ mod tests {
         let mut snapshot = sample_snapshot();
         snapshot.decision.next_action = "relaunch-stalled".to_string();
         snapshot.decision.focus_worker = Some("explore-1".to_string());
-        let command = suggested_operator_command(
-            "demo-run",
-            &snapshot,
-            Some("stalled_non_reporting"),
-        )
-        .expect("command should exist");
+        let command =
+            suggested_operator_command("demo-run", &snapshot, Some("stalled_non_reporting"))
+                .expect("command should exist");
         assert!(command.contains("conductor relaunch explore-1"));
     }
 
@@ -8692,7 +8897,9 @@ mod tests {
                 reason: Some("blocked_approval_reported_to_operator".to_string()),
             },
         ] {
-            store.upsert_worker(worker).expect("failed to upsert worker");
+            store
+                .upsert_worker(worker)
+                .expect("failed to upsert worker");
         }
         store
             .refresh_snapshot("demo-run")
@@ -8777,14 +8984,20 @@ mod tests {
             })
             .expect("failed to upsert worker");
 
-        let completed = maybe_complete_run_after_operator_settlement(&store, "demo-run", "verify-1")
-            .expect("run completion check should succeed");
+        let completed =
+            maybe_complete_run_after_operator_settlement(&store, "demo-run", "verify-1")
+                .expect("run completion check should succeed");
         assert!(completed);
 
         let run = store.read_run("demo-run").expect("run should still exist");
         assert!(!run.active);
         assert_eq!(run.current_phase, RunPhase::Complete);
-        assert!(run.stop_reason.as_deref().unwrap_or_default().contains("verify-1"));
+        assert!(
+            run.stop_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("verify-1")
+        );
     }
 
     #[test]
@@ -8828,8 +9041,14 @@ mod tests {
             })
             .expect("failed to upsert worker");
 
-        report_to_main(&store, "demo-run", "explore-1", "done: mapped the key docs", None)
-            .expect("report should succeed");
+        report_to_main(
+            &store,
+            "demo-run",
+            "explore-1",
+            "done: mapped the key docs",
+            None,
+        )
+        .expect("report should succeed");
 
         let events = store
             .read_events("demo-run")
@@ -8994,7 +9213,9 @@ mod tests {
         )
         .expect("report should succeed");
 
-        let task = store.read_task("demo-run", "task-1").expect("task should be readable");
+        let task = store
+            .read_task("demo-run", "task-1")
+            .expect("task should be readable");
         assert_eq!(task.approval_status, Some(ApprovalStatus::Pending));
         assert!(
             task.approval_reason
@@ -9062,7 +9283,9 @@ mod tests {
             verify_worker.reason.as_deref(),
             Some("operator_followup_sent")
         );
-        let events = store.read_events("demo-run").expect("events should be readable");
+        let events = store
+            .read_events("demo-run")
+            .expect("events should be readable");
         assert!(events.iter().any(|event| {
             event.event == EventKind::HandoffNeeded
                 && event.reason.as_deref() == Some("blocked_evidence_handoff")
@@ -9128,7 +9351,9 @@ mod tests {
             explore_worker.reason.as_deref(),
             Some("operator_followup_sent")
         );
-        let events = store.read_events("demo-run").expect("events should be readable");
+        let events = store
+            .read_events("demo-run")
+            .expect("events should be readable");
         assert!(events.iter().any(|event| {
             event.event == EventKind::HandoffNeeded
                 && event.reason.as_deref() == Some("blocked_dependency_handoff")
@@ -9174,7 +9399,10 @@ mod tests {
             .read_worker("demo-run", "review-1")
             .expect("review worker should be readable");
         assert_eq!(review_worker.state, WorkerState::AwaitingReport);
-        assert_eq!(review_worker.reason.as_deref(), Some("operator_followup_sent"));
+        assert_eq!(
+            review_worker.reason.as_deref(),
+            Some("operator_followup_sent")
+        );
     }
 
     #[test]
@@ -9254,8 +9482,13 @@ mod tests {
             .read_worker("demo-run", "explore-1")
             .expect("explore worker should be readable");
         assert_eq!(explore_worker.state, WorkerState::AwaitingReport);
-        assert_eq!(explore_worker.reason.as_deref(), Some("operator_followup_sent"));
-        let events = store.read_events("demo-run").expect("events should be readable");
+        assert_eq!(
+            explore_worker.reason.as_deref(),
+            Some("operator_followup_sent")
+        );
+        let events = store
+            .read_events("demo-run")
+            .expect("events should be readable");
         assert!(events.iter().any(|event| {
             event.event == EventKind::HandoffNeeded
                 && event.reason.as_deref() == Some("worker_to_worker_handoff")
@@ -9434,7 +9667,9 @@ mod tests {
 
         cleanup_default_surface_state(&store, "demo-run").expect("cleanup failed");
 
-        let worker_ids = store.list_worker_ids("demo-run").expect("list workers failed");
+        let worker_ids = store
+            .list_worker_ids("demo-run")
+            .expect("list workers failed");
         assert!(worker_ids.contains(&"main".to_string()));
         assert!(worker_ids.contains(&"orchestrator-main".to_string()));
         assert!(!worker_ids.contains(&"explore-1".to_string()));
@@ -9469,8 +9704,7 @@ mod tests {
         });
         store.write_task(&task).expect("failed to write task");
 
-        let reclaimed =
-            reclaim_expired_claims(&store, "demo-run").expect("reclaim should succeed");
+        let reclaimed = reclaim_expired_claims(&store, "demo-run").expect("reclaim should succeed");
         assert_eq!(reclaimed.len(), 1);
 
         let reread = store
@@ -9528,6 +9762,61 @@ mod tests {
             snapshot_ref: Some("snapshot.json".to_string()),
         };
         assert!(!should_use_native_resume(&cfg, &run));
+    }
+
+    #[test]
+    fn parse_worker_host_pid_matches_the_target_run() {
+        let line = "93970 /opt/homebrew/bin/conductor worker-host ledart-app explore-1 session-explore-1 /tmp/socket /tmp/stdout /tmp/stderr /opt/homebrew/bin/codex";
+        assert_eq!(parse_worker_host_pid(line, "ledart-app"), Some(93970));
+        assert_eq!(parse_worker_host_pid(line, "other-run"), None);
+    }
+
+    #[test]
+    fn maybe_complete_run_after_operator_settlement_keeps_ralph_runs_open() {
+        let root = unique_temp_dir("conductor-ralph-close-guard");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+        }
+        enable_ralph_loop("demo-run").expect("failed to enable ralph");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "verify-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Verifier,
+                session_ref: None,
+                state: WorkerState::Stopped,
+                current_task_id: None,
+                current_summary: Some("closed after verification".to_string()),
+                terminal_label: Some("verify-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("closed_by_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+
+        let completed =
+            maybe_complete_run_after_operator_settlement(&store, "demo-run", "verify-1")
+                .expect("run completion check should succeed");
+        assert!(!completed);
+
+        let run = store.read_run("demo-run").expect("run should still exist");
+        assert!(run.active);
+        assert_ne!(run.current_phase, RunPhase::Complete);
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
     }
 
     #[test]
@@ -9714,7 +10003,10 @@ mod tests {
         cfg.experiment_count = 2;
         assert!(autoresearch_next_action(&cfg).contains("inspect the latest result"));
         cfg.stopped_at = Some(now);
-        assert!(autoresearch_next_action(&cfg).contains("resume with `conductor autoresearch continue`"));
+        assert!(
+            autoresearch_next_action(&cfg)
+                .contains("resume with `conductor autoresearch continue`")
+        );
     }
 
     #[test]
@@ -9723,7 +10015,11 @@ mod tests {
         let prompt = build_ralph_operator_prompt("demo-run", &snapshot);
         assert!(prompt.contains("Ralph loop active for run demo-run."));
         assert!(prompt.contains("Current focus: explore-1."));
-        assert!(prompt.contains("Do not widen into a team unless a worker count was explicitly requested."));
+        assert!(
+            prompt.contains(
+                "Do not widen into a team unless a worker count was explicitly requested."
+            )
+        );
         assert!(prompt.contains("Suggested command: conductor handoff main explore-1"));
     }
 
