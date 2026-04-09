@@ -1446,6 +1446,7 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     let (_, cfg) = load_resolved_config()?;
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
+    reopen_run_for_ralph(&store, &run_id)?;
     ensure_surface_session(&store, &cfg, &run_id)?;
     let ralph_was_enabled = read_ralph_loop_state_from_root(store.root(), &run_id)
         .map(|state| state.enabled)
@@ -1479,6 +1480,21 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     if should_prime {
         prime_ralph_operator_loop(&run_id);
     }
+    Ok(())
+}
+
+fn reopen_run_for_ralph(store: &StateStore, run_id: &str) -> Result<(), String> {
+    let mut run = store.read_run(run_id)?;
+    if run.active && !matches!(run.current_phase, RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled) {
+        return Ok(());
+    }
+    run.active = true;
+    run.current_phase = RunPhase::Executing;
+    run.updated_at = Utc::now();
+    run.completed_at = None;
+    run.stop_reason = None;
+    store.write_run(&run)?;
+    let _ = store.refresh_snapshot(run_id)?;
     Ok(())
 }
 
@@ -10262,6 +10278,30 @@ mod tests {
                 std::env::remove_var("CONDUCTOR_STATE_DIR");
             },
         }
+    }
+
+    #[test]
+    fn reopen_run_for_ralph_reactivates_completed_runs() {
+        let root = unique_temp_dir("conductor-ralph-reopen");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        let mut run = store.read_run("demo-run").expect("failed to read run");
+        run.active = false;
+        run.current_phase = RunPhase::Complete;
+        run.completed_at = Some(Utc::now());
+        run.stop_reason = Some("settled".to_string());
+        store.write_run(&run).expect("failed to write run");
+
+        reopen_run_for_ralph(&store, "demo-run").expect("failed to reopen run");
+
+        let reopened = store.read_run("demo-run").expect("failed to read reopened run");
+        assert!(reopened.active);
+        assert_eq!(reopened.current_phase, RunPhase::Executing);
+        assert!(reopened.completed_at.is_none());
+        assert!(reopened.stop_reason.is_none());
     }
 
     #[test]
