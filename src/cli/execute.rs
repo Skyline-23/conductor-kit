@@ -1197,8 +1197,7 @@ fn run_open(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
     cleanup_legacy_ops_session_if_solo(&store, &run_id)?;
-    let run = store.read_run(&run_id)?;
-    if should_use_native_resume(&cfg, &run) {
+    if should_use_native_resume(&cfg) {
         cleanup_default_surface_state(&store, &run_id)?;
         cleanup_surface_tmux_session(&run_id)?;
         return run_native_surface_resume(&cfg, &run_id);
@@ -1721,13 +1720,8 @@ fn ensure_surface_session(store: &StateStore, cfg: &Config, run_id: &str) -> Res
     Ok(())
 }
 
-fn should_use_native_resume(cfg: &Config, run: &RunRecord) -> bool {
-    cfg.surface.cli == "codex"
-        && (!run.active
-            || matches!(
-                run.current_phase,
-                RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
-            ))
+fn should_use_native_resume(cfg: &Config) -> bool {
+    cfg.surface.cli == "codex" && !command_available("tmux")
 }
 
 fn worker_host_pids_for_run(run_id: &str) -> Result<Vec<u32>, String> {
@@ -9827,37 +9821,9 @@ mod tests {
     }
 
     #[test]
-    fn native_resume_is_used_for_terminal_codex_runs() {
+    fn native_resume_depends_only_on_tmux_availability() {
         let cfg = sample_config_with_workers(BTreeMap::new());
-        let run = RunRecord {
-            run_id: "demo-run".to_string(),
-            active: false,
-            current_phase: RunPhase::Complete,
-            started_at: Utc::now(),
-            updated_at: Utc::now(),
-            completed_at: Some(Utc::now()),
-            stop_reason: Some("done".to_string()),
-            authority: None,
-            snapshot_ref: Some("snapshot.json".to_string()),
-        };
-        assert!(should_use_native_resume(&cfg, &run));
-    }
-
-    #[test]
-    fn native_resume_is_not_used_for_active_runs() {
-        let cfg = sample_config_with_workers(BTreeMap::new());
-        let run = RunRecord {
-            run_id: "demo-run".to_string(),
-            active: true,
-            current_phase: RunPhase::Executing,
-            started_at: Utc::now(),
-            updated_at: Utc::now(),
-            completed_at: None,
-            stop_reason: None,
-            authority: None,
-            snapshot_ref: Some("snapshot.json".to_string()),
-        };
-        assert!(!should_use_native_resume(&cfg, &run));
+        assert_eq!(should_use_native_resume(&cfg), !command_available("tmux"));
     }
 
     #[test]
