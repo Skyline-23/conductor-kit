@@ -7859,14 +7859,51 @@ where
         .into_iter()
         .map(|value| value.as_ref().to_string())
         .collect::<Vec<_>>();
-    let status = Command::new("tmux")
-        .args(args_vec.iter().map(|value| value.as_str()))
-        .status()
-        .map_err(|err| err.to_string())?;
+    let mut command = Command::new("tmux");
+    command.args(args_vec.iter().map(|value| value.as_str()));
+    apply_tmux_terminal_env(&mut command);
+    let status = command.status().map_err(|err| err.to_string())?;
     if status.success() {
         Ok(())
     } else {
         Err(format!("tmux command failed: {}", args_vec.join(" ")))
+    }
+}
+
+fn apply_tmux_terminal_env(command: &mut Command) {
+    if let Some(term) = preferred_tmux_term() {
+        command.env("TERM", &term);
+    }
+    if env::var("COLORTERM").ok().as_deref() != Some("truecolor") {
+        if env::var("TERM_PROGRAM").ok().as_deref() == Some("ghostty") {
+            command.env("COLORTERM", "truecolor");
+        }
+    }
+}
+
+fn preferred_tmux_term() -> Option<String> {
+    match env::var("TERM") {
+        Ok(term) if !term.trim().is_empty() && term != "dumb" => None,
+        _ => resolve_tmux_term_fallback_with(env::var("TERM_PROGRAM").ok().as_deref()),
+    }
+}
+
+fn resolve_tmux_term_fallback() -> Option<String> {
+    resolve_tmux_term_fallback_with(env::var("TERM_PROGRAM").ok().as_deref())
+}
+
+fn resolve_tmux_term_fallback_with(term_program: Option<&str>) -> Option<String> {
+    if let Ok(value) = run_tmux_capture(["show-environment", "-g", "TERM"]) {
+        if let Some(term) = value.strip_prefix("TERM=") {
+            let trimmed = term.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    match term_program {
+        Some("ghostty") => Some("xterm-ghostty".to_string()),
+        _ => Some("xterm-256color".to_string()),
     }
 }
 
@@ -8204,6 +8241,12 @@ mod tests {
                 reason: "new worker reports are waiting in the mailbox".to_string(),
             },
         }
+    }
+
+    #[test]
+    fn resolve_tmux_term_fallback_prefers_ghostty_when_term_is_dumb() {
+        let fallback = resolve_tmux_term_fallback_with(Some("ghostty"));
+        assert_eq!(fallback.as_deref(), Some("xterm-ghostty"));
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
