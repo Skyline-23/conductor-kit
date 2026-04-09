@@ -1461,7 +1461,10 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
         let mut state = read_ralph_loop_state(&run_id)?;
         state.session_name = active_session_hint.or_else(|| Some(tmux_session_name.clone()));
         if let Some(previous_state) = previous_loop_state.as_ref() {
-            if let Some(pid) = previous_state.watcher_pid.filter(|pid| process_is_alive(*pid)) {
+            if let Some(pid) = previous_state
+                .watcher_pid
+                .filter(|pid| ralph_watch_is_alive(*pid, &run_id))
+            {
                 let _ = terminate_process(pid);
             }
         }
@@ -1628,13 +1631,40 @@ fn process_is_alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+fn process_command_line(pid: u32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let command = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if command.is_empty() {
+        None
+    } else {
+        Some(command)
+    }
+}
+
+fn ralph_watch_is_alive(pid: u32, run_id: &str) -> bool {
+    process_is_alive(pid)
+        && process_command_line(pid)
+            .map(|command| command.contains("conductor ralph-watch") && command.contains(run_id))
+            .unwrap_or(false)
+}
+
 fn ensure_active_ralph_watch(run_id: &str) -> Result<(), String> {
     let mut state = read_ralph_loop_state(run_id)?;
     if !state.enabled {
         return Ok(());
     }
     state.session_name = preferred_ralph_tmux_session(run_id, state.session_name.as_deref());
-    if state.watcher_pid.map(process_is_alive).unwrap_or(false) {
+    if state
+        .watcher_pid
+        .map(|pid| ralph_watch_is_alive(pid, run_id))
+        .unwrap_or(false)
+    {
         if state.session_name.is_some() {
             write_ralph_loop_state(run_id, &state)?;
             return Ok(());
@@ -1671,21 +1701,38 @@ fn ensure_active_ralph_watch(run_id: &str) -> Result<(), String> {
 fn run_ralph_watch(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "ralph-watch requires <run_id>")?;
     let store = StateStore::new(resolve_state_root()?);
+    let self_pid = std::process::id();
     let mut cursor = 0usize;
     let mut last_prime_at: Option<chrono::DateTime<Utc>> = None;
     let mut last_stall_signature: Option<String> = None;
     let mut last_main_signature: Option<String> = None;
 
     loop {
-        let state = read_ralph_loop_state(run_id)?;
+        let state = match read_ralph_loop_state(run_id) {
+            Ok(state) => state,
+            Err(_) => {
+                thread::sleep(Duration::from_millis(1500));
+                continue;
+            }
+        };
         if !state.enabled {
+            break;
+        }
+        if state
+            .watcher_pid
+            .filter(|pid| *pid != self_pid && ralph_watch_is_alive(*pid, run_id))
+            .is_some()
+        {
             break;
         }
         let preferred_session = preferred_ralph_tmux_session(run_id, state.session_name.as_deref())
             .unwrap_or_else(|| surface_tmux_session_name(run_id));
-        if state.session_name.as_deref() != Some(preferred_session.as_str()) {
+        if state.session_name.as_deref() != Some(preferred_session.as_str())
+            || state.watcher_pid != Some(self_pid)
+        {
             let mut updated_state = state.clone();
             updated_state.session_name = Some(preferred_session.clone());
+            updated_state.watcher_pid = Some(self_pid);
             let _ = write_ralph_loop_state(run_id, &updated_state);
         }
         let _ = refresh_operator_activity_from_tmux(
@@ -1696,7 +1743,10 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
         );
         let run = match store.read_run(run_id) {
             Ok(run) => run,
-            Err(_) => break,
+            Err(_) => {
+                thread::sleep(Duration::from_millis(1500));
+                continue;
+            }
         };
         if !run.active
             || matches!(
@@ -1712,9 +1762,18 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             .or_else(|_| store.read_snapshot(run_id))
         {
             Ok(snapshot) => snapshot,
-            Err(_) => break,
+            Err(_) => {
+                thread::sleep(Duration::from_millis(1500));
+                continue;
+            }
         };
-        let events = store.read_events(run_id)?;
+        let events = match store.read_events(run_id) {
+            Ok(events) => events,
+            Err(_) => {
+                thread::sleep(Duration::from_millis(1500));
+                continue;
+            }
+        };
         let new_events = if cursor < events.len() {
             events[cursor..].to_vec()
         } else {
