@@ -3801,7 +3801,7 @@ fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String
         run_tmux(["kill-session", "-t", &tmux_session_name])?;
     }
     if command_available("tmux")
-        && env::var_os("TMUX").is_none()
+        && !has_live_tmux_client()
         && env::var("CONDUCTOR_OPS_NO_ATTACH").ok().as_deref() != Some("1")
     {
         return run_surface_attached_tmux_session(
@@ -7754,7 +7754,7 @@ fn find_main_pane_id(session_name: &str, panes: &str) -> Result<String, String> 
 
 fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
     let has_tty = stdin().is_terminal() && stdout().is_terminal();
-    if env::var_os("TMUX").is_some() {
+    if has_live_tmux_client() {
         if has_tty {
             run_tmux_interactive(["switch-client", "-t", session_name])
         } else {
@@ -7769,13 +7769,20 @@ fn attach_tmux_ops_session(session_name: &str) -> Result<(), String> {
     }
 }
 
+fn has_live_tmux_client() -> bool {
+    if env::var_os("TMUX").is_none() {
+        return false;
+    }
+    run_tmux_capture(["display-message", "-p", "#S"]).is_ok()
+}
+
 fn current_tmux_session_hint() -> Option<String> {
     env::var("CONDUCTOR_TMUX_SESSION")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .or_else(|| {
-            if env::var_os("TMUX").is_none() {
+            if !has_live_tmux_client() {
                 return None;
             }
             run_tmux_capture(["display-message", "-p", "#S"])
