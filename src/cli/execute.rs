@@ -1635,7 +1635,10 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             let _ = disable_ralph_loop(run_id);
             break;
         }
-        let snapshot = match store.read_snapshot(run_id) {
+        let snapshot = match store
+            .refresh_snapshot(run_id)
+            .or_else(|_| store.read_snapshot(run_id))
+        {
             Ok(snapshot) => snapshot,
             Err(_) => break,
         };
@@ -1718,15 +1721,40 @@ fn snapshot_operator_recently_active(
     })
 }
 
+fn store_operator_is_stale(store: &StateStore, run_id: &str, now: chrono::DateTime<Utc>) -> bool {
+    let operators = ["main", "orchestrator-main"]
+        .into_iter()
+        .filter_map(|worker_id| store.read_worker(run_id, worker_id).ok())
+        .collect::<Vec<_>>();
+    !operators.is_empty()
+        && operators.iter().all(|worker| {
+            worker
+                .last_event_at
+                .or(worker.last_heartbeat_at)
+                .map(|seen_at| now - seen_at >= chrono::Duration::seconds(20))
+                .unwrap_or(true)
+        })
+}
+
 fn should_prime_ralph_on_entry(store: &StateStore, run_id: &str, was_enabled: bool) -> bool {
     if !was_enabled {
+        return true;
+    }
+    let now = Utc::now();
+    if store_operator_is_stale(store, run_id, now) {
         return true;
     }
     let snapshot = store
         .refresh_snapshot(run_id)
         .or_else(|_| store.read_snapshot(run_id));
     match snapshot {
-        Ok(snapshot) => ralph_stall_signature(&snapshot, false).is_some(),
+        Ok(snapshot) => {
+            if snapshot.readiness.stale_operator && !snapshot_operator_recently_active(&snapshot, now)
+            {
+                return true;
+            }
+            ralph_stall_signature(&snapshot, false).is_some()
+        }
         Err(_) => true,
     }
 }
@@ -1750,9 +1778,19 @@ fn ralph_stall_signature(
     let operator_recently_active = snapshot_operator_recently_active(snapshot, now);
 
     match snapshot.decision.next_action.as_str() {
-        "reassign-or-close" if operator_recently_active => None,
-        "review-approval" | "relaunch-stalled" | "unblock" | "accept-completion"
-        | "verify-completion" | "reassign-or-close" => Some(format!(
+        "reassign-or-close" | "resume-operator" | "resume-operator-now"
+            if operator_recently_active =>
+        {
+            None
+        }
+        "review-approval"
+        | "relaunch-stalled"
+        | "unblock"
+        | "accept-completion"
+        | "verify-completion"
+        | "reassign-or-close"
+        | "resume-operator"
+        | "resume-operator-now" => Some(format!(
             "{}|{}|{}",
             snapshot.decision.next_action,
             snapshot.decision.focus_worker.as_deref().unwrap_or(""),
@@ -1777,7 +1815,10 @@ fn prime_ralph_operator_loop(run_id: &str) {
         Ok(root) => StateStore::new(root),
         Err(_) => return,
     };
-    let snapshot = match store.read_snapshot(run_id) {
+    let snapshot = match store
+        .refresh_snapshot(run_id)
+        .or_else(|_| store.read_snapshot(run_id))
+    {
         Ok(snapshot) => snapshot,
         Err(_) => return,
     };
@@ -9210,6 +9251,22 @@ mod tests {
     }
 
     #[test]
+    fn ralph_stall_signature_primes_when_operator_needs_resume() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "resume-operator".to_string();
+        snapshot.decision.reason = "operator activity is stale".to_string();
+        for worker in &mut snapshot.workers {
+            if worker.worker_id == "main" || worker.worker_id == "orchestrator-main" {
+                worker.last_heartbeat_at = Some(Utc::now() - chrono::Duration::seconds(90));
+            }
+        }
+
+        let signature =
+            ralph_stall_signature(&snapshot, false).expect("stall signature should exist");
+        assert!(signature.contains("resume-operator"));
+    }
+
+    #[test]
     fn should_prime_ralph_on_entry_skips_active_operator_loops() {
         let root = unique_temp_dir("conductor-ralph-entry-active");
         fs::create_dir_all(&root).expect("failed to create temp root");
@@ -9282,8 +9339,8 @@ mod tests {
     }
 
     #[test]
-    fn should_prime_ralph_on_entry_skips_operator_only_runs() {
-        let root = unique_temp_dir("conductor-ralph-entry-operator-only");
+    fn should_prime_ralph_on_entry_primes_stale_operator_only_runs() {
+        let root = unique_temp_dir("conductor-ralph-entry-operator-only-stale");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let store = StateStore::new(&root);
         store
@@ -9292,6 +9349,23 @@ mod tests {
         store
             .refresh_snapshot("demo-run")
             .expect("failed to refresh snapshot");
+
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "main".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("session running".to_string()),
+                terminal_label: Some("main".to_string()),
+                last_heartbeat_at: Some(Utc::now() - chrono::Duration::seconds(90)),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now() - chrono::Duration::seconds(90)),
+                reason: Some("operator_stale".to_string()),
+            })
+            .expect("failed to write main worker");
 
         let mut orchestrator = store
             .read_worker("demo-run", "orchestrator-main")
@@ -9306,7 +9380,7 @@ mod tests {
             .refresh_snapshot("demo-run")
             .expect("failed to refresh snapshot");
 
-        assert!(!should_prime_ralph_on_entry(&store, "demo-run", true));
+        assert!(should_prime_ralph_on_entry(&store, "demo-run", true));
     }
 
     #[test]
