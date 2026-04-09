@@ -278,6 +278,9 @@ fn run_default() -> Result<(), String> {
         .join(&run_id)
         .join("run.json")
         .exists();
+    if run_exists {
+        cleanup_legacy_ops_session_if_solo(&store, &run_id)?;
+    }
     let surface_exists = tmux_session_exists(&surface_tmux_session_name(&run_id)).unwrap_or(false);
     match decide_default_entry_action(run_exists, surface_exists) {
         DefaultEntryAction::Start => run_start(&[]),
@@ -331,6 +334,7 @@ fn run_start(args: &[String]) -> Result<(), String> {
         .unwrap_or_else(default_run_id);
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
+    cleanup_legacy_ops_session_if_solo(&store, &run_id)?;
     run_surface_ops_open(&run_id, false)
 }
 
@@ -1192,6 +1196,7 @@ fn run_open(args: &[String]) -> Result<(), String> {
     let (_, cfg) = load_resolved_config()?;
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
+    cleanup_legacy_ops_session_if_solo(&store, &run_id)?;
     let run = store.read_run(&run_id)?;
     if should_use_native_resume(&cfg, &run) {
         cleanup_default_surface_state(&store, &run_id)?;
@@ -1809,6 +1814,39 @@ fn cleanup_surface_tmux_session(run_id: &str) -> Result<(), String> {
         run_tmux(["kill-session", "-t", &session_name])?;
     }
     Ok(())
+}
+
+fn cleanup_legacy_ops_session_if_solo(store: &StateStore, run_id: &str) -> Result<(), String> {
+    let legacy_session = default_tmux_session_name(run_id);
+    if !tmux_session_exists(&legacy_session)? {
+        return Ok(());
+    }
+    if !legacy_ops_session_is_solo(store, run_id)? {
+        return Ok(());
+    }
+    run_tmux(["kill-session", "-t", &legacy_session])?;
+    Ok(())
+}
+
+fn legacy_ops_session_is_solo(store: &StateStore, run_id: &str) -> Result<bool, String> {
+    let snapshot = match store.read_snapshot(run_id) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return Ok(true),
+    };
+    let has_live_non_main_lane = snapshot.workers.iter().any(|worker| {
+        worker.worker_id != "main"
+            && worker.worker_id != "orchestrator-main"
+            && matches!(
+                worker.state,
+                WorkerState::Idle
+                    | WorkerState::Working
+                    | WorkerState::AwaitingReport
+                    | WorkerState::Blocked
+                    | WorkerState::Done
+                    | WorkerState::DonePendingVerification
+            )
+    });
+    Ok(!has_live_non_main_lane)
 }
 
 fn run_native_surface_resume(cfg: &Config, run_id: &str) -> Result<(), String> {
@@ -9777,6 +9815,52 @@ mod tests {
         let line = "93970 /opt/homebrew/bin/conductor worker-host ledart-app explore-1 session-explore-1 /tmp/socket /tmp/stdout /tmp/stderr /opt/homebrew/bin/codex";
         assert_eq!(parse_worker_host_pid(line, "ledart-app"), Some(93970));
         assert_eq!(parse_worker_host_pid(line, "other-run"), None);
+    }
+
+    #[test]
+    fn legacy_ops_session_is_solo_when_only_main_lane_remains() {
+        let root = unique_temp_dir("conductor-legacy-solo");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        assert!(
+            legacy_ops_session_is_solo(&store, "demo-run").expect("legacy check should succeed")
+        );
+    }
+
+    #[test]
+    fn legacy_ops_session_is_not_solo_when_team_lane_is_live() {
+        let root = unique_temp_dir("conductor-legacy-team");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::AwaitingReport,
+                current_task_id: None,
+                current_summary: Some("direct explore pane ready".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_bootstrapping".to_string()),
+            })
+            .expect("failed to upsert worker");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+        assert!(
+            !legacy_ops_session_is_solo(&store, "demo-run")
+                .expect("legacy check should succeed")
+        );
     }
 
     #[test]
