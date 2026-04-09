@@ -1447,24 +1447,38 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
     ensure_surface_session(&store, &cfg, &run_id)?;
+    let ralph_was_enabled = read_ralph_loop_state_from_root(store.root(), &run_id)
+        .map(|state| state.enabled)
+        .unwrap_or(false);
     enable_ralph_loop(&run_id)?;
     ensure_active_ralph_watch(&run_id)?;
     let tmux_session_name = surface_tmux_session_name(&run_id);
+    let should_prime = if requested_width.is_some() {
+        true
+    } else {
+        should_prime_ralph_on_entry(&store, &run_id, ralph_was_enabled)
+    };
     if requested_width.is_some() {
         ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
-        prime_ralph_operator_loop(&run_id);
+        if should_prime {
+            prime_ralph_operator_loop(&run_id);
+        }
         return run_ops_open_with_filter(&run_id, &tmux_session_name, None);
     }
     if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
         collapse_tmux_surface_to_main(&tmux_session_name)?;
-        prime_ralph_operator_loop(&run_id);
+        if should_prime {
+            prime_ralph_operator_loop(&run_id);
+        }
         if current_tmux_session_hint().as_deref() == Some(tmux_session_name.as_str()) {
             return Ok(());
         }
         return attach_tmux_ops_session(&tmux_session_name);
     }
     run_surface_ops_open(&run_id, false)?;
-    prime_ralph_operator_loop(&run_id);
+    if should_prime {
+        prime_ralph_operator_loop(&run_id);
+    }
     Ok(())
 }
 
@@ -1683,6 +1697,19 @@ fn snapshot_operator_recently_active(
                 .map(|heartbeat| now - heartbeat < chrono::Duration::seconds(20))
                 .unwrap_or(false)
     })
+}
+
+fn should_prime_ralph_on_entry(store: &StateStore, run_id: &str, was_enabled: bool) -> bool {
+    if !was_enabled {
+        return true;
+    }
+    let snapshot = store
+        .refresh_snapshot(run_id)
+        .or_else(|_| store.read_snapshot(run_id));
+    match snapshot {
+        Ok(snapshot) => ralph_stall_signature(&snapshot, false).is_some(),
+        Err(_) => true,
+    }
 }
 
 fn ralph_stall_signature(
@@ -9135,6 +9162,62 @@ mod tests {
         ]);
 
         assert!(ralph_stall_signature(&snapshot, false).is_none());
+    }
+
+    #[test]
+    fn should_prime_ralph_on_entry_skips_active_operator_loops() {
+        let root = unique_temp_dir("conductor-ralph-entry-active");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        assert!(!should_prime_ralph_on_entry(&store, "demo-run", true));
+    }
+
+    #[test]
+    fn should_prime_ralph_on_entry_primes_when_the_loop_is_stalled() {
+        let root = unique_temp_dir("conductor-ralph-entry-stalled");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "main".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("operator lane stale".to_string()),
+                terminal_label: Some("main".to_string()),
+                last_heartbeat_at: Some(Utc::now() - chrono::Duration::seconds(30)),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now() - chrono::Duration::seconds(30)),
+                reason: Some("operator_stale".to_string()),
+            })
+            .expect("failed to write main worker");
+        let mut orchestrator = store
+            .read_worker("demo-run", "orchestrator-main")
+            .expect("failed to read orchestrator worker");
+        orchestrator.last_heartbeat_at = Some(Utc::now() - chrono::Duration::seconds(30));
+        orchestrator.last_event_at = Some(Utc::now() - chrono::Duration::seconds(30));
+        orchestrator.current_summary = Some("operator lane stale".to_string());
+        orchestrator.reason = Some("operator_stale".to_string());
+        store
+            .upsert_worker(orchestrator)
+            .expect("failed to update orchestrator worker");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        assert!(should_prime_ralph_on_entry(&store, "demo-run", true));
     }
 
     #[test]
