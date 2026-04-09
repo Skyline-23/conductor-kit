@@ -540,7 +540,7 @@ impl StateStore {
             .iter()
             .find(|worker| worker.worker_id == "main" || worker.worker_id == "orchestrator-main");
         let stale_operator = operator
-            .and_then(|worker| worker.last_event_at.or(worker.last_heartbeat_at))
+            .and_then(latest_worker_seen_at)
             .map(|seen_at| seen_at < now - Duration::seconds(OPERATOR_STALE_AFTER_SECS))
             .unwrap_or(false);
         let has_worker_lanes = workers
@@ -558,9 +558,7 @@ impl StateStore {
             })
             .filter(|worker| !worker_is_bootstrapping(worker, now))
             .filter(|worker| {
-                worker
-                    .last_event_at
-                    .or(worker.last_heartbeat_at)
+                latest_worker_seen_at(worker)
                     .map(|seen_at| seen_at < now - Duration::seconds(SILENT_WORKER_AFTER_SECS))
                     .unwrap_or(true)
             })
@@ -1211,11 +1209,18 @@ fn worker_is_bootstrapping(worker: &WorkerRecord, now: chrono::DateTime<chrono::
     if !is_bootstrapping {
         return false;
     }
-    worker
-        .last_event_at
-        .or(worker.last_heartbeat_at)
+    latest_worker_seen_at(worker)
         .map(|seen_at| seen_at >= now - Duration::seconds(BOOTSTRAP_GRACE_SECS))
         .unwrap_or(true)
+}
+
+fn latest_worker_seen_at(worker: &WorkerRecord) -> Option<chrono::DateTime<chrono::Utc>> {
+    match (worker.last_event_at, worker.last_heartbeat_at) {
+        (Some(event), Some(heartbeat)) => Some(std::cmp::max(event, heartbeat)),
+        (Some(event), None) => Some(event),
+        (None, Some(heartbeat)) => Some(heartbeat),
+        (None, None) => None,
+    }
 }
 
 fn blocked_decision_reason(worker: &WorkerProjection) -> String {

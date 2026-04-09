@@ -1448,12 +1448,19 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     ensure_run_exists(&store, &run_id)?;
     reopen_run_for_ralph(&store, &run_id)?;
     ensure_surface_session(&store, &cfg, &run_id)?;
+    let tmux_session_name = surface_tmux_session_name(&run_id);
+    let active_session_hint = current_tmux_session_hint()
+        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false));
     let ralph_was_enabled = read_ralph_loop_state_from_root(store.root(), &run_id)
         .map(|state| state.enabled)
         .unwrap_or(false);
     enable_ralph_loop(&run_id)?;
+    {
+        let mut state = read_ralph_loop_state(&run_id)?;
+        state.session_name = active_session_hint.or_else(|| Some(tmux_session_name.clone()));
+        write_ralph_loop_state(&run_id, &state)?;
+    }
     ensure_active_ralph_watch(&run_id)?;
-    let tmux_session_name = surface_tmux_session_name(&run_id);
     if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
         let _ = configure_tmux_main_exit_hook(&tmux_session_name, false);
     }
@@ -1505,6 +1512,7 @@ fn reopen_run_for_ralph(store: &StateStore, run_id: &str) -> Result<(), String> 
 struct RalphLoopState {
     enabled: bool,
     watcher_pid: Option<u32>,
+    session_name: Option<String>,
 }
 
 fn ralph_loop_file(run_id: &str) -> Result<PathBuf, String> {
@@ -1561,6 +1569,7 @@ fn disable_ralph_loop(run_id: &str) -> Result<(), String> {
     let mut state = read_ralph_loop_state(run_id)?;
     state.enabled = false;
     state.watcher_pid = None;
+    state.session_name = None;
     write_ralph_loop_state(run_id, &state)
 }
 
@@ -1568,6 +1577,7 @@ fn disable_ralph_loop_for_root(root: &Path, run_id: &str) -> Result<(), String> 
     let mut state = read_ralph_loop_state_from_root(root, run_id)?;
     state.enabled = false;
     state.watcher_pid = None;
+    state.session_name = None;
     write_ralph_loop_state_to_root(root, run_id, &state)
 }
 
@@ -1586,8 +1596,24 @@ fn ensure_active_ralph_watch(run_id: &str) -> Result<(), String> {
     if !state.enabled {
         return Ok(());
     }
+    if state.session_name.is_none() {
+        state.session_name = current_tmux_session_hint()
+            .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
+            .or_else(|| discover_ralph_tmux_session(run_id).ok().flatten())
+            .or_else(|| Some(surface_tmux_session_name(run_id)));
+    }
     if state.watcher_pid.map(process_is_alive).unwrap_or(false) {
-        return Ok(());
+        if state.session_name.is_some() {
+            write_ralph_loop_state(run_id, &state)?;
+            return Ok(());
+        }
+        if let Some(pid) = state.watcher_pid {
+            let _ = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
     }
     let conductor_bin = env::current_exe().map_err(|err| err.to_string())?;
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
@@ -1616,12 +1642,25 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
     let mut cursor = 0usize;
     let mut last_prime_at: Option<chrono::DateTime<Utc>> = None;
     let mut last_stall_signature: Option<String> = None;
+    let mut last_main_signature: Option<String> = None;
 
     loop {
         let state = read_ralph_loop_state(run_id)?;
         if !state.enabled {
             break;
         }
+        let preferred_session = state
+            .session_name
+            .clone()
+            .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
+            .or_else(|| discover_ralph_tmux_session(run_id).ok().flatten())
+            .unwrap_or_else(|| surface_tmux_session_name(run_id));
+        let _ = refresh_operator_activity_from_tmux(
+            &store,
+            run_id,
+            &preferred_session,
+            &mut last_main_signature,
+        );
         let run = match store.read_run(run_id) {
             Ok(run) => run,
             Err(_) => break,
@@ -1672,6 +1711,79 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn refresh_operator_activity_from_tmux(
+    store: &StateStore,
+    run_id: &str,
+    session_name: &str,
+    last_main_signature: &mut Option<String>,
+) -> Result<(), String> {
+    let Some(signature) = capture_main_pane_signature(session_name)? else {
+        return Ok(());
+    };
+    if last_main_signature.as_ref() == Some(&signature) {
+        return Ok(());
+    }
+    *last_main_signature = Some(signature);
+    let now = Utc::now();
+    for worker_id in ["main", "orchestrator-main"] {
+        if let Ok(mut worker) = store.read_worker(run_id, worker_id) {
+            worker.last_heartbeat_at = Some(now);
+            worker.last_event_at = Some(now);
+            let _ = store.upsert_worker(worker);
+        }
+    }
+    let _ = store.refresh_snapshot(run_id);
+    Ok(())
+}
+
+fn capture_main_pane_signature(session_name: &str) -> Result<Option<String>, String> {
+    if !command_available("tmux") || !tmux_session_exists(session_name)? {
+        return Ok(None);
+    }
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}\t#{cursor_x}\t#{cursor_y}\t#{history_size}",
+    ])?;
+    let main_pane_id = find_main_pane_id(session_name, &panes)?;
+    let tail = run_tmux_capture(["capture-pane", "-p", "-t", &main_pane_id, "-S", "-40"])?;
+    let meta = panes
+        .lines()
+        .find(|line| line.starts_with(&main_pane_id))
+        .unwrap_or_default();
+    Ok(Some(format!("{meta}\n{tail}")))
+}
+
+fn discover_ralph_tmux_session(run_id: &str) -> Result<Option<String>, String> {
+    if !command_available("tmux") {
+        return Ok(None);
+    }
+    let output = run_tmux_capture([
+        "list-panes",
+        "-a",
+        "-F",
+        "#{session_name}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
+    ])?;
+    let discovered = output.lines().find_map(|line| {
+        let mut parts = line.splitn(4, '\t');
+        let session_name = parts.next()?.trim();
+        let pane_index = parts.next()?.trim();
+        let pane_title = parts.next()?.trim();
+        let pane_command = parts.next()?.trim();
+        if pane_index == "0"
+            && pane_command.contains("codex")
+            && (pane_title == run_id || session_name.contains(run_id))
+        {
+            Some(session_name.to_string())
+        } else {
+            None
+        }
+    });
+    Ok(discovered)
 }
 
 fn ralph_wake_event_counts(event: &EventEnvelope) -> bool {
