@@ -1475,14 +1475,19 @@ struct RalphLoopState {
 }
 
 fn ralph_loop_file(run_id: &str) -> Result<PathBuf, String> {
-    Ok(resolve_state_root()?
-        .join("runs")
-        .join(run_id)
-        .join("ralph_loop.json"))
+    Ok(ralph_loop_file_for_root(&resolve_state_root()?, run_id))
+}
+
+fn ralph_loop_file_for_root(root: &Path, run_id: &str) -> PathBuf {
+    root.join("runs").join(run_id).join("ralph_loop.json")
 }
 
 fn read_ralph_loop_state(run_id: &str) -> Result<RalphLoopState, String> {
-    let path = ralph_loop_file(run_id)?;
+    read_ralph_loop_state_from_root(&resolve_state_root()?, run_id)
+}
+
+fn read_ralph_loop_state_from_root(root: &Path, run_id: &str) -> Result<RalphLoopState, String> {
+    let path = ralph_loop_file_for_root(root, run_id);
     if !path.exists() {
         return Ok(RalphLoopState::default());
     }
@@ -1491,7 +1496,15 @@ fn read_ralph_loop_state(run_id: &str) -> Result<RalphLoopState, String> {
 }
 
 fn write_ralph_loop_state(run_id: &str, state: &RalphLoopState) -> Result<(), String> {
-    let path = ralph_loop_file(run_id)?;
+    write_ralph_loop_state_to_root(&resolve_state_root()?, run_id, state)
+}
+
+fn write_ralph_loop_state_to_root(
+    root: &Path,
+    run_id: &str,
+    state: &RalphLoopState,
+) -> Result<(), String> {
+    let path = ralph_loop_file_for_root(root, run_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
@@ -1505,11 +1518,24 @@ fn enable_ralph_loop(run_id: &str) -> Result<(), String> {
     write_ralph_loop_state(run_id, &state)
 }
 
+fn enable_ralph_loop_for_root(root: &Path, run_id: &str) -> Result<(), String> {
+    let mut state = read_ralph_loop_state_from_root(root, run_id)?;
+    state.enabled = true;
+    write_ralph_loop_state_to_root(root, run_id, &state)
+}
+
 fn disable_ralph_loop(run_id: &str) -> Result<(), String> {
     let mut state = read_ralph_loop_state(run_id)?;
     state.enabled = false;
     state.watcher_pid = None;
     write_ralph_loop_state(run_id, &state)
+}
+
+fn disable_ralph_loop_for_root(root: &Path, run_id: &str) -> Result<(), String> {
+    let mut state = read_ralph_loop_state_from_root(root, run_id)?;
+    state.enabled = false;
+    state.watcher_pid = None;
+    write_ralph_loop_state_to_root(root, run_id, &state)
 }
 
 fn process_is_alive(pid: u32) -> bool {
@@ -1646,10 +1672,24 @@ fn snapshot_has_active_worker_progress(snapshot: &crate::runtime::types::Runtime
     })
 }
 
+fn snapshot_operator_recently_active(
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    snapshot.workers.iter().any(|worker| {
+        (worker.worker_id == "main" || worker.worker_id == "orchestrator-main")
+            && worker
+                .last_heartbeat_at
+                .map(|heartbeat| now - heartbeat < chrono::Duration::seconds(20))
+                .unwrap_or(false)
+    })
+}
+
 fn ralph_stall_signature(
     snapshot: &crate::runtime::types::RuntimeSnapshot,
     saw_wake_event: bool,
 ) -> Option<String> {
+    let now = Utc::now();
     if snapshot.readiness.stale_operator && snapshot.monitor.pending_leader_notifications > 0 {
         return Some(format!(
             "stale-operator:{}:{}",
@@ -1661,7 +1701,10 @@ fn ralph_stall_signature(
         return None;
     }
 
+    let operator_recently_active = snapshot_operator_recently_active(snapshot, now);
+
     match snapshot.decision.next_action.as_str() {
+        "reassign-or-close" if operator_recently_active => None,
         "review-approval" | "relaunch-stalled" | "unblock" | "accept-completion"
         | "verify-completion" | "reassign-or-close" => Some(format!(
             "{}|{}|{}",
@@ -1670,10 +1713,14 @@ fn ralph_stall_signature(
             snapshot.decision.reason
         )),
         "read-inbox" if saw_wake_event || snapshot.monitor.pending_leader_notifications > 0 => {
-            Some(format!(
-                "read-inbox|{}|{}",
-                snapshot.mailbox.unread, snapshot.decision.reason
-            ))
+            if operator_recently_active {
+                None
+            } else {
+                Some(format!(
+                    "read-inbox|{}|{}",
+                    snapshot.mailbox.unread, snapshot.decision.reason
+                ))
+            }
         }
         _ => None,
     }
@@ -3318,7 +3365,7 @@ fn maybe_complete_run_after_operator_settlement(
         return Ok(false);
     }
 
-    let ralph_enabled = read_ralph_loop_state(run_id)
+    let ralph_enabled = read_ralph_loop_state_from_root(store.root(), run_id)
         .map(|state| state.enabled)
         .unwrap_or(false);
     if ralph_enabled {
@@ -3345,7 +3392,7 @@ fn maybe_complete_run_after_operator_settlement(
         "all lanes settled after operator closed {worker_id}"
     ));
     store.write_run(&run)?;
-    let _ = disable_ralph_loop(run_id);
+    let _ = disable_ralph_loop_for_root(store.root(), run_id);
     let _ = store.refresh_snapshot(run_id)?;
     let _ = push_text_to_main_pane(
         run_id,
@@ -9047,10 +9094,47 @@ mod tests {
         snapshot.decision.next_action = "reassign-or-close".to_string();
         snapshot.decision.reason = "all worker lanes are idle".to_string();
         snapshot.monitor.all_workers_idle = true;
+        for worker in &mut snapshot.workers {
+            if worker.worker_id == "main" || worker.worker_id == "orchestrator-main" {
+                worker.last_heartbeat_at = Some(Utc::now() - chrono::Duration::seconds(30));
+            }
+        }
 
         let signature =
             ralph_stall_signature(&snapshot, false).expect("stall signature should exist");
         assert!(signature.contains("reassign-or-close"));
+    }
+
+    #[test]
+    fn ralph_stall_signature_skips_reassign_when_operator_is_recently_active() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "reassign-or-close".to_string();
+        snapshot.decision.reason = "all worker lanes are idle".to_string();
+        snapshot.monitor.all_workers_idle = true;
+        snapshot.workers.extend([
+            WorkerProjection {
+                worker_id: "main".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("operator lane active".to_string()),
+                reason: Some("operator_active".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                terminal_label: Some("main".to_string()),
+            },
+            WorkerProjection {
+                worker_id: "orchestrator-main".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("operator lane active".to_string()),
+                reason: Some("operator_active".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                terminal_label: Some("orchestrator-main".to_string()),
+            },
+        ]);
+
+        assert!(ralph_stall_signature(&snapshot, false).is_none());
     }
 
     #[test]
@@ -9165,7 +9249,7 @@ mod tests {
         unsafe {
             std::env::set_var("CONDUCTOR_STATE_DIR", &root);
         }
-        disable_ralph_loop("demo-run").expect("failed to disable ralph");
+        disable_ralph_loop_for_root(&root, "demo-run").expect("failed to disable ralph");
         store
             .upsert_worker(WorkerRecord {
                 worker_id: "verify-1".to_string(),
@@ -9179,7 +9263,7 @@ mod tests {
                 last_heartbeat_at: Some(Utc::now()),
                 last_stdout_at: None,
                 last_event_at: Some(Utc::now()),
-                reason: Some("accepted_by_operator".to_string()),
+                reason: Some("closed_by_operator".to_string()),
             })
             .expect("failed to upsert worker");
 
@@ -10007,7 +10091,7 @@ mod tests {
         unsafe {
             std::env::set_var("CONDUCTOR_STATE_DIR", &root);
         }
-        enable_ralph_loop("demo-run").expect("failed to enable ralph");
+        enable_ralph_loop_for_root(&root, "demo-run").expect("failed to enable ralph");
         store
             .upsert_worker(WorkerRecord {
                 worker_id: "verify-1".to_string(),
@@ -10055,7 +10139,7 @@ mod tests {
         unsafe {
             std::env::set_var("CONDUCTOR_STATE_DIR", &root);
         }
-        enable_ralph_loop("demo-run").expect("failed to enable ralph");
+        enable_ralph_loop_for_root(&root, "demo-run").expect("failed to enable ralph");
         store
             .upsert_worker(WorkerRecord {
                 worker_id: "verify-1".to_string(),
@@ -10081,7 +10165,11 @@ mod tests {
         let run = store.read_run("demo-run").expect("run should still exist");
         assert!(!run.active);
         assert_eq!(run.current_phase, RunPhase::Complete);
-        let loop_state = read_ralph_loop_state("demo-run").expect("loop state should be readable");
+        let loop_state_path = root.join("runs").join("demo-run").join("ralph_loop.json");
+        let loop_state: RalphLoopState = serde_json::from_str(
+            &fs::read_to_string(loop_state_path).expect("loop state file should exist"),
+        )
+        .expect("loop state should deserialize");
         assert!(!loop_state.enabled);
         match previous_state_dir {
             Some(value) => unsafe {
