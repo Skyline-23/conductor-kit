@@ -3323,15 +3323,14 @@ fn maybe_complete_run_after_operator_settlement(
         .unwrap_or(false);
     if ralph_enabled {
         let settled = store.read_worker(run_id, worker_id).ok();
-        let accepted_outcome = settled
+        let settled_reason = settled
             .as_ref()
             .and_then(|worker| worker.reason.as_deref())
-            .map(|reason| reason == "accepted_by_operator")
-            .unwrap_or(false);
-        if !accepted_outcome {
+            .unwrap_or_default();
+        if settled_reason != "closed_by_operator" {
             let _ = push_text_to_main_pane(
                 run_id,
-                "ralph: all lanes settled; stay in the operator lane and decide the next move before closing the run",
+                "ralph: lanes settled, but the loop stays active until you explicitly close the run",
             );
             return Ok(false);
         }
@@ -9162,6 +9161,11 @@ mod tests {
         store
             .init_run("demo-run", "orchestrator-main")
             .expect("failed to init run");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+        }
+        disable_ralph_loop("demo-run").expect("failed to disable ralph");
         store
             .upsert_worker(WorkerRecord {
                 worker_id: "verify-1".to_string(),
@@ -9193,8 +9197,14 @@ mod tests {
                 .unwrap_or_default()
                 .contains("verify-1")
         );
-        let loop_state = read_ralph_loop_state("demo-run").expect("loop state should be readable");
-        assert!(!loop_state.enabled);
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
     }
 
     #[test]
@@ -9986,8 +9996,56 @@ mod tests {
     }
 
     #[test]
-    fn maybe_complete_run_after_operator_settlement_keeps_ralph_runs_open() {
+    fn maybe_complete_run_after_operator_settlement_keeps_ralph_runs_open_after_accept() {
         let root = unique_temp_dir("conductor-ralph-close-guard");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+        }
+        enable_ralph_loop("demo-run").expect("failed to enable ralph");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "verify-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Verifier,
+                session_ref: None,
+                state: WorkerState::Stopped,
+                current_task_id: None,
+                current_summary: Some("closed after verification".to_string()),
+                terminal_label: Some("verify-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("accepted_by_operator".to_string()),
+            })
+            .expect("failed to upsert worker");
+
+        let completed =
+            maybe_complete_run_after_operator_settlement(&store, "demo-run", "verify-1")
+                .expect("run completion check should succeed");
+        assert!(!completed);
+
+        let run = store.read_run("demo-run").expect("run should still exist");
+        assert!(run.active);
+        assert_ne!(run.current_phase, RunPhase::Complete);
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
+    }
+
+    #[test]
+    fn maybe_complete_run_after_operator_settlement_closes_ralph_runs_after_explicit_close() {
+        let root = unique_temp_dir("conductor-ralph-explicit-close");
         fs::create_dir_all(&root).expect("failed to create temp root");
         let store = StateStore::new(&root);
         store
@@ -10018,11 +10076,13 @@ mod tests {
         let completed =
             maybe_complete_run_after_operator_settlement(&store, "demo-run", "verify-1")
                 .expect("run completion check should succeed");
-        assert!(!completed);
+        assert!(completed);
 
         let run = store.read_run("demo-run").expect("run should still exist");
-        assert!(run.active);
-        assert_ne!(run.current_phase, RunPhase::Complete);
+        assert!(!run.active);
+        assert_eq!(run.current_phase, RunPhase::Complete);
+        let loop_state = read_ralph_loop_state("demo-run").expect("loop state should be readable");
+        assert!(!loop_state.enabled);
         match previous_state_dir {
             Some(value) => unsafe {
                 std::env::set_var("CONDUCTOR_STATE_DIR", value);
