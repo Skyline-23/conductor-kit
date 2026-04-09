@@ -1693,16 +1693,16 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             &snapshot,
             wakeable_events.iter().any(ralph_wake_event_counts),
         );
-        let should_prime = stall_signature
-            .as_ref()
-            .filter(|signature| last_stall_signature.as_ref() != Some(*signature))
-            .is_some()
-            && last_prime_at
-                .map(|last| Utc::now() - last >= chrono::Duration::seconds(8))
-                .unwrap_or(true);
+        let now = Utc::now();
+        let should_prime = should_reprime_ralph_stall(
+            stall_signature.as_deref(),
+            last_stall_signature.as_deref(),
+            last_prime_at,
+            now,
+        );
         if should_prime {
             prime_ralph_operator_loop(run_id);
-            last_prime_at = Some(Utc::now());
+            last_prime_at = Some(now);
             last_stall_signature = stall_signature;
         } else if stall_signature.is_none() {
             last_stall_signature = None;
@@ -1711,6 +1711,29 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn should_reprime_ralph_stall(
+    stall_signature: Option<&str>,
+    last_stall_signature: Option<&str>,
+    last_prime_at: Option<chrono::DateTime<Utc>>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    let Some(signature) = stall_signature else {
+        return false;
+    };
+    let can_prime_again = last_prime_at
+        .map(|last| now - last >= chrono::Duration::seconds(8))
+        .unwrap_or(true);
+    if !can_prime_again {
+        return false;
+    }
+    if last_stall_signature != Some(signature) {
+        return true;
+    }
+    last_prime_at
+        .map(|last| now - last >= chrono::Duration::seconds(45))
+        .unwrap_or(true)
 }
 
 fn refresh_operator_activity_from_tmux(
@@ -9376,6 +9399,23 @@ mod tests {
         let signature =
             ralph_stall_signature(&snapshot, false).expect("stall signature should exist");
         assert!(signature.contains("resume-operator"));
+    }
+
+    #[test]
+    fn should_reprime_ralph_stall_waits_before_repeating_the_same_stall() {
+        let now = Utc::now();
+        assert!(!should_reprime_ralph_stall(
+            Some("resume-operator"),
+            Some("resume-operator"),
+            Some(now - chrono::Duration::seconds(20)),
+            now,
+        ));
+        assert!(should_reprime_ralph_stall(
+            Some("resume-operator"),
+            Some("resume-operator"),
+            Some(now - chrono::Duration::seconds(50)),
+            now,
+        ));
     }
 
     #[test]
