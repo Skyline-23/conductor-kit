@@ -543,6 +543,9 @@ impl StateStore {
             .and_then(|worker| worker.last_event_at.or(worker.last_heartbeat_at))
             .map(|seen_at| seen_at < now - Duration::seconds(OPERATOR_STALE_AFTER_SECS))
             .unwrap_or(false);
+        let has_worker_lanes = workers
+            .iter()
+            .any(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main");
         let silent_workers = workers
             .iter()
             .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
@@ -584,7 +587,8 @@ impl StateStore {
                 ) && !matches!(worker.worker_kind, crate::runtime::types::WorkerKind::Verifier)
             })
             .count();
-        let all_workers_idle = workers
+        let all_workers_idle = has_worker_lanes
+            && workers
             .iter()
             .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
             .all(|worker| {
@@ -1363,5 +1367,12 @@ mod tests {
         let decision = derive_operator_decision(&[], &readiness, &[], 2, false);
         assert_eq!(decision.next_action, "resume-operator-now");
         assert!(decision.reason.contains("pending leader notifications"));
+    }
+
+    #[test]
+    fn derive_operator_decision_does_not_reassign_without_worker_lanes() {
+        let decision = derive_operator_decision(&[], &sample_readiness(), &[], 0, false);
+        assert_eq!(decision.next_action, "monitor");
+        assert_eq!(decision.reason, "workers are still making progress");
     }
 }

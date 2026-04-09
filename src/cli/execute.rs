@@ -1454,6 +1454,9 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     enable_ralph_loop(&run_id)?;
     ensure_active_ralph_watch(&run_id)?;
     let tmux_session_name = surface_tmux_session_name(&run_id);
+    if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
+        let _ = configure_tmux_main_exit_hook(&tmux_session_name, false);
+    }
     let should_prime = if requested_width.is_some() {
         true
     } else {
@@ -4032,18 +4035,7 @@ fn run_surface_attached_tmux_session(
         &format!("#({hud_status_cmd})"),
     ])?;
     run_tmux(["select-pane", "-t", main_pane_id.trim(), "-T", main_title])?;
-    let main_exit_hook = format!(
-        "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
-        main_pane_id.trim(),
-        session_name
-    );
-    run_tmux([
-        "set-hook",
-        "-t",
-        session_name,
-        "pane-exited",
-        &main_exit_hook,
-    ])?;
+    configure_tmux_main_exit_hook(session_name, true)?;
     if let Some(prompt) = starter_prompt {
         send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)?;
     }
@@ -7869,6 +7861,33 @@ fn collapse_tmux_surface_to_main(session_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn configure_tmux_main_exit_hook(session_name: &str, close_session: bool) -> Result<(), String> {
+    if !close_session {
+        let _ = run_tmux(["set-hook", "-u", "-t", session_name, "pane-exited"]);
+        return Ok(());
+    }
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
+    ])?;
+    let main_pane_id = find_main_pane_id(session_name, &panes)?;
+    let main_exit_hook = format!(
+        "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
+        main_pane_id.trim(),
+        session_name
+    );
+    run_tmux([
+        "set-hook",
+        "-t",
+        session_name,
+        "pane-exited",
+        &main_exit_hook,
+    ])
+}
+
 fn find_main_pane_id(session_name: &str, panes: &str) -> Result<String, String> {
     let target = format!("{session_name}:0");
     if let Ok(configured) = run_tmux_capture([
@@ -9137,6 +9156,16 @@ mod tests {
         snapshot.decision.next_action = "reassign-or-close".to_string();
         snapshot.decision.reason = "all worker lanes are idle".to_string();
         snapshot.monitor.all_workers_idle = true;
+        snapshot.workers.push(WorkerProjection {
+            worker_id: "explore-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Idle,
+            current_task_id: None,
+            current_summary: Some("lane settled".to_string()),
+            last_heartbeat_at: Some(Utc::now() - chrono::Duration::seconds(30)),
+            terminal_label: Some("explore-1".to_string()),
+            reason: Some("direct_team_pane".to_string()),
+        });
         for worker in &mut snapshot.workers {
             if worker.worker_id == "main" || worker.worker_id == "orchestrator-main" {
                 worker.last_heartbeat_at = Some(Utc::now() - chrono::Duration::seconds(30));
@@ -9219,6 +9248,22 @@ mod tests {
                 reason: Some("operator_stale".to_string()),
             })
             .expect("failed to write main worker");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "explore-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("lane settled".to_string()),
+                terminal_label: Some("explore-1".to_string()),
+                last_heartbeat_at: Some(Utc::now() - chrono::Duration::seconds(30)),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now() - chrono::Duration::seconds(30)),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to write explore worker");
         let mut orchestrator = store
             .read_worker("demo-run", "orchestrator-main")
             .expect("failed to read orchestrator worker");
@@ -9234,6 +9279,34 @@ mod tests {
             .expect("failed to refresh snapshot");
 
         assert!(should_prime_ralph_on_entry(&store, "demo-run", true));
+    }
+
+    #[test]
+    fn should_prime_ralph_on_entry_skips_operator_only_runs() {
+        let root = unique_temp_dir("conductor-ralph-entry-operator-only");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        let mut orchestrator = store
+            .read_worker("demo-run", "orchestrator-main")
+            .expect("failed to read orchestrator worker");
+        orchestrator.last_heartbeat_at = Some(Utc::now() - chrono::Duration::seconds(90));
+        orchestrator.last_event_at = Some(Utc::now() - chrono::Duration::seconds(90));
+        store
+            .upsert_worker(orchestrator)
+            .expect("failed to update orchestrator worker");
+
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        assert!(!should_prime_ralph_on_entry(&store, "demo-run", true));
     }
 
     #[test]
