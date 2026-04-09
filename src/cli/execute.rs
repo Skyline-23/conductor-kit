@@ -4200,14 +4200,6 @@ fn run_surface_attached_tmux_session(
         "-w",
         "-t",
         &format!("{session_name}:0"),
-        "remain-on-exit",
-        "on",
-    ])?;
-    run_tmux([
-        "set-option",
-        "-w",
-        "-t",
-        &format!("{session_name}:0"),
         "@conductor_main_pane",
         main_pane_id.trim(),
     ])?;
@@ -4219,7 +4211,7 @@ fn run_surface_attached_tmux_session(
         &format!("#({hud_status_cmd})"),
     ])?;
     run_tmux(["select-pane", "-t", main_pane_id.trim(), "-T", main_title])?;
-    configure_tmux_main_exit_hook(session_name, false)?;
+    configure_tmux_main_exit_hook(session_name, true)?;
     if let Some(prompt) = starter_prompt {
         send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)?;
     }
@@ -7767,15 +7759,18 @@ fn ensure_tmux_ops_session(
         "@conductor_main_pane",
         main_pane_id.trim(),
     ])?;
+    let main_exit_hook = format!(
+        "if -F '#{{==:#{{hook_pane}},{}}}' 'kill-session -t {}' ''",
+        main_pane_id.trim(),
+        session_name
+    );
     run_tmux([
-        "set-option",
-        "-w",
+        "set-hook",
         "-t",
-        &format!("{session_name}:0"),
-        "remain-on-exit",
-        "on",
+        session_name,
+        "pane-exited",
+        &main_exit_hook,
     ])?;
-    configure_tmux_main_exit_hook(session_name, false)?;
 
     let include_hud = !hud_cmd.trim().is_empty();
 
