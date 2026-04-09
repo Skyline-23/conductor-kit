@@ -1451,13 +1451,21 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     let tmux_session_name = surface_tmux_session_name(&run_id);
     let active_session_hint = current_tmux_session_hint()
         .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false));
-    let ralph_was_enabled = read_ralph_loop_state_from_root(store.root(), &run_id)
+    let previous_loop_state = read_ralph_loop_state_from_root(store.root(), &run_id).ok();
+    let ralph_was_enabled = previous_loop_state
+        .as_ref()
         .map(|state| state.enabled)
         .unwrap_or(false);
     enable_ralph_loop(&run_id)?;
     {
         let mut state = read_ralph_loop_state(&run_id)?;
         state.session_name = active_session_hint.or_else(|| Some(tmux_session_name.clone()));
+        if let Some(previous_state) = previous_loop_state.as_ref() {
+            if let Some(pid) = previous_state.watcher_pid.filter(|pid| process_is_alive(*pid)) {
+                let _ = terminate_process(pid);
+            }
+        }
+        state.watcher_pid = None;
         write_ralph_loop_state(&run_id, &state)?;
     }
     ensure_active_ralph_watch(&run_id)?;
@@ -1489,6 +1497,35 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     run_surface_ops_open(&run_id, false)?;
     if should_prime {
         prime_ralph_operator_loop(&run_id);
+    }
+    Ok(())
+}
+
+fn terminate_process(pid: u32) -> Result<(), String> {
+    let pid_text = pid.to_string();
+    let term_status = Command::new("kill")
+        .args(["-TERM", &pid_text])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|err| err.to_string())?;
+    if !term_status.success() && process_is_alive(pid) {
+        return Err(format!("failed to terminate process {pid}"));
+    }
+    for _ in 0..10 {
+        if !process_is_alive(pid) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let kill_status = Command::new("kill")
+        .args(["-KILL", &pid_text])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|err| err.to_string())?;
+    if !kill_status.success() && process_is_alive(pid) {
+        return Err(format!("failed to kill process {pid}"));
     }
     Ok(())
 }
@@ -1596,12 +1633,7 @@ fn ensure_active_ralph_watch(run_id: &str) -> Result<(), String> {
     if !state.enabled {
         return Ok(());
     }
-    if state.session_name.is_none() {
-        state.session_name = current_tmux_session_hint()
-            .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
-            .or_else(|| discover_ralph_tmux_session(run_id).ok().flatten())
-            .or_else(|| Some(surface_tmux_session_name(run_id)));
-    }
+    state.session_name = preferred_ralph_tmux_session(run_id, state.session_name.as_deref());
     if state.watcher_pid.map(process_is_alive).unwrap_or(false) {
         if state.session_name.is_some() {
             write_ralph_loop_state(run_id, &state)?;
@@ -1649,12 +1681,13 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
         if !state.enabled {
             break;
         }
-        let preferred_session = state
-            .session_name
-            .clone()
-            .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
-            .or_else(|| discover_ralph_tmux_session(run_id).ok().flatten())
+        let preferred_session = preferred_ralph_tmux_session(run_id, state.session_name.as_deref())
             .unwrap_or_else(|| surface_tmux_session_name(run_id));
+        if state.session_name.as_deref() != Some(preferred_session.as_str()) {
+            let mut updated_state = state.clone();
+            updated_state.session_name = Some(preferred_session.clone());
+            let _ = write_ralph_loop_state(run_id, &updated_state);
+        }
         let _ = refresh_operator_activity_from_tmux(
             &store,
             run_id,
@@ -1785,6 +1818,10 @@ fn discover_ralph_tmux_session(run_id: &str) -> Result<Option<String>, String> {
     if !command_available("tmux") {
         return Ok(None);
     }
+    let canonical_surface = surface_tmux_session_name(run_id);
+    if tmux_session_exists(&canonical_surface)? {
+        return Ok(Some(canonical_surface));
+    }
     let output = run_tmux_capture([
         "list-panes",
         "-a",
@@ -1807,6 +1844,25 @@ fn discover_ralph_tmux_session(run_id: &str) -> Result<Option<String>, String> {
         }
     });
     Ok(discovered)
+}
+
+fn preferred_ralph_tmux_session(run_id: &str, stored_session_name: Option<&str>) -> Option<String> {
+    let canonical_surface = surface_tmux_session_name(run_id);
+    let is_live = |session_name: &str| tmux_session_exists(session_name).unwrap_or(false);
+    if is_live(&canonical_surface) {
+        return Some(canonical_surface);
+    }
+    current_tmux_session_hint()
+        .filter(|session_name| session_name == &canonical_surface || session_name.contains(run_id))
+        .filter(|session_name| is_live(session_name))
+        .or_else(|| {
+            stored_session_name
+                .map(str::trim)
+                .filter(|session_name| !session_name.is_empty())
+                .map(ToOwned::to_owned)
+                .filter(|session_name| is_live(session_name))
+        })
+        .or_else(|| discover_ralph_tmux_session(run_id).ok().flatten())
 }
 
 fn ralph_wake_event_counts(event: &EventEnvelope) -> bool {
