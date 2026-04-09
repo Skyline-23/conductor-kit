@@ -1762,6 +1762,8 @@ fn parse_worker_host_pid(line: &str, run_id: &str) -> Option<u32> {
 fn process_exists(pid: u32) -> bool {
     Command::new("kill")
         .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
@@ -1770,19 +1772,25 @@ fn process_exists(pid: u32) -> bool {
 fn terminate_pid(pid: u32) {
     let _ = Command::new("kill")
         .args(["-TERM", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
 }
 
 fn force_kill_pid(pid: u32) {
     let _ = Command::new("kill")
         .args(["-KILL", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
 }
 
 fn cleanup_orphaned_worker_hosts(run_id: &str) -> Result<(), String> {
     let pids = worker_host_pids_for_run(run_id)?;
     for pid in &pids {
-        terminate_pid(*pid);
+        if process_exists(*pid) {
+            terminate_pid(*pid);
+        }
     }
     if !pids.is_empty() {
         thread::sleep(Duration::from_millis(250));
