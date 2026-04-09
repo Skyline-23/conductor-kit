@@ -18,7 +18,7 @@ use crate::runtime::sessions::{
 };
 use crate::runtime::state_store::StateStore;
 use crate::runtime::types::{
-    ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, RunRecord, SCHEMA_VERSION,
+    ApprovalStatus, DispatchStatus, EventEnvelope, EventKind, RunPhase, SCHEMA_VERSION,
     SessionStatus, TaskRecord, WorkerKind, WorkerRecord, WorkerState,
 };
 use crate::runtime::workers::{WorkerLaunchSpec, execute_worker};
@@ -1556,6 +1556,7 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let mut cursor = 0usize;
     let mut last_prime_at: Option<chrono::DateTime<Utc>> = None;
+    let mut last_stall_signature: Option<String> = None;
 
     loop {
         let state = read_ralph_loop_state(run_id)?;
@@ -1586,24 +1587,96 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             Vec::new()
         };
         cursor = events.len();
-        let wakeable = !filter_events(new_events, None, true).is_empty();
-        let orchestration_pressure = snapshot.readiness.stale_operator
-            || snapshot.monitor.all_workers_idle
-            || snapshot.monitor.pending_leader_notifications > 0
-            || snapshot.monitor.pending_handoffs > 0
-            || snapshot.monitor.verification_gaps > 0;
-        let should_prime = (wakeable || orchestration_pressure)
+        let wakeable_events = filter_events(new_events, None, true);
+        let stall_signature = ralph_stall_signature(
+            &snapshot,
+            wakeable_events.iter().any(ralph_wake_event_counts),
+        );
+        let should_prime = stall_signature
+            .as_ref()
+            .filter(|signature| last_stall_signature.as_ref() != Some(*signature))
+            .is_some()
             && last_prime_at
                 .map(|last| Utc::now() - last >= chrono::Duration::seconds(8))
                 .unwrap_or(true);
         if should_prime {
             prime_ralph_operator_loop(run_id);
             last_prime_at = Some(Utc::now());
+            last_stall_signature = stall_signature;
+        } else if stall_signature.is_none() {
+            last_stall_signature = None;
         }
         thread::sleep(Duration::from_millis(1500));
     }
 
     Ok(())
+}
+
+fn ralph_wake_event_counts(event: &EventEnvelope) -> bool {
+    matches!(
+        event.event,
+        EventKind::WorkerStateChanged
+            | EventKind::MailboxMessageCreated
+            | EventKind::MailboxMessageDelivered
+            | EventKind::MailboxMessageNotified
+            | EventKind::LeaderNotificationDeferred
+            | EventKind::ClaimReclaimed
+            | EventKind::HandoffNeeded
+    )
+}
+
+fn snapshot_has_active_worker_progress(snapshot: &crate::runtime::types::RuntimeSnapshot) -> bool {
+    snapshot.workers.iter().any(|worker| {
+        worker.worker_id != "main"
+            && worker.worker_id != "orchestrator-main"
+            && matches!(
+                worker.state,
+                WorkerState::Working | WorkerState::AwaitingReport
+            )
+            && !worker
+                .reason
+                .as_deref()
+                .map(|reason| {
+                    reason == "stalled_non_reporting"
+                        || reason.starts_with("awaiting_report_nudged")
+                        || reason == "direct_team_bootstrapping"
+                        || reason == "direct_team_pane_respawned"
+                })
+                .unwrap_or(false)
+    })
+}
+
+fn ralph_stall_signature(
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+    saw_wake_event: bool,
+) -> Option<String> {
+    if snapshot.readiness.stale_operator && snapshot.monitor.pending_leader_notifications > 0 {
+        return Some(format!(
+            "stale-operator:{}:{}",
+            snapshot.monitor.pending_leader_notifications, snapshot.mailbox.unread
+        ));
+    }
+
+    if snapshot_has_active_worker_progress(snapshot) {
+        return None;
+    }
+
+    match snapshot.decision.next_action.as_str() {
+        "review-approval" | "relaunch-stalled" | "unblock" | "accept-completion"
+        | "verify-completion" | "reassign-or-close" => Some(format!(
+            "{}|{}|{}",
+            snapshot.decision.next_action,
+            snapshot.decision.focus_worker.as_deref().unwrap_or(""),
+            snapshot.decision.reason
+        )),
+        "read-inbox" if saw_wake_event || snapshot.monitor.pending_leader_notifications > 0 => {
+            Some(format!(
+                "read-inbox|{}|{}",
+                snapshot.mailbox.unread, snapshot.decision.reason
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn prime_ralph_operator_loop(run_id: &str) {
@@ -3273,6 +3346,7 @@ fn maybe_complete_run_after_operator_settlement(
         "all lanes settled after operator closed {worker_id}"
     ));
     store.write_run(&run)?;
+    let _ = disable_ralph_loop(run_id);
     let _ = store.refresh_snapshot(run_id)?;
     let _ = push_text_to_main_pane(
         run_id,
@@ -8109,8 +8183,8 @@ mod tests {
     use crate::cli::host_catalog::{HostCatalog, VendorCatalog};
     use crate::runtime::types::{
         AuthorityLease, DispatchCounts, MailboxCounts, ReadinessState, ReplayState, RunPhase,
-        RunRecord, RunSnapshot, RuntimeSnapshot, SessionRecord, SessionStatus, TaskCounts,
-        TaskStatus, WorkerKind, WorkerRecord, WorkerState,
+        RunSnapshot, RuntimeSnapshot, SessionRecord, SessionStatus, TaskCounts, TaskStatus,
+        WorkerKind, WorkerProjection, WorkerRecord, WorkerState,
     };
     use chrono::Utc;
     use std::collections::BTreeMap;
@@ -8950,6 +9024,37 @@ mod tests {
     }
 
     #[test]
+    fn ralph_stall_signature_ignores_active_progress_lanes() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "read-inbox".to_string();
+        snapshot.decision.reason = "new worker reports are waiting in the mailbox".to_string();
+        snapshot.workers.push(WorkerProjection {
+            worker_id: "build-1".to_string(),
+            worker_kind: WorkerKind::Worker,
+            state: WorkerState::Working,
+            current_task_id: None,
+            current_summary: Some("implementing the lane".to_string()),
+            last_heartbeat_at: Some(Utc::now()),
+            terminal_label: Some("build-1".to_string()),
+            reason: Some("direct_team_pane".to_string()),
+        });
+
+        assert!(ralph_stall_signature(&snapshot, true).is_none());
+    }
+
+    #[test]
+    fn ralph_stall_signature_primes_when_all_workers_are_idle() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "reassign-or-close".to_string();
+        snapshot.decision.reason = "all worker lanes are idle".to_string();
+        snapshot.monitor.all_workers_idle = true;
+
+        let signature =
+            ralph_stall_signature(&snapshot, false).expect("stall signature should exist");
+        assert!(signature.contains("reassign-or-close"));
+    }
+
+    #[test]
     fn maybe_resume_context_prompt_lists_blocked_lanes_before_done_lanes() {
         let root = unique_temp_dir("conductor-resume-order");
         fs::create_dir_all(&root).expect("failed to create temp root");
@@ -9088,6 +9193,8 @@ mod tests {
                 .unwrap_or_default()
                 .contains("verify-1")
         );
+        let loop_state = read_ralph_loop_state("demo-run").expect("loop state should be readable");
+        assert!(!loop_state.enabled);
     }
 
     #[test]
@@ -9874,8 +9981,7 @@ mod tests {
             .refresh_snapshot("demo-run")
             .expect("failed to refresh snapshot");
         assert!(
-            !legacy_ops_session_is_solo(&store, "demo-run")
-                .expect("legacy check should succeed")
+            !legacy_ops_session_is_solo(&store, "demo-run").expect("legacy check should succeed")
         );
     }
 
