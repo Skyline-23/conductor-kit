@@ -1862,15 +1862,30 @@ fn capture_main_pane_signature(session_name: &str) -> Result<Option<String>, Str
         "-t",
         &format!("{session_name}:0"),
         "-F",
-        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}\t#{cursor_x}\t#{cursor_y}\t#{history_size}",
+        "#{pane_id}\t#{pane_index}\t#{pane_current_command}",
     ])?;
     let main_pane_id = find_main_pane_id(session_name, &panes)?;
     let tail = run_tmux_capture(["capture-pane", "-p", "-t", &main_pane_id, "-S", "-40"])?;
     let meta = panes
         .lines()
         .find(|line| line.starts_with(&main_pane_id))
-        .unwrap_or_default();
-    Ok(Some(format!("{meta}\n{tail}")))
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let normalized_tail = normalize_tmux_capture_tail(&tail);
+    Ok(Some(format!("{meta}\n{normalized_tail}")))
+}
+
+fn normalize_tmux_capture_tail(tail: &str) -> String {
+    let ansi = Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]").expect("valid ansi regex");
+    ansi
+        .replace_all(tail, "")
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 fn discover_ralph_tmux_session(run_id: &str) -> Result<Option<String>, String> {
