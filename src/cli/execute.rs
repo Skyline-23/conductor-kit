@@ -1703,6 +1703,7 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
     let mut last_prime_at: Option<chrono::DateTime<Utc>> = None;
     let mut last_stall_signature: Option<String> = None;
     let mut last_main_signature: Option<String> = None;
+    let mut last_main_progress_at: Option<chrono::DateTime<Utc>> = None;
 
     loop {
         let state = match read_ralph_loop_state(run_id) {
@@ -1737,6 +1738,7 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             run_id,
             &preferred_session,
             &mut last_main_signature,
+            &mut last_main_progress_at,
         );
         let run = match store.read_run(run_id) {
             Ok(run) => run,
@@ -1830,18 +1832,27 @@ fn refresh_operator_activity_from_tmux(
     run_id: &str,
     session_name: &str,
     last_main_signature: &mut Option<String>,
+    last_main_progress_at: &mut Option<chrono::DateTime<Utc>>,
 ) -> Result<(), String> {
     let Some(activity) = capture_main_pane_activity(session_name)? else {
         return Ok(());
     };
+    let now = Utc::now();
     let signature_changed = last_main_signature.as_ref() != Some(&activity.signature);
-    if !signature_changed && !activity.active_hint {
+    if signature_changed {
+        *last_main_progress_at = Some(now);
+    }
+    let busy_within_grace = activity.active_hint
+        && last_main_progress_at
+            .as_ref()
+            .map(|last| now.signed_duration_since(*last) < chrono::Duration::seconds(30))
+            .unwrap_or(false);
+    if !signature_changed && !busy_within_grace {
         return Ok(());
     }
     if signature_changed {
         *last_main_signature = Some(activity.signature);
     }
-    let now = Utc::now();
     for worker_id in ["main", "orchestrator-main"] {
         if let Ok(mut worker) = store.read_worker(run_id, worker_id) {
             worker.last_heartbeat_at = Some(now);
@@ -9694,6 +9705,15 @@ mod tests {
             "Messages to be submitted after next tool call (press esc to interrupt and send immediately)"
         ));
         assert!(!pane_output_looks_busy("plain static output without active work markers"));
+    }
+
+    #[test]
+    fn busy_hints_only_cover_a_short_progress_grace_window() {
+        let now = Utc::now();
+        let recent_progress = now - chrono::Duration::seconds(12);
+        let stale_progress = now - chrono::Duration::seconds(31);
+        assert!(now - recent_progress < chrono::Duration::seconds(30));
+        assert!(now - stale_progress >= chrono::Duration::seconds(30));
     }
 
     #[test]
