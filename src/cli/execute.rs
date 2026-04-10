@@ -1889,8 +1889,9 @@ fn capture_main_pane_activity(session_name: &str) -> Result<Option<MainPaneActiv
         .trim()
         .to_string();
     let normalized_tail = normalize_tmux_capture_tail(&tail);
+    let canonical_tail = canonicalize_operator_tail(&normalized_tail);
     Ok(Some(MainPaneActivity {
-        signature: format!("{meta}\n{normalized_tail}"),
+        signature: format!("{meta}\n{canonical_tail}"),
         active_hint: pane_output_looks_busy(&normalized_tail),
     }))
 }
@@ -1905,6 +1906,37 @@ fn normalize_tmux_capture_tail(tail: &str) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+fn canonicalize_operator_tail(normalized_tail: &str) -> String {
+    normalized_tail
+        .lines()
+        .filter(|line| !operator_tail_line_is_volatile(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+fn operator_tail_line_is_volatile(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("working (") {
+        return true;
+    }
+    if lower.contains("background terminal running") || lower.contains("background terminals running") {
+        return true;
+    }
+    if lower.contains("messages to be submitted after next tool call") {
+        return true;
+    }
+    if lower.contains("weekly") && lower.contains("window") && lower.contains(" used ") {
+        return true;
+    }
+    false
 }
 
 fn pane_output_looks_busy(normalized_tail: &str) -> bool {
@@ -9714,6 +9746,12 @@ mod tests {
         let stale_progress = now - chrono::Duration::seconds(31);
         assert!(now - recent_progress < chrono::Duration::seconds(30));
         assert!(now - stale_progress >= chrono::Duration::seconds(30));
+    }
+
+    #[test]
+    fn canonicalize_operator_tail_strips_volatile_busy_lines() {
+        let raw = "real work line\nWorking (2m 04s • esc to interrupt) · 3 background terminals running · /ps to view · /stop to close\ngpt-5.4 high fast · feat/runtime · 87% used · weekly 96% · 0.118.0 · 258K window · 402M used · 401M in · 814K out · Fast on\nMessages to be submitted after next tool call (press esc to interrupt and send immediately)";
+        assert_eq!(canonicalize_operator_tail(raw), "real work line");
     }
 
     #[test]
