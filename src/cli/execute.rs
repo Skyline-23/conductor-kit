@@ -1767,13 +1767,15 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             updated_state.watcher_pid = Some(self_pid);
             let _ = write_ralph_loop_state(run_id, &updated_state);
         }
-        let _ = refresh_operator_activity_from_tmux(
+        let main_activity = refresh_operator_activity_from_tmux(
             &store,
             run_id,
             &preferred_session,
             &mut last_main_signature,
             &mut last_main_progress_at,
-        );
+        )
+        .ok()
+        .flatten();
         let run = match store.read_run(run_id) {
             Ok(run) => run,
             Err(_) => {
@@ -1814,11 +1816,16 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
         };
         cursor = events.len();
         let wakeable_events = filter_events(new_events, None, true);
-        let stall_signature = ralph_stall_signature(
-            &snapshot,
-            wakeable_events.iter().any(ralph_wake_event_counts),
-        );
+        let saw_wake_event = wakeable_events.iter().any(ralph_wake_event_counts);
         let now = Utc::now();
+        let stall_signature = ralph_stall_signature(&snapshot, saw_wake_event).or_else(|| {
+            operator_only_stall_signature(
+                &snapshot,
+                main_activity.as_ref(),
+                last_main_progress_at,
+                now,
+            )
+        });
         let should_prime = should_reprime_ralph_stall(
             stall_signature.as_deref(),
             last_stall_signature.as_deref(),
@@ -1871,9 +1878,9 @@ fn refresh_operator_activity_from_tmux(
     session_name: &str,
     last_main_signature: &mut Option<String>,
     last_main_progress_at: &mut Option<chrono::DateTime<Utc>>,
-) -> Result<(), String> {
+) -> Result<Option<MainPaneActivity>, String> {
     let Some(activity) = capture_main_pane_activity(session_name)? else {
-        return Ok(());
+        return Ok(None);
     };
     let now = Utc::now();
     let signature_changed = last_main_signature.as_ref() != Some(&activity.signature);
@@ -1886,10 +1893,10 @@ fn refresh_operator_activity_from_tmux(
             .map(|last| now.signed_duration_since(*last) < chrono::Duration::seconds(30))
             .unwrap_or(false);
     if !signature_changed && !busy_within_grace {
-        return Ok(());
+        return Ok(Some(activity));
     }
     if signature_changed {
-        *last_main_signature = Some(activity.signature);
+        *last_main_signature = Some(activity.signature.clone());
     }
     for worker_id in ["main", "orchestrator-main"] {
         if let Ok(mut worker) = store.read_worker(run_id, worker_id) {
@@ -1899,7 +1906,7 @@ fn refresh_operator_activity_from_tmux(
         }
     }
     let _ = store.refresh_snapshot(run_id);
-    Ok(())
+    Ok(Some(activity))
 }
 
 struct MainPaneActivity {
@@ -2178,6 +2185,34 @@ fn ralph_stall_signature(
         }
         _ => None,
     }
+}
+
+fn operator_only_stall_signature(
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+    main_activity: Option<&MainPaneActivity>,
+    last_main_progress_at: Option<chrono::DateTime<Utc>>,
+    now: chrono::DateTime<Utc>,
+) -> Option<String> {
+    let has_non_operator_workers = snapshot
+        .workers
+        .iter()
+        .any(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main");
+    if has_non_operator_workers {
+        return None;
+    }
+    if snapshot.decision.next_action != "monitor" {
+        return None;
+    }
+    if main_activity.map(|activity| activity.active_hint).unwrap_or(false) {
+        return None;
+    }
+    let quiet_for_too_long = last_main_progress_at
+        .map(|last| now - last >= chrono::Duration::seconds(12))
+        .unwrap_or(true);
+    if !quiet_for_too_long {
+        return None;
+    }
+    Some("operator-only-monitor-stall".to_string())
 }
 
 fn prime_ralph_operator_loop(run_id: &str, force_when_stale: bool) -> bool {
@@ -9736,6 +9771,49 @@ mod tests {
         let signature =
             ralph_stall_signature(&snapshot, false).expect("stall signature should exist");
         assert!(signature.contains("resume-operator"));
+    }
+
+    #[test]
+    fn operator_only_stall_signature_primes_when_monitor_run_goes_quiet() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "monitor".to_string();
+        snapshot.decision.reason = "workers are still making progress".to_string();
+        snapshot.workers.retain(|worker| {
+            worker.worker_id == "main" || worker.worker_id == "orchestrator-main"
+        });
+
+        let signature = operator_only_stall_signature(
+            &snapshot,
+            Some(&MainPaneActivity {
+                signature: "steady".to_string(),
+                active_hint: false,
+            }),
+            Some(Utc::now() - chrono::Duration::seconds(20)),
+            Utc::now(),
+        )
+        .expect("operator-only stall should be detected");
+        assert_eq!(signature, "operator-only-monitor-stall");
+    }
+
+    #[test]
+    fn operator_only_stall_signature_skips_busy_operator_only_runs() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "monitor".to_string();
+        snapshot.decision.reason = "workers are still making progress".to_string();
+        snapshot.workers.retain(|worker| {
+            worker.worker_id == "main" || worker.worker_id == "orchestrator-main"
+        });
+
+        assert!(operator_only_stall_signature(
+            &snapshot,
+            Some(&MainPaneActivity {
+                signature: "steady".to_string(),
+                active_hint: true,
+            }),
+            Some(Utc::now() - chrono::Duration::seconds(20)),
+            Utc::now(),
+        )
+        .is_none());
     }
 
     #[test]
