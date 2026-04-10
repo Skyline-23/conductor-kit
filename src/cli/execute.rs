@@ -1555,10 +1555,6 @@ struct RalphLoopState {
     session_name: Option<String>,
 }
 
-fn ralph_loop_file(run_id: &str) -> Result<PathBuf, String> {
-    Ok(ralph_loop_file_for_root(&resolve_state_root()?, run_id))
-}
-
 fn ralph_loop_file_for_root(root: &Path, run_id: &str) -> PathBuf {
     root.join("runs").join(run_id).join("ralph_loop.json")
 }
@@ -1599,6 +1595,7 @@ fn enable_ralph_loop(run_id: &str) -> Result<(), String> {
     write_ralph_loop_state(run_id, &state)
 }
 
+#[cfg(test)]
 fn enable_ralph_loop_for_root(root: &Path, run_id: &str) -> Result<(), String> {
     let mut state = read_ralph_loop_state_from_root(root, run_id)?;
     state.enabled = true;
@@ -1834,13 +1831,16 @@ fn refresh_operator_activity_from_tmux(
     session_name: &str,
     last_main_signature: &mut Option<String>,
 ) -> Result<(), String> {
-    let Some(signature) = capture_main_pane_signature(session_name)? else {
+    let Some(activity) = capture_main_pane_activity(session_name)? else {
         return Ok(());
     };
-    if last_main_signature.as_ref() == Some(&signature) {
+    let signature_changed = last_main_signature.as_ref() != Some(&activity.signature);
+    if !signature_changed && !activity.active_hint {
         return Ok(());
     }
-    *last_main_signature = Some(signature);
+    if signature_changed {
+        *last_main_signature = Some(activity.signature);
+    }
     let now = Utc::now();
     for worker_id in ["main", "orchestrator-main"] {
         if let Ok(mut worker) = store.read_worker(run_id, worker_id) {
@@ -1853,7 +1853,12 @@ fn refresh_operator_activity_from_tmux(
     Ok(())
 }
 
-fn capture_main_pane_signature(session_name: &str) -> Result<Option<String>, String> {
+struct MainPaneActivity {
+    signature: String,
+    active_hint: bool,
+}
+
+fn capture_main_pane_activity(session_name: &str) -> Result<Option<MainPaneActivity>, String> {
     if !command_available("tmux") || !tmux_session_exists(session_name)? {
         return Ok(None);
     }
@@ -1873,7 +1878,10 @@ fn capture_main_pane_signature(session_name: &str) -> Result<Option<String>, Str
         .trim()
         .to_string();
     let normalized_tail = normalize_tmux_capture_tail(&tail);
-    Ok(Some(format!("{meta}\n{normalized_tail}")))
+    Ok(Some(MainPaneActivity {
+        signature: format!("{meta}\n{normalized_tail}"),
+        active_hint: pane_output_looks_busy(&normalized_tail),
+    }))
 }
 
 fn normalize_tmux_capture_tail(tail: &str) -> String {
@@ -1886,6 +1894,22 @@ fn normalize_tmux_capture_tail(tail: &str) -> String {
         .join("\n")
         .trim()
         .to_string()
+}
+
+fn pane_output_looks_busy(normalized_tail: &str) -> bool {
+    let lower = normalized_tail.to_ascii_lowercase();
+    [
+        "working (",
+        "background terminal running",
+        "background terminals running",
+        "messages to be submitted after next tool call",
+        "starting mcp servers",
+        "press esc to interrupt",
+        "/ps to view",
+        "/stop to close",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn discover_ralph_tmux_session(run_id: &str) -> Result<Option<String>, String> {
@@ -8370,10 +8394,6 @@ fn preferred_tmux_term() -> Option<String> {
     }
 }
 
-fn resolve_tmux_term_fallback() -> Option<String> {
-    resolve_tmux_term_fallback_with(env::var("TERM_PROGRAM").ok().as_deref())
-}
-
 fn resolve_tmux_term_fallback_with(term_program: Option<&str>) -> Option<String> {
     if let Ok(value) = run_tmux_capture(["show-environment", "-g", "TERM"]) {
         if let Some(term) = value.strip_prefix("TERM=") {
@@ -9663,6 +9683,17 @@ mod tests {
             .expect("failed to refresh snapshot");
 
         assert!(should_prime_ralph_on_entry(&store, "demo-run", true));
+    }
+
+    #[test]
+    fn pane_output_busy_hint_detects_background_work_markers() {
+        assert!(pane_output_looks_busy(
+            "Working (2m 09s • esc to interrupt) · 3 background terminals running · /ps to view · /stop to close"
+        ));
+        assert!(pane_output_looks_busy(
+            "Messages to be submitted after next tool call (press esc to interrupt and send immediately)"
+        ));
+        assert!(!pane_output_looks_busy("plain static output without active work markers"));
     }
 
     #[test]
