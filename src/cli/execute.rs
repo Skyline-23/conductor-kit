@@ -1890,7 +1890,7 @@ fn refresh_operator_activity_from_tmux(
     let busy_within_grace = activity.active_hint
         && last_main_progress_at
             .as_ref()
-            .map(|last| now.signed_duration_since(*last) < chrono::Duration::seconds(30))
+            .map(|last| now.signed_duration_since(*last) < chrono::Duration::seconds(12))
             .unwrap_or(false);
     if !signature_changed && !busy_within_grace {
         return Ok(Some(activity));
@@ -1969,6 +1969,15 @@ fn operator_tail_line_is_volatile(line: &str) -> bool {
         return false;
     }
     let lower = trimmed.to_ascii_lowercase();
+    if trimmed.starts_with("• Ran ")
+        || trimmed.starts_with("• Called ")
+        || trimmed.starts_with("• Waited for background terminal")
+        || trimmed.starts_with("• Searching the web")
+        || trimmed.starts_with("• Searched")
+        || trimmed.starts_with("└ ")
+    {
+        return true;
+    }
     if lower.starts_with("working (") {
         return true;
     }
@@ -2203,14 +2212,15 @@ fn operator_only_stall_signature(
     if snapshot.decision.next_action != "monitor" {
         return None;
     }
-    if main_activity.map(|activity| activity.active_hint).unwrap_or(false) {
-        return None;
-    }
     let quiet_for_too_long = last_main_progress_at
         .map(|last| now - last >= chrono::Duration::seconds(12))
         .unwrap_or(true);
     if !quiet_for_too_long {
         return None;
+    }
+    let active_hint = main_activity.map(|activity| activity.active_hint).unwrap_or(false);
+    if active_hint {
+        return Some("operator-only-busy-stall".to_string());
     }
     Some("operator-only-monitor-stall".to_string())
 }
@@ -9810,10 +9820,32 @@ mod tests {
                 signature: "steady".to_string(),
                 active_hint: true,
             }),
-            Some(Utc::now() - chrono::Duration::seconds(20)),
+            Some(Utc::now() - chrono::Duration::seconds(5)),
             Utc::now(),
         )
         .is_none());
+    }
+
+    #[test]
+    fn operator_only_stall_signature_primes_when_busy_markers_stick_without_progress() {
+        let mut snapshot = sample_snapshot();
+        snapshot.decision.next_action = "monitor".to_string();
+        snapshot.decision.reason = "workers are still making progress".to_string();
+        snapshot.workers.retain(|worker| {
+            worker.worker_id == "main" || worker.worker_id == "orchestrator-main"
+        });
+
+        let signature = operator_only_stall_signature(
+            &snapshot,
+            Some(&MainPaneActivity {
+                signature: "steady".to_string(),
+                active_hint: true,
+            }),
+            Some(Utc::now() - chrono::Duration::seconds(20)),
+            Utc::now(),
+        )
+        .expect("stuck busy markers should count as a stall");
+        assert_eq!(signature, "operator-only-busy-stall");
     }
 
     #[test]
@@ -10008,6 +10040,12 @@ mod tests {
     fn canonicalize_operator_tail_strips_volatile_busy_lines() {
         let raw = "real work line\nWorking (2m 04s • esc to interrupt) · 3 background terminals running · /ps to view · /stop to close\ngpt-5.4 high fast · feat/runtime · 87% used · weekly 96% · 0.118.0 · 258K window · 402M used · 401M in · 814K out · Fast on\nMessages to be submitted after next tool call (press esc to interrupt and send immediately)";
         assert_eq!(canonicalize_operator_tail(raw), "real work line");
+    }
+
+    #[test]
+    fn canonicalize_operator_tail_strips_tool_chatter_lines() {
+        let raw = "• Ran rtk npm test\n└ ok\n• Waited for background terminal · rtk npm run dev\nreal progress summary";
+        assert_eq!(canonicalize_operator_tail(raw), "real progress summary");
     }
 
     #[test]
