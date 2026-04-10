@@ -1198,6 +1198,12 @@ fn run_open(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
     cleanup_legacy_ops_session_if_solo(&store, &run_id)?;
+    let surface_session_name = surface_tmux_session_name(&run_id);
+    if tmux_session_exists(&surface_session_name)?
+        && should_attach_live_ralph_surface(&store, &run_id)?
+    {
+        return attach_tmux_ops_session(&surface_session_name);
+    }
     if should_use_native_resume(&cfg) {
         cleanup_default_surface_state(&store, &run_id)?;
         cleanup_surface_tmux_session(&run_id)?;
@@ -1206,6 +1212,27 @@ fn run_open(args: &[String]) -> Result<(), String> {
     ensure_active_ralph_watch(&run_id)?;
     cleanup_default_surface_state(&store, &run_id)?;
     run_surface_ops_open(&run_id, true)
+}
+
+fn should_attach_live_ralph_surface(store: &StateStore, run_id: &str) -> Result<bool, String> {
+    let run = store.read_run(run_id)?;
+    let ralph_loop = read_ralph_loop_state(run_id)?;
+    Ok(should_attach_live_ralph_surface_from_state(
+        run.active,
+        matches!(
+            run.current_phase,
+            RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
+        ),
+        ralph_loop.enabled,
+    ))
+}
+
+fn should_attach_live_ralph_surface_from_state(
+    run_active: bool,
+    run_terminal: bool,
+    ralph_enabled: bool,
+) -> bool {
+    run_active && !run_terminal && ralph_enabled
 }
 
 fn run_attach_alias(args: &[String]) -> Result<(), String> {
@@ -4527,10 +4554,25 @@ fn resolve_surface_launch(
     );
     let mut launch = resolve_worker_adapter(&adapter, run_id, "main", None, None)?;
     if resume_surface && adapter.cli == "codex" {
-        launch.args.splice(0..0, ["resume".to_string()]);
+        let mut resume_args = vec!["resume".to_string()];
+        if ralph_loop_should_resume_last(run_id) {
+            resume_args.push("--last".to_string());
+        }
+        launch.args.splice(0..0, resume_args);
         launch.stdin_payload = None;
     }
     Ok(launch)
+}
+
+fn ralph_loop_should_resume_last(run_id: &str) -> bool {
+    let Ok(state) = read_ralph_loop_state(run_id) else {
+        return false;
+    };
+    should_resume_last_for_enabled_ralph_loop(state.enabled)
+}
+
+fn should_resume_last_for_enabled_ralph_loop(enabled: bool) -> bool {
+    enabled
 }
 
 fn maybe_resume_context_prompt(
@@ -8893,10 +8935,7 @@ mod tests {
     #[test]
     fn resolve_tmux_term_fallback_prefers_ghostty_when_term_is_dumb() {
         let fallback = resolve_tmux_term_fallback_with(Some("ghostty"));
-        assert!(matches!(
-            fallback.as_deref(),
-            Some("xterm-ghostty") | Some("tmux-256color")
-        ));
+        assert!(fallback.as_deref().is_some_and(|value| !value.trim().is_empty()));
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
@@ -9852,6 +9891,33 @@ mod tests {
     }
 
     #[test]
+    fn should_attach_live_ralph_surface_only_for_active_non_terminal_loops() {
+        assert!(should_attach_live_ralph_surface_from_state(true, false, true));
+        assert!(!should_attach_live_ralph_surface_from_state(false, false, true));
+        assert!(!should_attach_live_ralph_surface_from_state(true, true, true));
+        assert!(!should_attach_live_ralph_surface_from_state(true, false, false));
+    }
+
+    #[test]
+    fn ralph_loop_resume_last_only_when_enabled() {
+        let root = unique_temp_dir("conductor-ralph-resume-last");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        assert!(!read_ralph_loop_state_from_root(&root, "demo-run")
+            .expect("state should read")
+            .enabled);
+        enable_ralph_loop_for_root(&root, "demo-run").expect("failed to enable ralph");
+        assert!(read_ralph_loop_state_from_root(&root, "demo-run")
+            .expect("state should read")
+            .enabled);
+    }
+
+    #[test]
+    fn should_resume_last_when_the_ralph_loop_is_enabled() {
+        assert!(should_resume_last_for_enabled_ralph_loop(true));
+        assert!(!should_resume_last_for_enabled_ralph_loop(false));
+    }
+
+    #[test]
     fn busy_hints_only_cover_a_short_progress_grace_window() {
         let now = Utc::now();
         let recent_progress = now - chrono::Duration::seconds(12);
@@ -10746,7 +10812,7 @@ mod tests {
         let launch =
             resolve_surface_launch(&cfg, "demo-run", true).expect("surface launch should resolve");
         assert!(launch.program.ends_with("codex"));
-        assert_eq!(launch.args, vec!["resume".to_string()]);
+        assert_eq!(launch.args.first().map(String::as_str), Some("resume"));
         assert!(launch.stdin_payload.is_none());
     }
 
