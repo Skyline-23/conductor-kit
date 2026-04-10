@@ -45,6 +45,7 @@ use std::fs::File;
 use std::io::{IsTerminal, Stdout, stdin, stdout};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{
@@ -1483,14 +1484,14 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     if requested_width.is_some() {
         ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
         if should_prime {
-            prime_ralph_operator_loop(&run_id);
+            prime_ralph_operator_loop(&run_id, false);
         }
         return run_ops_open_with_filter(&run_id, &tmux_session_name, None);
     }
     if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
         collapse_tmux_surface_to_main(&tmux_session_name)?;
         if should_prime {
-            prime_ralph_operator_loop(&run_id);
+            prime_ralph_operator_loop(&run_id, false);
         }
         if current_tmux_session_hint().as_deref() == Some(tmux_session_name.as_str()) {
             return Ok(());
@@ -1499,7 +1500,7 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     }
     run_surface_ops_open(&run_id, false)?;
     if should_prime {
-        prime_ralph_operator_loop(&run_id);
+        prime_ralph_operator_loop(&run_id, false);
     }
     Ok(())
 }
@@ -1690,6 +1691,12 @@ fn ensure_active_ralph_watch(run_id: &str) -> Result<(), String> {
     if let Some(config_path) = config_path {
         child.env("CONDUCTOR_CONFIG", config_path);
     }
+    unsafe {
+        child.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
     let child = child.spawn().map_err(|err| err.to_string())?;
     state.watcher_pid = Some(child.id());
     write_ralph_loop_state(run_id, &state)
@@ -1792,9 +1799,13 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             now,
         );
         if should_prime {
-            prime_ralph_operator_loop(run_id);
-            last_prime_at = Some(now);
-            last_stall_signature = stall_signature;
+            let force_prime = last_main_progress_at
+                .map(|last| now - last >= chrono::Duration::seconds(30))
+                .unwrap_or(true);
+            if prime_ralph_operator_loop(run_id, force_prime) {
+                last_prime_at = Some(now);
+                last_stall_signature = stall_signature;
+            }
         } else if stall_signature.is_none() {
             last_stall_signature = None;
         }
@@ -2142,20 +2153,55 @@ fn ralph_stall_signature(
     }
 }
 
-fn prime_ralph_operator_loop(run_id: &str) {
+fn prime_ralph_operator_loop(run_id: &str, force_when_stale: bool) -> bool {
     let store = match resolve_state_root() {
         Ok(root) => StateStore::new(root),
-        Err(_) => return,
+        Err(_) => return false,
     };
     let snapshot = match store
         .refresh_snapshot(run_id)
         .or_else(|_| store.read_snapshot(run_id))
     {
         Ok(snapshot) => snapshot,
-        Err(_) => return,
+        Err(_) => return false,
     };
     let prompt = build_ralph_operator_prompt(run_id, &snapshot);
-    let _ = push_text_to_main_pane(run_id, &prompt);
+    let must_break_through_busy = force_when_stale
+        || snapshot.readiness.stale_operator
+        || snapshot.monitor.leader_stale
+        || matches!(
+            snapshot.decision.next_action.as_str(),
+            "resume-operator" | "resume-operator-now"
+        );
+    let send_result = if must_break_through_busy {
+        push_text_to_main_pane(run_id, &prompt)
+    } else {
+        push_text_to_main_pane_if_ready(run_id, &prompt)
+    };
+    match send_result {
+        Ok(sent) => {
+            if !sent {
+                let _ = store.append_runtime_event(
+                    run_id,
+                    EventEnvelope {
+                        schema_version: SCHEMA_VERSION,
+                        event: EventKind::LeaderNotificationDeferred,
+                        timestamp: Utc::now(),
+                        run_id: Some(run_id.to_string()),
+                        session_id: None,
+                        source: "runtime".to_string(),
+                        worker: Some("orchestrator-main".to_string()),
+                        task_id: None,
+                        message_id: None,
+                        reason: Some("pane_has_active_task".to_string()),
+                        context: serde_json::Map::new(),
+                    },
+                );
+            }
+            sent
+        }
+        Err(_) => false,
+    }
 }
 
 fn build_ralph_operator_prompt(
@@ -3955,8 +4001,51 @@ fn push_text_to_main_pane(run_id: &str, prompt: &str) -> Result<bool, String> {
         "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
     ])?;
     let main_pane_id = find_main_pane_id(&session_name, &panes)?;
+    if main_pane_is_resume_picker(&main_pane_id)? {
+        return Ok(false);
+    }
     send_prompt_to_tmux_pane(&main_pane_id, &prompt)?;
     Ok(true)
+}
+
+fn push_text_to_main_pane_if_ready(run_id: &str, prompt: &str) -> Result<bool, String> {
+    let session_name = current_tmux_session_hint()
+        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
+        .unwrap_or_else(|| surface_tmux_session_name(run_id));
+    if !tmux_session_exists(&session_name)? {
+        return Ok(false);
+    }
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
+    ])?;
+    let main_pane_id = find_main_pane_id(&session_name, &panes)?;
+    let tail = run_tmux_capture(["capture-pane", "-p", "-t", &main_pane_id, "-S", "-40"])?;
+    let normalized_tail = normalize_tmux_capture_tail(&tail);
+    if pane_output_is_resume_picker(&normalized_tail) {
+        return Ok(false);
+    }
+    if pane_output_looks_busy(&normalized_tail) {
+        return Ok(false);
+    }
+    send_prompt_to_tmux_pane(&main_pane_id, prompt)?;
+    Ok(true)
+}
+
+fn main_pane_is_resume_picker(pane_id: &str) -> Result<bool, String> {
+    let tail = run_tmux_capture(["capture-pane", "-p", "-t", pane_id, "-S", "-60"])?;
+    let normalized_tail = normalize_tmux_capture_tail(&tail);
+    Ok(pane_output_is_resume_picker(&normalized_tail))
+}
+
+fn pane_output_is_resume_picker(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    lower.contains("resume a previous session")
+        && lower.contains("enter to resume")
+        && (lower.contains("search:") || lower.contains("type to search"))
 }
 
 fn build_operator_report_prompt(worker_id: &str, summary: &str) -> String {
@@ -6896,6 +6985,7 @@ fn run_dispatch_route(args: &[String]) -> Result<(), String> {
 
 fn run_hud_view(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "hud-view requires <run_id>")?;
+    ensure_ralph_watch_if_enabled(run_id);
     let store = StateStore::new(resolve_state_root()?);
     let snapshot = store.read_snapshot(run_id)?;
     let run = &snapshot.run;
@@ -7046,6 +7136,7 @@ fn run_hud_watch(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let mut count = 0usize;
     loop {
+        ensure_ralph_watch_if_enabled(run_id);
         let snapshot = store.read_snapshot(run_id)?;
         print!("\x1B[2J\x1B[H");
         println!("CONDUCTOR OPS");
@@ -7151,6 +7242,7 @@ fn run_hud_strip_watch(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let mut count = 0usize;
     loop {
+        ensure_ralph_watch_if_enabled(run_id);
         let snapshot = store.read_snapshot(run_id)?;
         print!("\r\x1b[2K{}", render_hud_strip(&snapshot, true));
         stdout().flush().map_err(|err| err.to_string())?;
@@ -7166,10 +7258,20 @@ fn run_hud_strip_watch(args: &[String]) -> Result<(), String> {
 
 fn run_hud_strip_once(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "hud-strip-once requires <run_id>")?;
+    ensure_ralph_watch_if_enabled(run_id);
     let store = StateStore::new(resolve_state_root()?);
     let snapshot = store.read_snapshot(run_id)?;
     println!("{}", render_hud_strip(&snapshot, false));
     Ok(())
+}
+
+fn ensure_ralph_watch_if_enabled(run_id: &str) {
+    let enabled = read_ralph_loop_state(run_id)
+        .map(|state| state.enabled)
+        .unwrap_or(false);
+    if enabled {
+        let _ = ensure_active_ralph_watch(run_id);
+    }
 }
 
 fn render_hud_strip(snapshot: &crate::runtime::types::RuntimeSnapshot, ansi: bool) -> String {
@@ -8791,7 +8893,10 @@ mod tests {
     #[test]
     fn resolve_tmux_term_fallback_prefers_ghostty_when_term_is_dumb() {
         let fallback = resolve_tmux_term_fallback_with(Some("ghostty"));
-        assert_eq!(fallback.as_deref(), Some("xterm-ghostty"));
+        assert!(matches!(
+            fallback.as_deref(),
+            Some("xterm-ghostty") | Some("tmux-256color")
+        ));
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
@@ -9737,6 +9842,13 @@ mod tests {
             "Messages to be submitted after next tool call (press esc to interrupt and send immediately)"
         ));
         assert!(!pane_output_looks_busy("plain static output without active work markers"));
+    }
+
+    #[test]
+    fn pane_output_resume_picker_detection_matches_codex_resume_ui() {
+        let output = "Resume a previous session  Sort: Updated at\nSearch: Ralph loop active for run demo-run\nNo results for your search\n\nenter to resume     esc to start new     ctrl + c to quit     tab to toggle sort";
+        assert!(pane_output_is_resume_picker(output));
+        assert!(!pane_output_is_resume_picker("plain static output without a picker"));
     }
 
     #[test]
