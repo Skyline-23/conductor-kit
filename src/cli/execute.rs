@@ -1867,7 +1867,7 @@ fn prime_ralph_operator_loop_on_surface(session_name: &str, prompt: &str) -> Res
         "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
     ])?;
     let main_pane_id = find_main_pane_id(session_name, &panes)?;
-    send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)
+    send_prompt_to_surface_slot(main_pane_id.trim(), prompt)
 }
 
 fn refresh_operator_activity_from_tmux(
@@ -3190,7 +3190,7 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
         }
         if let Some(pane_id) = pane_map.get(&worker_id) {
             let prompt = build_team_report_nudge_prompt(&worker_id);
-            let _ = send_prompt_to_tmux_pane(pane_id, &prompt);
+            let _ = send_prompt_to_surface_slot(pane_id, &prompt);
             let mut worker = worker;
             let (next_reason, stalled) = advance_team_nudge_reason(worker.reason.as_deref());
             worker.reason = Some(next_reason.to_string());
@@ -3705,7 +3705,7 @@ fn settle_worker_lane(
     next.current_task_id = None;
     store.upsert_worker(next)?;
 
-    if let Some(pane_id) = find_worker_tmux_pane_id(run_id, &worker.worker_id)? {
+    if let Some(pane_id) = find_worker_surface_slot_id(run_id, &worker.worker_id)? {
         run_tmux(["kill-pane", "-t", &pane_id])?;
         return Ok(true);
     }
@@ -3827,7 +3827,7 @@ fn respawn_direct_team_worker_pane(
     let new_pane_id = new_pane_id.trim().to_string();
     run_tmux(["select-pane", "-t", &new_pane_id, "-T", worker_id])?;
     if !use_inline_prompt {
-        send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+        send_prompt_to_surface_slot(&new_pane_id, prompt)?;
     }
 
     let mut next = worker;
@@ -3867,8 +3867,8 @@ fn deliver_operator_followup(
     worker: &WorkerRecord,
     prompt: &str,
 ) -> Result<bool, String> {
-    if let Some(pane_id) = find_worker_tmux_pane_id(run_id, &worker.worker_id)? {
-        send_prompt_to_tmux_pane(&pane_id, prompt)?;
+    if let Some(pane_id) = find_worker_surface_slot_id(run_id, &worker.worker_id)? {
+        send_prompt_to_surface_slot(&pane_id, prompt)?;
         return Ok(true);
     }
 
@@ -3886,7 +3886,7 @@ fn deliver_operator_followup(
     Ok(false)
 }
 
-fn find_worker_tmux_pane_id(run_id: &str, worker_id: &str) -> Result<Option<String>, String> {
+fn find_worker_surface_slot_id(run_id: &str, worker_id: &str) -> Result<Option<String>, String> {
     let session_name = current_tmux_session_hint()
         .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
         .unwrap_or_else(|| surface_tmux_session_name(run_id));
@@ -4137,14 +4137,14 @@ fn rebuild_direct_team_surface(
         &pane_specs[0].title,
     ])?;
     if let Some(prompt) = &pane_specs[0].starter_prompt {
-        send_prompt_to_tmux_pane(&first_pane_id, prompt)?;
+        send_prompt_to_surface_slot(&first_pane_id, prompt)?;
     }
 
     let mut worker_pane_ids = vec![first_pane_id.clone()];
     for spec in pane_specs.iter().skip(1) {
         let split_target =
-            tallest_tmux_pane(&worker_pane_ids)?.unwrap_or_else(|| first_pane_id.clone());
-        let current_target_height = tmux_pane_height(&split_target)?;
+            tallest_surface_slot(&worker_pane_ids)?.unwrap_or_else(|| first_pane_id.clone());
+        let current_target_height = surface_slot_height(&split_target)?;
         let desired_height = if current_target_height > 0 {
             std::cmp::max(3_u64, current_target_height / 2)
         } else {
@@ -4167,7 +4167,7 @@ fn rebuild_direct_team_surface(
         .to_string();
         run_tmux(["select-pane", "-t", &new_pane_id, "-T", &spec.title])?;
         if let Some(prompt) = &spec.starter_prompt {
-            send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+            send_prompt_to_surface_slot(&new_pane_id, prompt)?;
         }
         worker_pane_ids.push(new_pane_id);
     }
@@ -4176,23 +4176,23 @@ fn rebuild_direct_team_surface(
     Ok(())
 }
 
-fn tmux_pane_height(pane_id: &str) -> Result<u64, String> {
-    run_tmux_capture(["display-message", "-p", "-t", pane_id, "#{pane_height}"])?
+fn surface_slot_height(slot_id: &str) -> Result<u64, String> {
+    run_tmux_capture(["display-message", "-p", "-t", slot_id, "#{pane_height}"])?
         .trim()
         .parse::<u64>()
         .map_err(|err| err.to_string())
 }
 
-fn tallest_tmux_pane(pane_ids: &[String]) -> Result<Option<String>, String> {
+fn tallest_surface_slot(slot_ids: &[String]) -> Result<Option<String>, String> {
     let mut tallest = None::<(String, u64)>;
-    for pane_id in pane_ids {
-        let height = tmux_pane_height(pane_id)?;
+    for slot_id in slot_ids {
+        let height = surface_slot_height(slot_id)?;
         match &tallest {
             Some((_, current_height)) if *current_height >= height => {}
-            _ => tallest = Some((pane_id.clone(), height)),
+            _ => tallest = Some((slot_id.clone(), height)),
         }
     }
-    Ok(tallest.map(|(pane_id, _)| pane_id))
+    Ok(tallest.map(|(slot_id, _)| slot_id))
 }
 
 fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String> {
@@ -7891,7 +7891,7 @@ fn build_hud_shell_command(
         shell_quote_str(run_id),
         "1000".to_string(),
     ];
-    build_tmux_pane_shell_command(format!(
+    build_surface_slot_shell_command(format!(
         "cd {} && {}exec {}",
         shell_quote(cwd),
         env_prefix,
@@ -7948,7 +7948,7 @@ fn build_launch_shell_command(
     } else {
         format!("{} ", env_parts.join(" "))
     };
-    build_tmux_pane_shell_command(format!(
+    build_surface_slot_shell_command(format!(
         "cd {} && {}exec {}",
         shell_quote(cwd),
         env_prefix,
@@ -7981,7 +7981,7 @@ fn build_direct_launch_shell_command(
     if let Some(prompt) = initial_prompt.filter(|value| !value.trim().is_empty()) {
         command_parts.push(shell_quote_str(prompt));
     }
-    build_tmux_pane_shell_command(format!(
+    build_surface_slot_shell_command(format!(
         "cd {} && {}exec {}",
         shell_quote(cwd),
         env_prefix,
@@ -8028,7 +8028,7 @@ fn team_launch_args(launch: &crate::runtime::adapters::WorkerAdapterLaunch) -> V
     args
 }
 
-fn build_tmux_pane_shell_command(inner: String) -> String {
+fn build_surface_slot_shell_command(inner: String) -> String {
     let shell_path = env::var("SHELL").ok();
     let raw_shell = shell_path
         .as_deref()
@@ -8157,7 +8157,7 @@ fn ensure_tmux_ops_session(
             ])?;
             let new_pane_id = new_pane_id.trim().to_string();
             if let Some(prompt) = &spec.starter_prompt {
-                send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+                send_prompt_to_surface_slot(&new_pane_id, prompt)?;
             }
         }
     }
@@ -8204,7 +8204,7 @@ fn ensure_tmux_ops_session(
 
     if let Some(spec) = pane_specs.first() {
         if let Some(prompt) = &spec.starter_prompt {
-            send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)?;
+            send_prompt_to_surface_slot(main_pane_id.trim(), prompt)?;
         }
     }
 
@@ -8270,31 +8270,31 @@ fn sync_existing_tmux_ops_session(
         let new_pane_id = new_pane_id.trim().to_string();
         run_tmux(["select-pane", "-t", &new_pane_id, "-T", &spec.title])?;
         if let Some(prompt) = &spec.starter_prompt {
-            send_prompt_to_tmux_pane(&new_pane_id, prompt)?;
+            send_prompt_to_surface_slot(&new_pane_id, prompt)?;
         }
         stack_target = new_pane_id;
     }
     Ok(())
 }
 
-fn send_prompt_to_tmux_pane(pane_id: &str, prompt: &str) -> Result<(), String> {
+fn send_prompt_to_surface_slot(slot_id: &str, prompt: &str) -> Result<(), String> {
     if prompt.trim().is_empty() {
         return Ok(());
     }
-    wait_for_tmux_pane_prompt_ready(pane_id)?;
+    wait_for_surface_slot_prompt_ready(slot_id)?;
     let prompt = prompt.replace('\n', " ");
-    run_tmux(["send-keys", "-t", pane_id, "-l", "--", &prompt])?;
+    run_tmux(["send-keys", "-t", slot_id, "-l", "--", &prompt])?;
     let script = format!(
         "sleep 0.1; tmux send-keys -t {} C-m; sleep 0.1; tmux send-keys -t {} C-m",
-        shell_quote_str(pane_id),
-        shell_quote_str(pane_id),
+        shell_quote_str(slot_id),
+        shell_quote_str(slot_id),
     );
     run_tmux(["run-shell", "-b", &script])
 }
 
-fn wait_for_tmux_pane_prompt_ready(pane_id: &str) -> Result<(), String> {
+fn wait_for_surface_slot_prompt_ready(slot_id: &str) -> Result<(), String> {
     for _ in 0..80 {
-        let output = run_tmux_capture(["capture-pane", "-p", "-t", pane_id, "-S", "-80"])?;
+        let output = run_tmux_capture(["capture-pane", "-p", "-t", slot_id, "-S", "-80"])?;
         if pane_output_ready_for_codex_prompt(&output) {
             return Ok(());
         }
@@ -11064,7 +11064,7 @@ mod tests {
     }
 
     #[test]
-    fn find_worker_tmux_pane_id_matches_exact_title() {
+    fn find_worker_surface_slot_id_matches_exact_title() {
         let panes = "%166\tmain\n%167\texplore-1\n%168\treview-1\n";
         let found = panes.lines().find_map(|line| {
             let mut parts = line.splitn(2, '\t');
