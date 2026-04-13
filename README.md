@@ -139,8 +139,19 @@ Operator commands:
 - `conductor autoresearch status`
 - `conductor autoresearch stop`
 
-Run `conductor install` once to link the managed skill shims into your active Codex home.
-Use `conductor uninstall` to remove only the conductor-managed skill shims from that Codex home.
+Run `conductor install` once to link the managed skill shims into your active Codex home,
+install the managed `~/.codex/hooks.json` entries, and enable `features.codex_hooks = true`
+in `~/.codex/config.toml`.
+Use `conductor uninstall` to remove the conductor-managed skill shims and only the
+conductor-managed Codex hook commands from that Codex home.
+
+The managed Codex hook bundle uses the official hook events:
+- `SessionStart`
+- `UserPromptSubmit`
+- `Stop`
+
+Those hooks keep Ralph and autoresearch context attached through the native Codex hook surface
+instead of injecting follow-up prompts through custom host-side hook shims or the tmux main pane.
 
 The default team profiles now include:
 - `explore`

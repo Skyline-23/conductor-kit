@@ -7,8 +7,8 @@ conductor <command>
 
 Commands:
   conductor           Open the current run, or initialize it if missing
-  install             Link the managed conductor skills into the active Codex home
-  uninstall           Remove the managed conductor skills from the active Codex home
+  install             Link the managed conductor skills and Codex hooks into the active Codex home
+  uninstall           Remove the managed conductor skills and managed Codex hooks from the active Codex home
   start               Start the lead Codex session and open the ops view
   init                Alias for start
   open                Open the ops view for the current or named run
@@ -61,6 +61,7 @@ Advanced:
   hud-watch           Continuously render the runtime HUD
   events-list         Print runtime events
   hook-run            Run a hook command against matching events
+  codex-hook          Emit official Codex hook responses for conductor loops
   task-create         Create a task record
   dispatch-queue      Create a dispatch record
   dispatch-update     Update dispatch status

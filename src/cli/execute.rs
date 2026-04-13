@@ -3,6 +3,10 @@ use crate::cli::args::{
     parse_run_phase, parse_worker_state, required_arg, resolve_config_path, resolve_state_root,
     save_config,
 };
+use crate::cli::codex_hooks::{
+    codex_home_root, install_managed_codex_hooks, managed_codex_hooks_health,
+    uninstall_managed_codex_hooks,
+};
 use crate::cli::host_catalog::{
     HostCatalog, load_or_refresh_host_catalog, model_matches_cli, normalize_reasoning_order,
     preferred_model_for_cli, reasoning_levels_for,
@@ -127,6 +131,7 @@ pub fn execute_command(args: &[String]) -> Result<(), String> {
         "hud-strip-watch" => run_hud_strip_watch(&args[1..]),
         "events-list" => run_events_list(&args[1..]),
         "hook-run" => run_hook_run(&args[1..]),
+        "codex-hook" => run_codex_hook(&args[1..]),
         "task-create" => run_task_create(&args[1..]),
         "dispatch-queue" => run_dispatch_queue(&args[1..]),
         "dispatch-update" => run_dispatch_update(&args[1..]),
@@ -1480,10 +1485,6 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     let active_session_hint = current_tmux_session_hint()
         .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false));
     let previous_loop_state = read_ralph_loop_state_from_root(store.root(), &run_id).ok();
-    let ralph_was_enabled = previous_loop_state
-        .as_ref()
-        .map(|state| state.enabled)
-        .unwrap_or(false);
     enable_ralph_loop(&run_id)?;
     {
         let mut state = read_ralph_loop_state(&run_id)?;
@@ -1503,32 +1504,18 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
         let _ = configure_tmux_main_exit_hook(&tmux_session_name, false);
     }
-    let should_prime = if requested_width.is_some() {
-        true
-    } else {
-        should_prime_ralph_on_entry(&store, &run_id, ralph_was_enabled)
-    };
     if requested_width.is_some() {
         ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
-        if should_prime {
-            prime_ralph_operator_loop(&run_id, false);
-        }
         return run_ops_open_with_filter(&run_id, &tmux_session_name, None);
     }
     if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
         collapse_tmux_surface_to_main(&tmux_session_name)?;
-        if should_prime {
-            prime_ralph_operator_loop(&run_id, false);
-        }
         if current_tmux_session_hint().as_deref() == Some(tmux_session_name.as_str()) {
             return Ok(());
         }
         return attach_tmux_ops_session(&tmux_session_name);
     }
     run_surface_ops_open(&run_id, false)?;
-    if should_prime {
-        prime_ralph_operator_loop(&run_id, false);
-    }
     Ok(())
 }
 
@@ -1833,13 +1820,8 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             now,
         );
         if should_prime {
-            let force_prime = last_main_progress_at
-                .map(|last| now - last >= chrono::Duration::seconds(30))
-                .unwrap_or(true);
-            if prime_ralph_operator_loop(run_id, force_prime) {
-                last_prime_at = Some(now);
-                last_stall_signature = stall_signature;
-            }
+            last_prime_at = Some(now);
+            last_stall_signature = stall_signature;
         } else if stall_signature.is_none() {
             last_stall_signature = None;
         }
@@ -2122,6 +2104,7 @@ fn store_operator_is_stale(store: &StateStore, run_id: &str, now: chrono::DateTi
         })
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn should_prime_ralph_on_entry(store: &StateStore, run_id: &str, was_enabled: bool) -> bool {
     if !was_enabled {
         return true;
@@ -2223,57 +2206,6 @@ fn operator_only_stall_signature(
         return Some("operator-only-busy-stall".to_string());
     }
     Some("operator-only-monitor-stall".to_string())
-}
-
-fn prime_ralph_operator_loop(run_id: &str, force_when_stale: bool) -> bool {
-    let store = match resolve_state_root() {
-        Ok(root) => StateStore::new(root),
-        Err(_) => return false,
-    };
-    let snapshot = match store
-        .refresh_snapshot(run_id)
-        .or_else(|_| store.read_snapshot(run_id))
-    {
-        Ok(snapshot) => snapshot,
-        Err(_) => return false,
-    };
-    let prompt = build_ralph_operator_prompt(run_id, &snapshot);
-    let must_break_through_busy = force_when_stale
-        || snapshot.readiness.stale_operator
-        || snapshot.monitor.leader_stale
-        || matches!(
-            snapshot.decision.next_action.as_str(),
-            "resume-operator" | "resume-operator-now"
-        );
-    let send_result = if must_break_through_busy {
-        push_text_to_main_pane(run_id, &prompt)
-    } else {
-        push_text_to_main_pane_if_ready(run_id, &prompt)
-    };
-    match send_result {
-        Ok(sent) => {
-            if !sent {
-                let _ = store.append_runtime_event(
-                    run_id,
-                    EventEnvelope {
-                        schema_version: SCHEMA_VERSION,
-                        event: EventKind::LeaderNotificationDeferred,
-                        timestamp: Utc::now(),
-                        run_id: Some(run_id.to_string()),
-                        session_id: None,
-                        source: "runtime".to_string(),
-                        worker: Some("orchestrator-main".to_string()),
-                        task_id: None,
-                        message_id: None,
-                        reason: Some("pane_has_active_task".to_string()),
-                        context: serde_json::Map::new(),
-                    },
-                );
-            }
-            sent
-        }
-        Err(_) => false,
-    }
 }
 
 fn build_ralph_operator_prompt(
@@ -2734,10 +2666,6 @@ fn advance_team_nudge_reason(reason: Option<&str>) -> (&'static str, bool) {
     }
 }
 
-fn build_stalled_worker_prompt(worker_id: &str) -> String {
-    format!("{worker_id}: stalled waiting for a progress report")
-}
-
 fn build_all_workers_idle_prompt(run_id: &str, summaries: &[(String, String)]) -> String {
     let lines = summaries
         .iter()
@@ -2878,41 +2806,6 @@ fn infer_blocked_kind(summary: &str) -> BlockedKind {
         BlockedKind::Dependency
     } else {
         BlockedKind::Generic
-    }
-}
-
-fn build_operator_followup_prompt(
-    worker_id: &str,
-    summary: &str,
-    report_kind: WorkerReportKind,
-) -> Option<String> {
-    match report_kind {
-        WorkerReportKind::Progress => None,
-        WorkerReportKind::Handoff => None,
-        WorkerReportKind::Blocked => {
-            let blocked_kind = infer_blocked_kind(&summary.to_ascii_lowercase());
-            let action = match blocked_kind {
-                BlockedKind::Dependency => "unblock it or reroute the dependency",
-                BlockedKind::Approval => "review the pending approval or reroute the lane",
-                BlockedKind::Evidence => "ask for stronger evidence or redirect verification",
-                BlockedKind::Scope => "clarify the scope and restart the lane narrowly",
-                BlockedKind::Generic => "unblock it, reroute the lane, or stop the branch",
-            };
-            Some(format!(
-                "{worker_id} is blocked. Decide whether to {action}. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower retry.\n\nLatest report: {summary}"
-            ))
-        }
-        WorkerReportKind::Done => {
-            if worker_id.starts_with("verify-") {
-                Some(format!(
-                    "{worker_id} finished verification. Decide whether to accept the branch, request one more check, or close the run. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower verification retry.\n\nLatest report: {summary}"
-                ))
-            } else {
-                Some(format!(
-                    "{worker_id} finished its lane. Decide whether to accept it, ask for stronger evidence, hand it off to another lane, or close that branch. Use `conductor ask {worker_id} \"<follow-up>\"` if you need a narrower follow-up.\n\nLatest report: {summary}"
-                ))
-            }
-        }
     }
 }
 
@@ -3311,8 +3204,6 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
                     "worker_stalled_waiting_for_report",
                     60,
                 )? {
-                    let _ =
-                        push_text_to_main_pane(run_id, &build_stalled_worker_prompt(&worker_id));
                     let _ = store.append_runtime_event(
                         run_id,
                         EventEnvelope {
@@ -3402,32 +3293,6 @@ fn report_to_main(
         ]),
     };
     store.append_runtime_event(&run_id, event)?;
-    if push_worker_report_to_main_pane(run_id, worker_id, summary).unwrap_or(false) {
-        let _ = store.update_mailbox_status(&run_id, "main", &message_id, true)?;
-        if let Some(followup) = build_operator_followup_prompt(worker_id, summary, report_kind) {
-            let _ = push_text_to_main_pane(run_id, &followup);
-        }
-    } else {
-        store.append_runtime_event(
-            &run_id,
-            EventEnvelope {
-                schema_version: SCHEMA_VERSION,
-                event: EventKind::LeaderNotificationDeferred,
-                timestamp: now,
-                run_id: Some(run_id.to_string()),
-                session_id: None,
-                source: "report".to_string(),
-                worker: Some(worker_id.to_string()),
-                task_id: worker.current_task_id.clone(),
-                message_id: Some(message_id.clone()),
-                reason: Some("main_pane_unavailable".to_string()),
-                context: serde_json::Map::from_iter([
-                    ("summary".to_string(), json!(summary)),
-                    ("to_worker".to_string(), json!("main")),
-                ]),
-            },
-        )?;
-    }
     match report_kind {
         WorkerReportKind::Done => {
             let _ = maybe_handoff_completion_to_verify(store, run_id, &worker, summary);
@@ -3466,10 +3331,6 @@ fn maybe_handoff_blocked_lane(
                     Some(summary.to_string()),
                 )?;
             }
-            let _ = push_text_to_main_pane(
-                run_id,
-                &format!("{} -> operator: approval needed", blocked_worker.worker_id),
-            );
             Ok(true)
         }
         BlockedKind::Evidence => {
@@ -3502,13 +3363,6 @@ fn maybe_handoff_blocked_lane(
                     "handoff_received_for_evidence",
                 );
             }
-            let _ = push_text_to_main_pane(
-                run_id,
-                &format!(
-                    "{} -> {}: inspect the missing evidence",
-                    blocked_worker.worker_id, verify_worker_id
-                ),
-            );
             Ok(delivered)
         }
         BlockedKind::Dependency => {
@@ -3543,13 +3397,6 @@ fn maybe_handoff_blocked_lane(
                     "handoff_received_for_dependency",
                 );
             }
-            let _ = push_text_to_main_pane(
-                run_id,
-                &format!(
-                    "{} -> {}: inspect the blocked dependency",
-                    blocked_worker.worker_id, explore_worker_id
-                ),
-            );
             Ok(delivered)
         }
         BlockedKind::Scope => {
@@ -3567,13 +3414,6 @@ fn maybe_handoff_blocked_lane(
                     "scope_retry_requested",
                 );
             }
-            let _ = push_text_to_main_pane(
-                run_id,
-                &format!(
-                    "{} -> {}: narrow the lane scope and retry",
-                    blocked_worker.worker_id, blocked_worker.worker_id
-                ),
-            );
             Ok(delivered)
         }
         _ => Ok(false),
@@ -3620,13 +3460,6 @@ fn maybe_handoff_completion_to_verify(
             "handoff_received_for_verification",
         );
     }
-    let _ = push_text_to_main_pane(
-        run_id,
-        &format!(
-            "{} -> {}: verify this completion",
-            completed_worker.worker_id, verify_worker_id
-        ),
-    );
     Ok(delivered)
 }
 
@@ -3705,7 +3538,6 @@ fn accept_worker_lane(
     }
     let closed = settle_worker_lane(store, run_id, &worker, "accepted_by_operator", Some(reason))?;
     let _ = maybe_complete_run_after_operator_settlement(store, run_id, worker_id);
-    let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: accepted ({reason})"));
     Ok(json!({
         "run_id": run_id,
         "worker_id": worker_id,
@@ -3726,7 +3558,6 @@ fn close_worker_lane(
     let now = Utc::now();
     let closed = settle_worker_lane(store, run_id, &worker, "closed_by_operator", Some(reason))?;
     let _ = maybe_complete_run_after_operator_settlement(store, run_id, worker_id);
-    let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: closed ({reason})"));
     Ok(json!({
         "run_id": run_id,
         "worker_id": worker_id,
@@ -3759,7 +3590,6 @@ fn relaunch_worker_lane(
         worker.last_event_at = Some(Utc::now());
         let _ = store.upsert_worker(worker);
     }
-    let _ = push_text_to_main_pane(run_id, &format!("{worker_id}: relaunched"));
     Ok(payload)
 }
 
@@ -3789,7 +3619,6 @@ fn handoff_worker_lane(
     if delivered {
         let _ = mark_worker_reason(store, run_id, to_worker, "handoff_received");
     }
-    let _ = push_text_to_main_pane(run_id, &format!("{from_worker} -> {to_worker}: handoff"));
     Ok(json!({
         "run_id": run_id,
         "from_worker": from_worker,
@@ -3912,10 +3741,6 @@ fn maybe_complete_run_after_operator_settlement(
             .and_then(|worker| worker.reason.as_deref())
             .unwrap_or_default();
         if settled_reason != "closed_by_operator" {
-            let _ = push_text_to_main_pane(
-                run_id,
-                "ralph: lanes settled, but the loop stays active until you explicitly close the run",
-            );
             return Ok(false);
         }
     }
@@ -3931,10 +3756,6 @@ fn maybe_complete_run_after_operator_settlement(
     store.write_run(&run)?;
     let _ = disable_ralph_loop_for_root(store.root(), run_id);
     let _ = store.refresh_snapshot(run_id)?;
-    let _ = push_text_to_main_pane(
-        run_id,
-        "run: all lanes settled; closing the orchestration loop",
-    );
     Ok(true)
 }
 
@@ -4047,81 +3868,6 @@ fn deliver_operator_followup(
     }
 
     Ok(false)
-}
-
-fn push_worker_report_to_main_pane(
-    run_id: &str,
-    worker_id: &str,
-    summary: &str,
-) -> Result<bool, String> {
-    let prompt = build_operator_report_prompt(worker_id, summary);
-    push_text_to_main_pane(run_id, &prompt)
-}
-
-fn push_text_to_main_pane(run_id: &str, prompt: &str) -> Result<bool, String> {
-    let session_name = current_tmux_session_hint()
-        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
-        .unwrap_or_else(|| surface_tmux_session_name(run_id));
-    if !tmux_session_exists(&session_name)? {
-        return Ok(false);
-    }
-    let panes = run_tmux_capture([
-        "list-panes",
-        "-t",
-        &format!("{session_name}:0"),
-        "-F",
-        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
-    ])?;
-    let main_pane_id = find_main_pane_id(&session_name, &panes)?;
-    if main_pane_is_resume_picker(&main_pane_id)? {
-        return Ok(false);
-    }
-    send_prompt_to_tmux_pane(&main_pane_id, &prompt)?;
-    Ok(true)
-}
-
-fn push_text_to_main_pane_if_ready(run_id: &str, prompt: &str) -> Result<bool, String> {
-    let session_name = current_tmux_session_hint()
-        .filter(|session_name| tmux_session_exists(session_name).unwrap_or(false))
-        .unwrap_or_else(|| surface_tmux_session_name(run_id));
-    if !tmux_session_exists(&session_name)? {
-        return Ok(false);
-    }
-    let panes = run_tmux_capture([
-        "list-panes",
-        "-t",
-        &format!("{session_name}:0"),
-        "-F",
-        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
-    ])?;
-    let main_pane_id = find_main_pane_id(&session_name, &panes)?;
-    let tail = run_tmux_capture(["capture-pane", "-p", "-t", &main_pane_id, "-S", "-40"])?;
-    let normalized_tail = normalize_tmux_capture_tail(&tail);
-    if pane_output_is_resume_picker(&normalized_tail) {
-        return Ok(false);
-    }
-    if pane_output_looks_busy(&normalized_tail) {
-        return Ok(false);
-    }
-    send_prompt_to_tmux_pane(&main_pane_id, prompt)?;
-    Ok(true)
-}
-
-fn main_pane_is_resume_picker(pane_id: &str) -> Result<bool, String> {
-    let tail = run_tmux_capture(["capture-pane", "-p", "-t", pane_id, "-S", "-60"])?;
-    let normalized_tail = normalize_tmux_capture_tail(&tail);
-    Ok(pane_output_is_resume_picker(&normalized_tail))
-}
-
-fn pane_output_is_resume_picker(output: &str) -> bool {
-    let lower = output.to_ascii_lowercase();
-    lower.contains("resume a previous session")
-        && lower.contains("enter to resume")
-        && (lower.contains("search:") || lower.contains("type to search"))
-}
-
-fn build_operator_report_prompt(worker_id: &str, summary: &str) -> String {
-    format!("{worker_id}: {summary}")
 }
 
 fn find_worker_tmux_pane_id(run_id: &str, worker_id: &str) -> Result<Option<String>, String> {
@@ -4304,29 +4050,6 @@ fn maybe_prompt_all_workers_idle(
         context: serde_json::Map::new(),
     };
     store.append_runtime_event(run_id, event)?;
-    if push_text_to_main_pane(run_id, &prompt).unwrap_or(false) {
-        let _ = store.update_mailbox_status(run_id, "main", &message_id, true)?;
-    } else {
-        store.append_runtime_event(
-            run_id,
-            EventEnvelope {
-                schema_version: SCHEMA_VERSION,
-                event: EventKind::LeaderNotificationDeferred,
-                timestamp: now,
-                run_id: Some(run_id.to_string()),
-                session_id: None,
-                source: source.to_string(),
-                worker: Some("main".to_string()),
-                task_id: None,
-                message_id: Some(message_id.clone()),
-                reason: Some("main_pane_unavailable".to_string()),
-                context: serde_json::Map::from_iter([(
-                    "deferred_prompt".to_string(),
-                    json!(prompt),
-                )]),
-            },
-        )?;
-    }
     Ok(())
 }
 
@@ -4480,16 +4203,11 @@ fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String
         run_id,
     );
     let launch = resolve_surface_launch(&cfg, run_id, resume_surface)?;
-    let uses_native_codex_resume = resume_surface && cfg.surface.cli == "codex";
     let surface_cmd = build_launch_shell_command(&cwd, &launch);
     let pane_specs = vec![OpsPaneSpec {
         title: "main".to_string(),
         command: surface_cmd,
-        starter_prompt: if uses_native_codex_resume {
-            None
-        } else {
-            maybe_resume_context_prompt(&store, run_id, resume_surface)
-        },
+        starter_prompt: None,
     }];
     if tmux_session_exists(&tmux_session_name)? {
         run_tmux(["kill-session", "-t", &tmux_session_name])?;
@@ -4503,7 +4221,6 @@ fn run_surface_ops_open(run_id: &str, resume_surface: bool) -> Result<(), String
             &hud_status_cmd,
             pane_specs[0].title.as_str(),
             pane_specs[0].command.as_str(),
-            pane_specs[0].starter_prompt.as_deref(),
         );
     }
     ensure_tmux_ops_session(&tmux_session_name, &hud_cmd, &pane_specs)?;
@@ -4515,7 +4232,6 @@ fn run_surface_attached_tmux_session(
     hud_status_cmd: &str,
     main_title: &str,
     surface_cmd: &str,
-    starter_prompt: Option<&str>,
 ) -> Result<(), String> {
     run_tmux([
         "new-session",
@@ -4570,9 +4286,6 @@ fn run_surface_attached_tmux_session(
     ])?;
     run_tmux(["select-pane", "-t", main_pane_id.trim(), "-T", main_title])?;
     configure_tmux_main_exit_hook(session_name, true)?;
-    if let Some(prompt) = starter_prompt {
-        send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)?;
-    }
     attach_tmux_ops_session(session_name)
 }
 
@@ -4914,9 +4627,24 @@ fn run_status() -> Result<(), String> {
 
 fn run_doctor() -> Result<(), String> {
     let (path, cfg) = load_resolved_config()?;
-    let issues = validate_config(&cfg);
+    let mut issues = validate_config(&cfg);
+    if let Ok(health) = managed_codex_hooks_health() {
+        if !health.feature_enabled {
+            issues.push(format!(
+                "codex hooks feature is disabled in {}",
+                health.config_path
+            ));
+        }
+        if !health.managed_commands_present {
+            issues.push(format!(
+                "managed conductor Codex hooks are missing from {}",
+                health.hooks_path
+            ));
+        }
+    }
     let payload = json!({
         "config_path": path.display().to_string(),
+        "codex_hooks": managed_codex_hooks_health().ok(),
         "issues": issues,
         "ok": issues.is_empty()
     });
@@ -4968,10 +4696,13 @@ fn run_sync_skills(_args: &[String]) -> Result<(), String> {
         }));
     }
 
+    let hooks = install_managed_codex_hooks()?;
+
     print_json(&json!({
         "ok": true,
         "skills_root": target_root.display().to_string(),
         "installed": installed,
+        "hooks": hooks,
     }))
 }
 
@@ -4990,10 +4721,13 @@ fn run_remove_skills(_args: &[String]) -> Result<(), String> {
         }
     }
 
+    let hooks = uninstall_managed_codex_hooks()?;
+
     print_json(&json!({
         "ok": true,
         "skills_root": target_root.display().to_string(),
         "removed": removed,
+        "hooks": hooks,
     }))
 }
 
@@ -5429,10 +5163,11 @@ fn parse_optional_run_id(args: &[String]) -> Option<String> {
 }
 
 fn autoresearch_config_path(run_id: &str) -> Result<PathBuf, String> {
-    Ok(resolve_state_root()?
-        .join("runs")
-        .join(run_id)
-        .join("autoresearch.json"))
+    autoresearch_config_path_for_root(&resolve_state_root()?, run_id)
+}
+
+fn autoresearch_config_path_for_root(root: &Path, run_id: &str) -> Result<PathBuf, String> {
+    Ok(root.join("runs").join(run_id).join("autoresearch.json"))
 }
 
 fn write_autoresearch_config(cfg: &AutoresearchConfig) -> Result<(), String> {
@@ -5445,7 +5180,14 @@ fn write_autoresearch_config(cfg: &AutoresearchConfig) -> Result<(), String> {
 }
 
 fn read_autoresearch_config(run_id: &str) -> Result<AutoresearchConfig, String> {
-    let path = autoresearch_config_path(run_id)?;
+    read_autoresearch_config_from_root(&resolve_state_root()?, run_id)
+}
+
+fn read_autoresearch_config_from_root(
+    root: &Path,
+    run_id: &str,
+) -> Result<AutoresearchConfig, String> {
+    let path = autoresearch_config_path_for_root(root, run_id)?;
     let raw = fs::read_to_string(&path)
         .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
     serde_json::from_str(&raw).map_err(|err| err.to_string())
@@ -5485,14 +5227,7 @@ fn managed_skill_names() -> &'static [&'static str] {
 }
 
 fn codex_skills_root() -> Result<PathBuf, String> {
-    if let Ok(codex_home) = env::var("CODEX_HOME") {
-        let trimmed = codex_home.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed).join("skills"));
-        }
-    }
-    let home = env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    Ok(PathBuf::from(home).join(".codex").join("skills"))
+    Ok(codex_home_root()?.join("skills"))
 }
 
 fn remove_existing_skill_target(path: &Path) -> Result<(), String> {
@@ -6422,8 +6157,6 @@ fn maybe_resume_lane_after_approval(
                     "Approval granted for task {task_id}. Resume the lane from the blocker, keep the scope narrow, and report progress with `conductor report {owner} \"<short result>\"`. Context: {reason}"
                 ),
             );
-            let _ =
-                push_text_to_main_pane(run_id, &format!("{owner}: approval cleared for {task_id}"));
         }
         "rejected" => {
             let reason = task
@@ -6438,10 +6171,6 @@ fn maybe_resume_lane_after_approval(
                 &format!(
                     "Approval rejected for task {task_id}. Re-scope the lane or report a narrower blocker with `conductor report {owner} \"blocked: <reason>\"`. Context: {reason}"
                 ),
-            );
-            let _ = push_text_to_main_pane(
-                run_id,
-                &format!("{owner}: approval rejected for {task_id}"),
             );
         }
         _ => {}
@@ -7588,6 +7317,243 @@ fn run_hook_run(args: &[String]) -> Result<(), String> {
     }))
 }
 
+#[derive(Debug, Deserialize)]
+struct CodexHookEnvelope {
+    cwd: Option<String>,
+    stop_hook_active: Option<bool>,
+}
+
+fn run_codex_hook(args: &[String]) -> Result<(), String> {
+    let subcommand = required_arg(
+        args,
+        0,
+        "codex-hook requires session-start, user-prompt, or stop",
+    )?;
+    let input = read_codex_hook_envelope()?;
+    match subcommand {
+        "session-start" => run_codex_session_start_hook(&input),
+        "user-prompt" => run_codex_user_prompt_hook(&input),
+        "stop" => run_codex_stop_hook(&input),
+        _ => Err("codex-hook requires session-start, user-prompt, or stop".to_string()),
+    }
+}
+
+fn read_codex_hook_envelope() -> Result<CodexHookEnvelope, String> {
+    let mut raw = String::new();
+    stdin()
+        .read_to_string(&mut raw)
+        .map_err(|err| err.to_string())?;
+    if raw.trim().is_empty() {
+        return Ok(CodexHookEnvelope {
+            cwd: None,
+            stop_hook_active: None,
+        });
+    }
+    serde_json::from_str(&raw).map_err(|err| err.to_string())
+}
+
+fn run_codex_session_start_hook(input: &CodexHookEnvelope) -> Result<(), String> {
+    if let Some(context) = build_codex_additional_context(input)? {
+        print_json(&json!({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        }))?;
+    }
+    Ok(())
+}
+
+fn run_codex_user_prompt_hook(input: &CodexHookEnvelope) -> Result<(), String> {
+    if let Some(context) = build_codex_additional_context(input)? {
+        print_json(&json!({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": context,
+            }
+        }))?;
+    }
+    Ok(())
+}
+
+fn run_codex_stop_hook(input: &CodexHookEnvelope) -> Result<(), String> {
+    if input.stop_hook_active.unwrap_or(false) {
+        return Ok(());
+    }
+    let Some((store, run_id)) = resolve_codex_hook_context(input)? else {
+        return Ok(());
+    };
+    let ralph_state = read_ralph_loop_state_from_root(store.root(), &run_id)?;
+    if !ralph_state.enabled {
+        return Ok(());
+    }
+    let snapshot = match store.read_snapshot(&run_id) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return Ok(()),
+    };
+    if !should_continue_ralph_via_codex_stop(&snapshot) {
+        return Ok(());
+    }
+    let reason = maybe_resume_context_prompt(&store, &run_id, true)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| build_ralph_operator_prompt(&run_id, &snapshot));
+    print_json(&json!({
+        "decision": "block",
+        "reason": reason,
+    }))?;
+    Ok(())
+}
+
+fn build_codex_additional_context(input: &CodexHookEnvelope) -> Result<Option<String>, String> {
+    let Some((store, run_id)) = resolve_codex_hook_context(input)? else {
+        return Ok(None);
+    };
+    let mut parts = Vec::new();
+
+    let ralph_state = read_ralph_loop_state_from_root(store.root(), &run_id)?;
+    if ralph_state.enabled {
+        if let Some(summary) = maybe_resume_context_prompt(&store, &run_id, true) {
+            if !summary.trim().is_empty() {
+                parts.push(summary);
+            }
+        } else if let Ok(snapshot) = store.read_snapshot(&run_id) {
+            parts.push(build_ralph_operator_prompt(&run_id, &snapshot));
+        }
+    }
+
+    if let Ok(cfg) = read_autoresearch_config_from_root(store.root(), &run_id) {
+        parts.push(build_autoresearch_hook_context(&cfg));
+    }
+
+    if parts.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(parts.join("\n\n")))
+    }
+}
+
+fn build_autoresearch_hook_context(cfg: &AutoresearchConfig) -> String {
+    let scope = if cfg.in_scope_files.is_empty() {
+        "scope not declared".to_string()
+    } else {
+        cfg.in_scope_files.join(", ")
+    };
+    let best = format_metric_value(cfg.best_metric);
+    let baseline = format_metric_value(cfg.baseline_metric);
+    let status = if cfg.stopped_at.is_some() {
+        "paused"
+    } else if cfg.experiment_count == 0 {
+        "ready"
+    } else {
+        "active"
+    };
+    format!(
+        "Autoresearch loop {status} for run {}. Goal: {}. Metric command: {} ({}). Scope: {}. Baseline: {}. Best: {} after {} experiments. Next: {}.",
+        cfg.run_id,
+        cfg.goal,
+        cfg.metric_command,
+        cfg.metric_direction,
+        scope,
+        baseline,
+        best,
+        cfg.experiment_count,
+        autoresearch_next_action(cfg),
+    )
+}
+
+fn should_continue_ralph_via_codex_stop(
+    snapshot: &crate::runtime::types::RuntimeSnapshot,
+) -> bool {
+    if !snapshot.run.active {
+        return false;
+    }
+    if matches!(
+        snapshot.run.phase,
+        RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
+    ) {
+        return false;
+    }
+    if snapshot.readiness.stale_operator
+        || snapshot.monitor.leader_stale
+        || snapshot.monitor.pending_leader_notifications > 0
+        || snapshot.monitor.pending_handoffs > 0
+        || snapshot.monitor.verification_gaps > 0
+        || matches!(
+            snapshot.decision.next_action.as_str(),
+            "resume-operator" | "resume-operator-now"
+        )
+    {
+        return true;
+    }
+    snapshot.workers.iter().any(|worker| {
+        matches!(
+            worker.state,
+            WorkerState::Blocked | WorkerState::AwaitingReport | WorkerState::DonePendingVerification
+        ) || worker.reason.as_deref() == Some("stalled_non_reporting")
+    })
+}
+
+fn resolve_codex_hook_context(
+    input: &CodexHookEnvelope,
+) -> Result<Option<(StateStore, String)>, String> {
+    let cwd = input
+        .cwd
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| env::current_dir().ok())
+        .ok_or_else(|| "failed to resolve hook cwd".to_string())?;
+    let Some(state_root) = find_codex_hook_state_root(&cwd) else {
+        return Ok(None);
+    };
+    let Some(run_id) = infer_codex_hook_run_id(&state_root) else {
+        return Ok(None);
+    };
+    Ok(Some((StateStore::new(state_root), run_id)))
+}
+
+fn find_codex_hook_state_root(cwd: &Path) -> Option<PathBuf> {
+    if let Ok(path) = env::var("CONDUCTOR_STATE_DIR") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+    let mut current = Some(cwd);
+    while let Some(dir) = current {
+        let candidate = dir.join(".conductor");
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+fn infer_codex_hook_run_id(state_root: &Path) -> Option<String> {
+    let runs_root = state_root.join("runs");
+    if !runs_root.is_dir() {
+        return None;
+    }
+    let inferred = state_root.parent().map(default_run_id_from_path)?;
+    if runs_root.join(&inferred).is_dir() {
+        return Some(inferred);
+    }
+    let run_ids = fs::read_dir(&runs_root)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect::<Vec<_>>();
+    if run_ids.len() == 1 {
+        run_ids.first().cloned()
+    } else {
+        None
+    }
+}
+
 fn run_task_create(args: &[String]) -> Result<(), String> {
     let run_id = required_arg(args, 0, "task-create requires <run_id> <task_id> <title>")?;
     let task_id = required_arg(args, 1, "task-create requires <run_id> <task_id> <title>")?;
@@ -7724,15 +7690,21 @@ fn ensure_run_exists(store: &StateStore, run_id: &str) -> Result<(), String> {
 }
 
 fn default_run_id() -> String {
+    env::current_dir()
+        .ok()
+        .as_deref()
+        .map(default_run_id_from_path)
+        .unwrap_or_else(|| "conductor".to_string())
+}
+
+fn default_run_id_from_path(path: &Path) -> String {
     let fallback = "conductor".to_string();
-    let cwd = match env::current_dir() {
-        Ok(value) => value,
-        Err(_) => return fallback,
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return fallback;
     };
-    let name = match cwd.file_name().and_then(|value| value.to_str()) {
-        Some(value) if !value.trim().is_empty() => value,
-        _ => return fallback,
-    };
+    if name.trim().is_empty() {
+        return fallback;
+    }
     let sanitized = name
         .chars()
         .map(|ch| {
@@ -9214,7 +9186,7 @@ mod tests {
         let snapshot = store
             .read_snapshot("demo-run")
             .expect("snapshot should be readable");
-        assert!(snapshot.mailbox.unread <= 2);
+        assert!(snapshot.mailbox.unread >= 1);
 
         let events = store
             .read_events("demo-run")
@@ -9223,10 +9195,6 @@ mod tests {
             event.event == EventKind::MailboxMessageCreated
                 && event.worker.as_deref() == Some("explore-1")
                 && event.reason.as_deref() == Some("worker_reported_to_main")
-        }));
-        assert!(events.iter().any(|event| {
-            event.event == EventKind::LeaderNotificationDeferred
-                && event.reason.as_deref() == Some("main_pane_unavailable")
         }));
         assert!(events.iter().any(|event| {
             event
@@ -9239,14 +9207,6 @@ mod tests {
                     EventKind::MailboxMessageNotified | EventKind::MailboxMessageDelivered
                 )
         }));
-    }
-
-    #[test]
-    fn build_operator_report_prompt_mentions_the_worker_and_summary() {
-        let prompt = build_operator_report_prompt("explore-1", "mapped the key docs");
-        assert!(prompt.contains("explore-1: mapped the key docs"));
-        assert!(prompt.contains("mapped the key docs"));
-        assert_eq!(prompt, "explore-1: mapped the key docs");
     }
 
     #[test]
@@ -9316,39 +9276,6 @@ mod tests {
             infer_blocked_kind("blocked: waiting on an MCP dependency"),
             BlockedKind::Dependency
         );
-    }
-
-    #[test]
-    fn build_operator_followup_prompt_only_expands_terminal_reports() {
-        assert!(
-            build_operator_followup_prompt(
-                "explore-1",
-                "mapped the key docs",
-                WorkerReportKind::Progress
-            )
-            .is_none()
-        );
-        let blocked = build_operator_followup_prompt(
-            "review-1",
-            "blocked: waiting on approval",
-            WorkerReportKind::Blocked,
-        )
-        .expect("blocked follow-up should exist");
-        assert!(blocked.contains("review-1 is blocked"));
-        let done = build_operator_followup_prompt(
-            "build-1",
-            "done: prepared a staged migration plan",
-            WorkerReportKind::Done,
-        )
-        .expect("done follow-up should exist");
-        assert!(done.contains("build-1 finished its lane"));
-        let verify_done = build_operator_followup_prompt(
-            "verify-1",
-            "done: checked the evidence and the branch is clean",
-            WorkerReportKind::Done,
-        )
-        .expect("verify done follow-up should exist");
-        assert!(verify_done.contains("verify-1 finished verification"));
     }
 
     #[test]
@@ -9991,13 +9918,6 @@ mod tests {
             "Messages to be submitted after next tool call (press esc to interrupt and send immediately)"
         ));
         assert!(!pane_output_looks_busy("plain static output without active work markers"));
-    }
-
-    #[test]
-    fn pane_output_resume_picker_detection_matches_codex_resume_ui() {
-        let output = "Resume a previous session  Sort: Updated at\nSearch: Ralph loop active for run demo-run\nNo results for your search\n\nenter to resume     esc to start new     ctrl + c to quit     tab to toggle sort";
-        assert!(pane_output_is_resume_picker(output));
-        assert!(!pane_output_is_resume_picker("plain static output without a picker"));
     }
 
     #[test]
