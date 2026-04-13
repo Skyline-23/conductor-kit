@@ -155,7 +155,7 @@ fn managed_hook_groups() -> BTreeMap<String, Vec<HookMatcherGroup>> {
         (
             "SessionStart".to_string(),
             vec![HookMatcherGroup {
-                matcher: Some("startup|resume".to_string()),
+                matcher: Some("startup".to_string()),
                 hooks: vec![HookHandler {
                     kind: "command".to_string(),
                     command: SESSION_START_COMMAND.to_string(),
@@ -421,7 +421,7 @@ mod tests {
                     (
                         "SessionStart".to_string(),
                         vec![HookMatcherGroup {
-                            matcher: Some("startup|resume".to_string()),
+                            matcher: Some("startup".to_string()),
                             hooks: vec![
                                 HookHandler {
                                     kind: "command".to_string(),
