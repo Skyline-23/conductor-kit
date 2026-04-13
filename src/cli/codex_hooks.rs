@@ -151,45 +151,25 @@ fn uninstall_managed_codex_hooks_at(codex_home: &Path) -> Result<UninstallReport
 }
 
 fn managed_hook_groups() -> BTreeMap<String, Vec<HookMatcherGroup>> {
-    BTreeMap::from([
-        (
-            "SessionStart".to_string(),
-            vec![HookMatcherGroup {
-                matcher: Some("startup".to_string()),
-                hooks: vec![HookHandler {
-                    kind: "command".to_string(),
-                    command: SESSION_START_COMMAND.to_string(),
-                    statusMessage: Some("Conductor: loading loop context".to_string()),
-                    timeout: Some(5),
-                    timeoutSec: None,
-                    extra: BTreeMap::new(),
-                }],
+    BTreeMap::from([(
+        "SessionStart".to_string(),
+        vec![HookMatcherGroup {
+            matcher: Some("startup".to_string()),
+            hooks: vec![HookHandler {
+                kind: "command".to_string(),
+                command: SESSION_START_COMMAND.to_string(),
+                statusMessage: Some("Conductor: loading loop context".to_string()),
+                timeout: Some(5),
+                timeoutSec: None,
                 extra: BTreeMap::new(),
             }],
-        ),
-        (
-            "UserPromptSubmit".to_string(),
-            vec![HookMatcherGroup {
-                matcher: None,
-                hooks: vec![HookHandler {
-                    kind: "command".to_string(),
-                    command: USER_PROMPT_COMMAND.to_string(),
-                    statusMessage: Some("Conductor: refreshing loop context".to_string()),
-                    timeout: Some(5),
-                    timeoutSec: None,
-                    extra: BTreeMap::new(),
-                }],
-                extra: BTreeMap::new(),
-            }],
-        ),
-    ])
+            extra: BTreeMap::new(),
+        }],
+    )])
 }
 
 fn managed_commands() -> Vec<String> {
-    vec![
-        SESSION_START_COMMAND.to_string(),
-        USER_PROMPT_COMMAND.to_string(),
-    ]
+    vec![SESSION_START_COMMAND.to_string()]
 }
 
 fn known_managed_commands() -> Vec<String> {

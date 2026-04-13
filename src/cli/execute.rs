@@ -7383,14 +7383,7 @@ fn run_codex_session_start_hook(input: &CodexHookEnvelope) -> Result<(), String>
 }
 
 fn run_codex_user_prompt_hook(input: &CodexHookEnvelope) -> Result<(), String> {
-    if let Some(context) = build_codex_additional_context(input, false)? {
-        print_json(&json!({
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": context,
-            }
-        }))?;
-    }
+    let _ = input;
     Ok(())
 }
 
