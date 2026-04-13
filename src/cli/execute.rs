@@ -2219,7 +2219,7 @@ fn operator_only_stall_signature(
     }
     let active_hint = main_activity.map(|activity| activity.active_hint).unwrap_or(false);
     if active_hint {
-        return Some("operator-only-busy-stall".to_string());
+        return None;
     }
     Some("operator-only-monitor-stall".to_string())
 }
@@ -9755,7 +9755,7 @@ mod tests {
     }
 
     #[test]
-    fn operator_only_stall_signature_primes_when_busy_markers_stick_without_progress() {
+    fn operator_only_stall_signature_skips_busy_operator_only_runs_even_when_quiet() {
         let mut snapshot = sample_snapshot();
         snapshot.decision.next_action = "monitor".to_string();
         snapshot.decision.reason = "workers are still making progress".to_string();
@@ -9763,7 +9763,7 @@ mod tests {
             worker.worker_id == "main" || worker.worker_id == "orchestrator-main"
         });
 
-        let signature = operator_only_stall_signature(
+        assert!(operator_only_stall_signature(
             &snapshot,
             Some(&MainPaneActivity {
                 signature: "steady".to_string(),
@@ -9772,8 +9772,7 @@ mod tests {
             Some(Utc::now() - chrono::Duration::seconds(20)),
             Utc::now(),
         )
-        .expect("stuck busy markers should count as a stall");
-        assert_eq!(signature, "operator-only-busy-stall");
+        .is_none());
     }
 
     #[test]
