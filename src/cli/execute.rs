@@ -1820,6 +1820,10 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
             now,
         );
         if should_prime {
+            let prompt = maybe_resume_context_prompt(&store, run_id, true)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| build_ralph_operator_prompt(run_id, &snapshot));
+            let _ = prime_ralph_operator_loop_on_surface(&preferred_session, &prompt);
             last_prime_at = Some(now);
             last_stall_signature = stall_signature;
         } else if stall_signature.is_none() {
@@ -1852,6 +1856,18 @@ fn should_reprime_ralph_stall(
     last_prime_at
         .map(|last| now - last >= chrono::Duration::seconds(45))
         .unwrap_or(true)
+}
+
+fn prime_ralph_operator_loop_on_surface(session_name: &str, prompt: &str) -> Result<(), String> {
+    let panes = run_tmux_capture([
+        "list-panes",
+        "-t",
+        &format!("{session_name}:0"),
+        "-F",
+        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
+    ])?;
+    let main_pane_id = find_main_pane_id(session_name, &panes)?;
+    send_prompt_to_tmux_pane(main_pane_id.trim(), prompt)
 }
 
 fn refresh_operator_activity_from_tmux(
