@@ -7371,7 +7371,7 @@ fn read_codex_hook_envelope() -> Result<CodexHookEnvelope, String> {
 }
 
 fn run_codex_session_start_hook(input: &CodexHookEnvelope) -> Result<(), String> {
-    if let Some(context) = build_codex_additional_context(input)? {
+    if let Some(context) = build_codex_additional_context(input, true)? {
         print_json(&json!({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
@@ -7383,7 +7383,7 @@ fn run_codex_session_start_hook(input: &CodexHookEnvelope) -> Result<(), String>
 }
 
 fn run_codex_user_prompt_hook(input: &CodexHookEnvelope) -> Result<(), String> {
-    if let Some(context) = build_codex_additional_context(input)? {
+    if let Some(context) = build_codex_additional_context(input, false)? {
         print_json(&json!({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",
@@ -7422,14 +7422,17 @@ fn run_codex_stop_hook(input: &CodexHookEnvelope) -> Result<(), String> {
     Ok(())
 }
 
-fn build_codex_additional_context(input: &CodexHookEnvelope) -> Result<Option<String>, String> {
+fn build_codex_additional_context(
+    input: &CodexHookEnvelope,
+    include_ralph_context: bool,
+) -> Result<Option<String>, String> {
     let Some((store, run_id)) = resolve_codex_hook_context(input)? else {
         return Ok(None);
     };
     let mut parts = Vec::new();
 
     let ralph_state = read_ralph_loop_state_from_root(store.root(), &run_id)?;
-    if ralph_state.enabled {
+    if include_ralph_context && ralph_state.enabled {
         if let Some(summary) = maybe_resume_context_prompt(&store, &run_id, true) {
             if !summary.trim().is_empty() {
                 parts.push(summary);
@@ -11245,6 +11248,50 @@ mod tests {
             )
         );
         assert!(prompt.contains("Suggested command: conductor handoff main explore-1"));
+    }
+
+    #[test]
+    fn user_prompt_hook_skips_ralph_context() {
+        let root = unique_temp_dir("conductor-codex-user-prompt-hook");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        enable_ralph_loop_for_root(&root, "demo-run").expect("failed to enable ralph");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+        let repo_root = root.join("repo");
+        fs::create_dir_all(repo_root.join(".conductor").join("runs").join("demo-run"))
+            .expect("failed to create repo state root");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+        }
+        let envelope = CodexHookEnvelope {
+            cwd: Some(repo_root.display().to_string()),
+            stop_hook_active: None,
+        };
+        let startup_context =
+            build_codex_additional_context(&envelope, true).expect("startup hook should build");
+        assert!(
+            startup_context
+                .as_deref()
+                .expect("startup should include ralph context")
+                .contains("Ralph loop active for run demo-run.")
+        );
+        let user_prompt_context =
+            build_codex_additional_context(&envelope, false).expect("user prompt should build");
+        assert!(user_prompt_context.is_none());
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
     }
 
     #[test]
