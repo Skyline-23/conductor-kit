@@ -2256,7 +2256,7 @@ fn build_ralph_operator_prompt(
         .map(|value| format!("\nSuggested command: {value}"))
         .unwrap_or_default();
     format!(
-        "Ralph loop active for run {run_id}. Stay in the operator lane and keep iterating until one verified outcome is accepted or the run is explicitly cancelled. Do not widen into a team unless a worker count was explicitly requested. Current focus: {focus}. Why: {why}. Next: {next}.{suggested}"
+        "Ralph loop active for run {run_id}. Act now in the operator lane. Do one concrete orchestration step, not a recap. If you are already mid-step, continue it. Do not widen into a team unless a worker count was explicitly requested. Focus: {focus}. Why: {why}. Next: {next}.{suggested}"
     )
 }
 
@@ -4371,59 +4371,12 @@ fn maybe_resume_context_prompt(
         .iter()
         .find(|worker| worker.worker_id == focus)
         .and_then(|worker| worker.reason.as_deref());
-    let mut lane_lines = snapshot
-        .workers
-        .iter()
-        .filter(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main")
-        .filter_map(|worker| {
-            let summary = worker.current_summary.as_deref()?.trim();
-            if summary.is_empty() {
-                return None;
-            }
-            match worker.state {
-                WorkerState::Blocked
-                | WorkerState::Done
-                | WorkerState::DonePendingVerification
-                | WorkerState::VerifiedComplete
-                | WorkerState::AwaitingReport
-                | WorkerState::Working => Some(format!(
-                    "- {} ({:?}): {}",
-                    worker.worker_id, worker.state, summary
-                )),
-                _ => None,
-            }
-        })
-        .collect::<Vec<_>>();
-    lane_lines.sort_by_key(|line| {
-        let lower = line.to_ascii_lowercase();
-        if lower.contains("(blocked)") {
-            0
-        } else if lower.contains("(awaitingreport)") {
-            1
-        } else if lower.contains("(donependingverification)") {
-            2
-        } else if lower.contains("(verifiedcomplete)") {
-            3
-        } else if lower.contains("(done)") {
-            4
-        } else if lower.contains("(working)") {
-            5
-        } else {
-            6
-        }
-    });
-    lane_lines.truncate(4);
-    let lane_block = if lane_lines.is_empty() {
-        String::new()
-    } else {
-        format!("\n\nActive lane context:\n{}", lane_lines.join("\n"))
-    };
     let triage_block = build_resume_triage_block(&snapshot);
     let suggested_command = suggested_operator_command(run_id, &snapshot, focus_reason)
         .map(|command| format!("\nSuggested command: {command}"))
         .unwrap_or_default();
     Some(format!(
-        "Resume orchestration context for run {run_id}. Next: {next}. Focus: {focus}. Why: {why}.{triage_block} Re-enter as the operator only, integrate the latest lane reports, and decide the next orchestration step without redoing lane work.{lane_block}{suggested_command}"
+        "Resume run {run_id} as the operator only. Act now on the next orchestration step, not a recap. Focus: {focus}. Why: {why}. Next: {next}.{triage_block}{suggested_command}"
     ))
 }
 
@@ -9383,8 +9336,7 @@ mod tests {
         assert!(prompt.contains("Next: unblock."));
         assert!(prompt.contains("Focus: review-1."));
         assert!(prompt.contains("operator approval"));
-        assert!(prompt.contains("Active lane context:"));
-        assert!(prompt.contains("review-1 (Blocked):"));
+        assert!(prompt.contains("Act now on the next orchestration step, not a recap."));
         assert!(
             prompt.contains("Suggested command: conductor task-approval demo-run task-review-1")
         );
@@ -9963,13 +9915,9 @@ mod tests {
 
         let prompt = maybe_resume_context_prompt(&store, "demo-run", true)
             .expect("resume prompt should exist");
-        let blocked_index = prompt
-            .find("review-1 (Blocked)")
-            .expect("blocked line should exist");
-        let done_index = prompt
-            .find("build-1 (DonePendingVerification)")
-            .expect("done line should exist");
-        assert!(blocked_index < done_index);
+        assert!(prompt.contains("Focus: review-1."));
+        assert!(prompt.contains("Next: unblock."));
+        assert!(prompt.contains("operator approval"));
     }
 
     #[test]
@@ -11178,7 +11126,8 @@ mod tests {
         let snapshot = sample_snapshot();
         let prompt = build_ralph_operator_prompt("demo-run", &snapshot);
         assert!(prompt.contains("Ralph loop active for run demo-run."));
-        assert!(prompt.contains("Current focus: explore-1."));
+        assert!(prompt.contains("Focus: explore-1."));
+        assert!(prompt.contains("Do one concrete orchestration step, not a recap."));
         assert!(
             prompt.contains(
                 "Do not widen into a team unless a worker count was explicitly requested."
