@@ -2518,7 +2518,6 @@ fn prepare_direct_team_panes(
             team_prompt,
             Some((&adapter.cli, &adapter.model)),
         );
-        let use_inline_prompt = launch_uses_inline_prompt(&launch);
         store.upsert_worker(WorkerRecord {
             worker_id: worker_id.clone(),
             run_id: run_id.to_string(),
@@ -2554,12 +2553,8 @@ fn prepare_direct_team_panes(
         );
         pane_specs.push(OpsPaneSpec {
             title: worker_id.clone(),
-            command: build_direct_launch_shell_command(
-                cwd,
-                &launch,
-                use_inline_prompt.then_some(starter_prompt.as_str()),
-            ),
-            starter_prompt: (!use_inline_prompt).then_some(starter_prompt),
+            command: build_direct_launch_shell_command(cwd, &launch, Some(starter_prompt.as_str())),
+            starter_prompt: None,
         });
     }
     Ok(pane_specs)
@@ -3798,9 +3793,7 @@ fn respawn_direct_team_worker_pane(
     let adapter = worker_adapter_config(&cfg, worker_type)?;
     let cwd = project_root_or_current_dir()?;
     let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, None)?;
-    let use_inline_prompt = launch_uses_inline_prompt(&launch);
-    let pane_command =
-        build_direct_launch_shell_command(&cwd, &launch, use_inline_prompt.then_some(prompt));
+    let pane_command = build_direct_launch_shell_command(&cwd, &launch, Some(prompt));
     let new_pane_id = run_tmux_capture([
         "split-window",
         "-h",
@@ -3814,10 +3807,6 @@ fn respawn_direct_team_worker_pane(
     ])?;
     let new_pane_id = new_pane_id.trim().to_string();
     run_tmux(["select-pane", "-t", &new_pane_id, "-T", worker_id])?;
-    if !use_inline_prompt {
-        send_prompt_to_surface_slot(&new_pane_id, prompt)?;
-    }
-
     let mut next = worker;
     next.state = WorkerState::AwaitingReport;
     next.last_event_at = Some(Utc::now());
@@ -7355,6 +7344,13 @@ fn build_codex_additional_context(
     };
     let mut parts = Vec::new();
 
+    if let Ok(prompt) = env::var("CONDUCTOR_STARTUP_PROMPT") {
+        let trimmed = prompt.trim();
+        if !trimmed.is_empty() {
+            parts.push(trimmed.to_string());
+        }
+    }
+
     if let Some(prompt) = consume_pending_worker_mailbox_prompt(&context)? {
         parts.push(prompt);
     }
@@ -7985,12 +7981,28 @@ fn build_direct_launch_shell_command(
     launch: &crate::runtime::adapters::WorkerAdapterLaunch,
     initial_prompt: Option<&str>,
 ) -> String {
+    let effective_cwd = launch.cwd.as_deref().unwrap_or(cwd);
     let base_env = launch
         .env
         .iter()
         .map(|(key, value)| format!("{key}={}", shell_quote_str(value)))
         .collect::<Vec<_>>();
-    let env_parts = terminal_passthrough_env(base_env);
+    let mut env_parts = terminal_passthrough_env(base_env);
+    let effective_cwd_str = effective_cwd.display().to_string();
+    env_parts.push(format!(
+        "PWD={}",
+        shell_quote_str(&effective_cwd_str)
+    ));
+    env_parts.push(format!(
+        "CONDUCTOR_WORKER_CWD={}",
+        shell_quote_str(&effective_cwd_str)
+    ));
+    if let Some(prompt) = initial_prompt.filter(|value| !value.trim().is_empty()) {
+        env_parts.push(format!(
+            "CONDUCTOR_STARTUP_PROMPT={}",
+            shell_quote_str(prompt)
+        ));
+    }
     let env_prefix = if env_parts.is_empty() {
         String::new()
     } else {
@@ -8002,23 +8014,12 @@ fn build_direct_launch_shell_command(
             .into_iter()
             .map(|arg| shell_quote_str(&arg)),
     );
-    if let Some(prompt) = initial_prompt.filter(|value| !value.trim().is_empty()) {
-        command_parts.push(shell_quote_str(prompt));
-    }
     build_surface_slot_shell_command(format!(
         "cd {} && {}exec {}",
-        shell_quote(cwd),
+        shell_quote(effective_cwd),
         env_prefix,
         command_parts.join(" ")
     ))
-}
-
-fn launch_uses_inline_prompt(launch: &crate::runtime::adapters::WorkerAdapterLaunch) -> bool {
-    Path::new(&launch.program)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.starts_with("codex"))
-        .unwrap_or(false)
 }
 
 fn terminal_passthrough_env(mut env_parts: Vec<String>) -> Vec<String> {
@@ -11063,6 +11064,114 @@ mod tests {
         assert!(command.contains("codex"));
         assert!(command.contains("--no-alt-screen"));
         assert!(command.contains("Inspect this repository and report upward."));
+        assert!(command.contains("PWD="));
+        assert!(command.contains("/tmp/demo"));
+        assert!(command.contains("CONDUCTOR_WORKER_CWD="));
+    }
+
+    #[test]
+    fn direct_codex_team_launch_prefers_launch_cwd_when_present() {
+        let launch = crate::runtime::adapters::WorkerAdapterLaunch {
+            program: "/opt/homebrew/bin/codex".to_string(),
+            args: vec!["-m".to_string(), "gpt-5.4".to_string()],
+            cwd: Some(PathBuf::from("/tmp/from-launch")),
+            stdin_payload: None,
+            env: BTreeMap::new(),
+        };
+        let command = build_direct_launch_shell_command(
+            Path::new("/tmp/from-arg"),
+            &launch,
+            Some("Inspect and continue."),
+        );
+        assert!(command.contains("/tmp/from-launch"));
+        assert!(command.contains("CONDUCTOR_WORKER_CWD="));
+    }
+
+    #[test]
+    fn startup_hook_emits_direct_worker_startup_prompt_from_env() {
+        let root = unique_temp_dir("conductor-codex-startup-prompt");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::AwaitingReport,
+                current_task_id: None,
+                current_summary: Some("direct build pane ready".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_bootstrapping".to_string()),
+            })
+            .expect("failed to create worker");
+
+        let repo_root = root.join("repo");
+        fs::create_dir_all(repo_root.join(".conductor").join("runs").join("demo-run"))
+            .expect("failed to create repo state root");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        let previous_run_id = std::env::var_os("CONDUCTOR_RUN_ID");
+        let previous_worker_id = std::env::var_os("CONDUCTOR_WORKER_ID");
+        let previous_startup_prompt = std::env::var_os("CONDUCTOR_STARTUP_PROMPT");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+            std::env::set_var("CONDUCTOR_RUN_ID", "demo-run");
+            std::env::set_var("CONDUCTOR_WORKER_ID", "build-1");
+            std::env::set_var(
+                "CONDUCTOR_STARTUP_PROMPT",
+                "Continue only on /artists parity and report the first concrete mismatch.",
+            );
+        }
+
+        let envelope = CodexHookEnvelope {
+            cwd: Some(repo_root.display().to_string()),
+            stop_hook_active: None,
+        };
+        let startup_context =
+            build_codex_additional_context(&envelope, true).expect("startup hook should build");
+        assert_eq!(
+            startup_context.as_deref(),
+            Some("Continue only on /artists parity and report the first concrete mismatch.")
+        );
+
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
+        match previous_run_id {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_RUN_ID", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_RUN_ID");
+            },
+        }
+        match previous_worker_id {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_WORKER_ID", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_WORKER_ID");
+            },
+        }
+        match previous_startup_prompt {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STARTUP_PROMPT", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STARTUP_PROMPT");
+            },
+        }
     }
 
     #[test]
