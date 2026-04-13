@@ -145,9 +145,9 @@ in `~/.codex/config.toml`.
 Use `conductor uninstall` to remove the conductor-managed skill shims and only the
 conductor-managed Codex hook commands from that Codex home.
 
-The managed Codex hook bundle uses the official native `SessionStart` event only.
-Ralph continuity stays in the watcher loop instead of re-injecting context through
-`UserPromptSubmit` or `Stop`.
+The managed Codex hook bundle uses the official native `SessionStart` and `Stop`
+events only. Conductor does not re-inject Ralph or autoresearch prompts through
+tmux while a session is running.
 
 The default team profiles now include:
 - `explore`

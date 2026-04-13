@@ -151,25 +151,42 @@ fn uninstall_managed_codex_hooks_at(codex_home: &Path) -> Result<UninstallReport
 }
 
 fn managed_hook_groups() -> BTreeMap<String, Vec<HookMatcherGroup>> {
-    BTreeMap::from([(
-        "SessionStart".to_string(),
-        vec![HookMatcherGroup {
-            matcher: Some("startup".to_string()),
-            hooks: vec![HookHandler {
-                kind: "command".to_string(),
-                command: SESSION_START_COMMAND.to_string(),
-                statusMessage: Some("Conductor: loading loop context".to_string()),
-                timeout: Some(5),
-                timeoutSec: None,
+    BTreeMap::from([
+        (
+            "SessionStart".to_string(),
+            vec![HookMatcherGroup {
+                matcher: Some("startup".to_string()),
+                hooks: vec![HookHandler {
+                    kind: "command".to_string(),
+                    command: SESSION_START_COMMAND.to_string(),
+                    statusMessage: Some("Conductor: loading loop context".to_string()),
+                    timeout: Some(5),
+                    timeoutSec: None,
+                    extra: BTreeMap::new(),
+                }],
                 extra: BTreeMap::new(),
             }],
-            extra: BTreeMap::new(),
-        }],
-    )])
+        ),
+        (
+            "Stop".to_string(),
+            vec![HookMatcherGroup {
+                matcher: None,
+                hooks: vec![HookHandler {
+                    kind: "command".to_string(),
+                    command: STOP_COMMAND.to_string(),
+                    statusMessage: Some("Conductor: continuing Ralph if needed".to_string()),
+                    timeout: Some(5),
+                    timeoutSec: None,
+                    extra: BTreeMap::new(),
+                }],
+                extra: BTreeMap::new(),
+            }],
+        ),
+    ])
 }
 
 fn managed_commands() -> Vec<String> {
-    vec![SESSION_START_COMMAND.to_string()]
+    vec![SESSION_START_COMMAND.to_string(), STOP_COMMAND.to_string()]
 }
 
 fn known_managed_commands() -> Vec<String> {
@@ -377,6 +394,13 @@ mod tests {
             .iter()
             .flat_map(|group| group.hooks.iter())
             .any(|handler| handler.command == "echo keep-me"));
+        assert!(hooks_file
+            .hooks
+            .get("Stop")
+            .expect("missing Stop")
+            .iter()
+            .flat_map(|group| group.hooks.iter())
+            .any(|handler| handler.command == STOP_COMMAND));
         assert!(managed_commands_present_at(&hooks_path).expect("failed to inspect hooks"));
         assert!(codex_hooks_feature_enabled_at(&codex_home.join("config.toml")));
     }
@@ -415,6 +439,31 @@ mod tests {
                             extra: BTreeMap::new(),
                         }],
                     ),
+                    (
+                        "Stop".to_string(),
+                        vec![HookMatcherGroup {
+                            matcher: None,
+                            hooks: vec![
+                                HookHandler {
+                                    kind: "command".to_string(),
+                                    command: "echo keep-stop".to_string(),
+                                    statusMessage: None,
+                                    timeout: None,
+                                    timeoutSec: None,
+                                    extra: BTreeMap::new(),
+                                },
+                                HookHandler {
+                                    kind: "command".to_string(),
+                                    command: STOP_COMMAND.to_string(),
+                                    statusMessage: None,
+                                    timeout: None,
+                                    timeoutSec: None,
+                                    extra: BTreeMap::new(),
+                                },
+                            ],
+                            extra: BTreeMap::new(),
+                        }],
+                    ),
                 ]),
             },
         )
@@ -430,7 +479,10 @@ mod tests {
         assert_eq!(session_start.len(), 1);
         assert_eq!(session_start[0].hooks.len(), 1);
         assert_eq!(session_start[0].hooks[0].command, "echo keep-me");
-        assert!(!hooks_file.hooks.contains_key("Stop"));
+        let stop = hooks_file.hooks.get("Stop").expect("missing Stop after uninstall");
+        assert_eq!(stop.len(), 1);
+        assert_eq!(stop[0].hooks.len(), 1);
+        assert_eq!(stop[0].hooks[0].command, "echo keep-stop");
     }
 
     #[test]

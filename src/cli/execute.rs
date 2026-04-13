@@ -1721,8 +1721,6 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
     let store = StateStore::new(resolve_state_root()?);
     let self_pid = std::process::id();
     let mut cursor = 0usize;
-    let mut last_prime_at: Option<chrono::DateTime<Utc>> = None;
-    let mut last_stall_signature: Option<String> = None;
     let mut last_main_signature: Option<String> = None;
     let mut last_main_progress_at: Option<chrono::DateTime<Utc>> = None;
 
@@ -1813,7 +1811,7 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
         let wakeable_events = filter_events(new_events, None, true);
         let saw_wake_event = wakeable_events.iter().any(ralph_wake_event_counts);
         let now = Utc::now();
-        let stall_signature = ralph_stall_signature(&snapshot, saw_wake_event).or_else(|| {
+        let _stall_signature = ralph_stall_signature(&snapshot, saw_wake_event).or_else(|| {
             operator_only_stall_signature(
                 &snapshot,
                 main_activity.as_ref(),
@@ -1821,61 +1819,10 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
                 now,
             )
         });
-        let should_prime = should_reprime_ralph_stall(
-            stall_signature.as_deref(),
-            last_stall_signature.as_deref(),
-            last_prime_at,
-            now,
-        );
-        if should_prime {
-            let prompt = maybe_resume_context_prompt(&store, run_id, true)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| build_ralph_operator_prompt(run_id, &snapshot));
-            let _ = prime_ralph_operator_loop_on_surface(&preferred_session, &prompt);
-            last_prime_at = Some(now);
-            last_stall_signature = stall_signature;
-        } else if stall_signature.is_none() {
-            last_stall_signature = None;
-        }
         thread::sleep(Duration::from_millis(1500));
     }
 
     Ok(())
-}
-
-fn should_reprime_ralph_stall(
-    stall_signature: Option<&str>,
-    last_stall_signature: Option<&str>,
-    last_prime_at: Option<chrono::DateTime<Utc>>,
-    now: chrono::DateTime<Utc>,
-) -> bool {
-    let Some(signature) = stall_signature else {
-        return false;
-    };
-    let can_prime_again = last_prime_at
-        .map(|last| now - last >= chrono::Duration::seconds(8))
-        .unwrap_or(true);
-    if !can_prime_again {
-        return false;
-    }
-    if last_stall_signature != Some(signature) {
-        return true;
-    }
-    last_prime_at
-        .map(|last| now - last >= chrono::Duration::seconds(45))
-        .unwrap_or(true)
-}
-
-fn prime_ralph_operator_loop_on_surface(session_name: &str, prompt: &str) -> Result<(), String> {
-    let panes = run_tmux_capture([
-        "list-panes",
-        "-t",
-        &format!("{session_name}:0"),
-        "-F",
-        "#{pane_id}\t#{pane_index}\t#{pane_title}\t#{pane_current_command}",
-    ])?;
-    let main_pane_id = find_main_pane_id(session_name, &panes)?;
-    send_prompt_to_surface_slot(main_pane_id.trim(), prompt)
 }
 
 fn refresh_operator_activity_from_tmux(
@@ -7341,7 +7288,15 @@ fn run_codex_user_prompt_hook(input: &CodexHookEnvelope) -> Result<(), String> {
 }
 
 fn run_codex_stop_hook(input: &CodexHookEnvelope) -> Result<(), String> {
-    let _ = input;
+    if input.stop_hook_active.unwrap_or(false) {
+        return Ok(());
+    }
+    if let Some(prompt) = build_codex_stop_context(input)? {
+        print_json(&json!({
+            "decision": "block",
+            "reason": prompt,
+        }))?;
+    }
     Ok(())
 }
 
@@ -7374,6 +7329,67 @@ fn build_codex_additional_context(
     } else {
         Ok(Some(parts.join("\n\n")))
     }
+}
+
+fn build_codex_stop_context(input: &CodexHookEnvelope) -> Result<Option<String>, String> {
+    let Some((store, run_id)) = resolve_codex_hook_context(input)? else {
+        return Ok(None);
+    };
+    if let Some(prompt) = build_ralph_stop_context(&store, &run_id)? {
+        return Ok(Some(prompt));
+    }
+    build_autoresearch_stop_context(store.root(), &run_id)
+}
+
+fn build_ralph_stop_context(store: &StateStore, run_id: &str) -> Result<Option<String>, String> {
+    let ralph_state = read_ralph_loop_state_from_root(store.root(), run_id)?;
+    if !ralph_state.enabled {
+        return Ok(None);
+    }
+    let run = store.read_run(run_id)?;
+    if !run.active
+        || matches!(
+            run.current_phase,
+            RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
+        )
+    {
+        return Ok(None);
+    }
+    let snapshot = store
+        .refresh_snapshot(run_id)
+        .or_else(|_| store.read_snapshot(run_id))?;
+    if snapshot.decision.next_action == "monitor" {
+        return Ok(None);
+    }
+    Ok(Some(build_ralph_operator_prompt(run_id, &snapshot)))
+}
+
+fn build_autoresearch_stop_context(root: &Path, run_id: &str) -> Result<Option<String>, String> {
+    let cfg = match read_autoresearch_config_from_root(root, run_id) {
+        Ok(cfg) => cfg,
+        Err(_) => return Ok(None),
+    };
+    if cfg.stopped_at.is_some() {
+        return Ok(None);
+    }
+    let scope = if cfg.in_scope_files.is_empty() {
+        "scope not declared".to_string()
+    } else {
+        cfg.in_scope_files.join(", ")
+    };
+    let best = format_metric_value(cfg.best_metric);
+    let baseline = format_metric_value(cfg.baseline_metric);
+    Ok(Some(format!(
+        "Autoresearch loop active for run {}. Act now on the next experiment step, not a recap. Review the latest result, make one focused in-scope change, run `{}` again, then record keep or discard. Goal: {}. Scope: {}. Baseline: {}. Best: {} after {} experiments. Next: {}.",
+        cfg.run_id,
+        cfg.metric_command,
+        cfg.goal,
+        scope,
+        baseline,
+        best,
+        cfg.experiment_count,
+        autoresearch_next_action(&cfg),
+    )))
 }
 
 fn build_autoresearch_hook_context(cfg: &AutoresearchConfig) -> String {
@@ -9688,23 +9704,6 @@ mod tests {
     }
 
     #[test]
-    fn should_reprime_ralph_stall_waits_before_repeating_the_same_stall() {
-        let now = Utc::now();
-        assert!(!should_reprime_ralph_stall(
-            Some("resume-operator"),
-            Some("resume-operator"),
-            Some(now - chrono::Duration::seconds(20)),
-            now,
-        ));
-        assert!(should_reprime_ralph_stall(
-            Some("resume-operator"),
-            Some("resume-operator"),
-            Some(now - chrono::Duration::seconds(50)),
-            now,
-        ));
-    }
-
-    #[test]
     fn should_prime_ralph_on_entry_skips_active_operator_loops() {
         let root = unique_temp_dir("conductor-ralph-entry-active");
         fs::create_dir_all(&root).expect("failed to create temp root");
@@ -11170,6 +11169,133 @@ mod tests {
         let user_prompt_context =
             build_codex_additional_context(&envelope, false).expect("user prompt should build");
         assert!(user_prompt_context.is_none());
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
+    }
+
+    #[test]
+    fn stop_hook_emits_ralph_continuation_when_operator_action_is_needed() {
+        let root = unique_temp_dir("conductor-codex-stop-hook-ralph");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        enable_ralph_loop_for_root(&root, "demo-run").expect("failed to enable ralph");
+        let stale_at = Utc::now() - chrono::Duration::seconds(90);
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "main".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                session_ref: None,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("operator stalled".to_string()),
+                terminal_label: Some("main".to_string()),
+                last_heartbeat_at: Some(stale_at),
+                last_stdout_at: None,
+                last_event_at: Some(stale_at),
+                reason: Some("operator_stale".to_string()),
+            })
+            .expect("failed to create main worker");
+        let mut orchestrator = store
+            .read_worker("demo-run", "orchestrator-main")
+            .expect("failed to read orchestrator worker");
+        orchestrator.state = WorkerState::Idle;
+        orchestrator.last_heartbeat_at = Some(stale_at);
+        orchestrator.last_event_at = Some(stale_at);
+        orchestrator.reason = Some("operator_stale".to_string());
+        store
+            .upsert_worker(orchestrator)
+            .expect("failed to update orchestrator worker");
+        store
+            .refresh_snapshot("demo-run")
+            .expect("failed to refresh snapshot");
+
+        let repo_root = root.join("repo");
+        fs::create_dir_all(repo_root.join(".conductor").join("runs").join("demo-run"))
+            .expect("failed to create repo state root");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+        }
+        let envelope = CodexHookEnvelope {
+            cwd: Some(repo_root.display().to_string()),
+            stop_hook_active: Some(false),
+        };
+        let prompt =
+            build_codex_stop_context(&envelope).expect("stop hook should build continuation");
+        assert!(prompt
+            .as_deref()
+            .expect("expected ralph continuation")
+            .contains("Ralph loop active for run demo-run."));
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
+    }
+
+    #[test]
+    fn stop_hook_emits_autoresearch_continuation_for_active_loops() {
+        let root = unique_temp_dir("conductor-codex-stop-hook-autoresearch");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+        }
+        let cfg = AutoresearchConfig {
+            schema_version: 1,
+            run_id: "demo-run".to_string(),
+            repo_root: root.join("repo").display().to_string(),
+            branch: "feat/autoresearch-20260413".to_string(),
+            goal: "shrink render diff".to_string(),
+            metric_command: "npm test".to_string(),
+            metric_regex: "score=(\\d+)".to_string(),
+            metric_direction: "higher".to_string(),
+            in_scope_files: vec!["src/app.ts".to_string()],
+            out_of_scope_files: vec!["docs".to_string()],
+            constraints: vec!["no hardcoding".to_string()],
+            max_experiments: Some(10),
+            simplicity_policy: "smallest correct change".to_string(),
+            baseline_metric: 1.0,
+            best_metric: 1.2,
+            baseline_commit: "abc123".to_string(),
+            best_commit: "def456".to_string(),
+            experiment_count: 2,
+            started_at: Utc::now(),
+            updated_at: Utc::now(),
+            stopped_at: None,
+        };
+        write_autoresearch_config(&cfg).expect("failed to write autoresearch config");
+
+        let repo_root = root.join("repo");
+        fs::create_dir_all(repo_root.join(".conductor").join("runs").join("demo-run"))
+            .expect("failed to create repo state root");
+        let envelope = CodexHookEnvelope {
+            cwd: Some(repo_root.display().to_string()),
+            stop_hook_active: Some(false),
+        };
+        let prompt =
+            build_codex_stop_context(&envelope).expect("stop hook should build continuation");
+        assert!(prompt
+            .as_deref()
+            .expect("expected autoresearch continuation")
+            .contains("Autoresearch loop active for run demo-run."));
         match previous_state_dir {
             Some(value) => unsafe {
                 std::env::set_var("CONDUCTOR_STATE_DIR", value);
