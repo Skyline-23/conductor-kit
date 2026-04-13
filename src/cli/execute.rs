@@ -7395,30 +7395,7 @@ fn run_codex_user_prompt_hook(input: &CodexHookEnvelope) -> Result<(), String> {
 }
 
 fn run_codex_stop_hook(input: &CodexHookEnvelope) -> Result<(), String> {
-    if input.stop_hook_active.unwrap_or(false) {
-        return Ok(());
-    }
-    let Some((store, run_id)) = resolve_codex_hook_context(input)? else {
-        return Ok(());
-    };
-    let ralph_state = read_ralph_loop_state_from_root(store.root(), &run_id)?;
-    if !ralph_state.enabled {
-        return Ok(());
-    }
-    let snapshot = match store.read_snapshot(&run_id) {
-        Ok(snapshot) => snapshot,
-        Err(_) => return Ok(()),
-    };
-    if !should_continue_ralph_via_codex_stop(&snapshot) {
-        return Ok(());
-    }
-    let reason = maybe_resume_context_prompt(&store, &run_id, true)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| build_ralph_operator_prompt(&run_id, &snapshot));
-    print_json(&json!({
-        "decision": "block",
-        "reason": reason,
-    }))?;
+    let _ = input;
     Ok(())
 }
 
@@ -7480,26 +7457,6 @@ fn build_autoresearch_hook_context(cfg: &AutoresearchConfig) -> String {
         cfg.experiment_count,
         autoresearch_next_action(cfg),
     )
-}
-
-fn should_continue_ralph_via_codex_stop(
-    snapshot: &crate::runtime::types::RuntimeSnapshot,
-) -> bool {
-    if !snapshot.run.active {
-        return false;
-    }
-    if matches!(
-        snapshot.run.phase,
-        RunPhase::Complete | RunPhase::Failed | RunPhase::Cancelled
-    ) {
-        return false;
-    }
-    snapshot.readiness.stale_operator
-        || snapshot.monitor.leader_stale
-        || matches!(
-            snapshot.decision.next_action.as_str(),
-            "resume-operator" | "resume-operator-now"
-        )
 }
 
 fn resolve_codex_hook_context(
@@ -9622,28 +9579,6 @@ mod tests {
         snapshot.decision.focus_worker = None;
         let command = suggested_operator_command("demo-run", &snapshot, None);
         assert!(command.is_none());
-    }
-
-    #[test]
-    fn stop_hook_only_continues_ralph_for_stale_operator_state() {
-        let mut snapshot = sample_snapshot();
-        snapshot.monitor.verification_gaps = 2;
-        snapshot.monitor.pending_handoffs = 1;
-        snapshot.monitor.pending_leader_notifications = 3;
-        snapshot.workers.push(WorkerProjection {
-            worker_id: "verify-1".to_string(),
-            worker_kind: WorkerKind::Verifier,
-            state: WorkerState::DonePendingVerification,
-            current_task_id: None,
-            current_summary: Some("waiting for acceptance".to_string()),
-            last_heartbeat_at: Some(Utc::now()),
-            terminal_label: Some("verify-1".to_string()),
-            reason: Some("accepted_by_operator".to_string()),
-        });
-        assert!(!should_continue_ralph_via_codex_stop(&snapshot));
-
-        snapshot.readiness.stale_operator = true;
-        assert!(should_continue_ralph_via_codex_stop(&snapshot));
     }
 
     #[test]

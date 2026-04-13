@@ -182,25 +182,17 @@ fn managed_hook_groups() -> BTreeMap<String, Vec<HookMatcherGroup>> {
                 extra: BTreeMap::new(),
             }],
         ),
-        (
-            "Stop".to_string(),
-            vec![HookMatcherGroup {
-                matcher: None,
-                hooks: vec![HookHandler {
-                    kind: "command".to_string(),
-                    command: STOP_COMMAND.to_string(),
-                    statusMessage: Some("Conductor: checking loop continuation".to_string()),
-                    timeout: Some(5),
-                    timeoutSec: None,
-                    extra: BTreeMap::new(),
-                }],
-                extra: BTreeMap::new(),
-            }],
-        ),
     ])
 }
 
 fn managed_commands() -> Vec<String> {
+    vec![
+        SESSION_START_COMMAND.to_string(),
+        USER_PROMPT_COMMAND.to_string(),
+    ]
+}
+
+fn known_managed_commands() -> Vec<String> {
     vec![
         SESSION_START_COMMAND.to_string(),
         USER_PROMPT_COMMAND.to_string(),
@@ -209,7 +201,7 @@ fn managed_commands() -> Vec<String> {
 }
 
 fn is_managed_handler(handler: &HookHandler) -> bool {
-    managed_commands()
+    known_managed_commands()
         .iter()
         .any(|command| handler.kind == "command" && handler.command == *command)
 }
@@ -440,21 +432,6 @@ mod tests {
                                     extra: BTreeMap::new(),
                                 },
                             ],
-                            extra: BTreeMap::new(),
-                        }],
-                    ),
-                    (
-                        "Stop".to_string(),
-                        vec![HookMatcherGroup {
-                            matcher: None,
-                            hooks: vec![HookHandler {
-                                kind: "command".to_string(),
-                                command: STOP_COMMAND.to_string(),
-                                statusMessage: None,
-                                timeout: Some(5),
-                                timeoutSec: None,
-                                extra: BTreeMap::new(),
-                            }],
                             extra: BTreeMap::new(),
                         }],
                     ),
