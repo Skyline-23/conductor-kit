@@ -1763,6 +1763,14 @@ fn run_ralph_watch(args: &[String]) -> Result<(), String> {
         )
         .ok()
         .flatten();
+        if main_activity
+            .as_ref()
+            .map(|activity| activity.resume_picker_hint)
+            .unwrap_or(false)
+        {
+            thread::sleep(Duration::from_millis(1500));
+            continue;
+        }
         let run = match store.read_run(run_id) {
             Ok(run) => run,
             Err(_) => {
@@ -1910,6 +1918,7 @@ fn refresh_operator_activity_from_tmux(
 struct MainPaneActivity {
     signature: String,
     active_hint: bool,
+    resume_picker_hint: bool,
 }
 
 fn capture_main_pane_activity(session_name: &str) -> Result<Option<MainPaneActivity>, String> {
@@ -1936,6 +1945,7 @@ fn capture_main_pane_activity(session_name: &str) -> Result<Option<MainPaneActiv
     Ok(Some(MainPaneActivity {
         signature: format!("{meta}\n{canonical_tail}"),
         active_hint: pane_output_looks_busy(&normalized_tail),
+        resume_picker_hint: pane_output_looks_like_resume_picker(&normalized_tail),
     }))
 }
 
@@ -2005,6 +2015,13 @@ fn pane_output_looks_busy(normalized_tail: &str) -> bool {
     ]
     .iter()
     .any(|needle| lower.contains(needle))
+}
+
+fn pane_output_looks_like_resume_picker(normalized_tail: &str) -> bool {
+    let lower = normalized_tail.to_ascii_lowercase();
+    lower.contains("resume a previous session")
+        && lower.contains("search:")
+        && lower.contains("enter to resume")
 }
 
 fn discover_ralph_tmux_session(run_id: &str) -> Result<Option<String>, String> {
@@ -9725,6 +9742,7 @@ mod tests {
             Some(&MainPaneActivity {
                 signature: "steady".to_string(),
                 active_hint: false,
+                resume_picker_hint: false,
             }),
             Some(Utc::now() - chrono::Duration::seconds(20)),
             Utc::now(),
@@ -9747,6 +9765,7 @@ mod tests {
             Some(&MainPaneActivity {
                 signature: "steady".to_string(),
                 active_hint: true,
+                resume_picker_hint: false,
             }),
             Some(Utc::now() - chrono::Duration::seconds(5)),
             Utc::now(),
@@ -9768,6 +9787,7 @@ mod tests {
             Some(&MainPaneActivity {
                 signature: "steady".to_string(),
                 active_hint: true,
+                resume_picker_hint: false,
             }),
             Some(Utc::now() - chrono::Duration::seconds(20)),
             Utc::now(),
@@ -9941,6 +9961,12 @@ mod tests {
     fn canonicalize_operator_tail_strips_volatile_busy_lines() {
         let raw = "real work line\nWorking (2m 04s • esc to interrupt) · 3 background terminals running · /ps to view · /stop to close\ngpt-5.4 high fast · feat/runtime · 87% used · weekly 96% · 0.118.0 · 258K window · 402M used · 401M in · 814K out · Fast on\nMessages to be submitted after next tool call (press esc to interrupt and send immediately)";
         assert_eq!(canonicalize_operator_tail(raw), "real work line");
+    }
+
+    #[test]
+    fn resume_picker_hint_detects_the_codex_resume_picker() {
+        let raw = "Resume a previous session  Sort: Updated\nSearch: Ralph loop active for run ledart-app\nNo results for your search\nenter to resume     esc to start new     ctrl + c to quit";
+        assert!(pane_output_looks_like_resume_picker(raw));
     }
 
     #[test]
