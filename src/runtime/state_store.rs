@@ -3,6 +3,7 @@ use crate::runtime::types::{
     MailboxCounts, MailboxMessage, MailboxRecord, MonitorState, OperatorDecision, ReadinessState,
     ReplayState, RunPhase, RunRecord, RunSnapshot, RuntimeSnapshot, SCHEMA_VERSION,
     SessionRecord, TaskCounts, TaskRecord, TaskStatus, WorkerProjection, WorkerRecord,
+    WorkerState,
 };
 use chrono::{Duration, Utc};
 use serde::Serialize;
@@ -16,6 +17,7 @@ pub struct StateStore {
 }
 
 const OPERATOR_STALE_AFTER_SECS: i64 = 120;
+const OPERATOR_ONLY_QUIET_AFTER_SECS: i64 = 25;
 const SILENT_WORKER_AFTER_SECS: i64 = 120;
 const BOOTSTRAP_GRACE_SECS: i64 = 45;
 
@@ -1093,6 +1095,14 @@ fn derive_operator_decision(
         };
     }
 
+    if operator_only_run_has_gone_quiet(workers) {
+        return OperatorDecision {
+            next_action: "resume-operator".to_string(),
+            focus_worker: Some("main".to_string()),
+            reason: "operator-only loop has gone quiet".to_string(),
+        };
+    }
+
     if all_workers_idle {
         return OperatorDecision {
             next_action: "reassign-or-close".to_string(),
@@ -1122,6 +1132,34 @@ fn pending_handoffs_in_flight(workers: &[WorkerProjection]) -> bool {
                 crate::runtime::types::WorkerState::Working
                     | crate::runtime::types::WorkerState::AwaitingReport
             )
+    })
+}
+
+fn operator_only_run_has_gone_quiet(workers: &[WorkerProjection]) -> bool {
+    let has_non_operator_workers = workers
+        .iter()
+        .any(|worker| worker.worker_id != "main" && worker.worker_id != "orchestrator-main");
+    if has_non_operator_workers {
+        return false;
+    }
+
+    let operators = workers
+        .iter()
+        .filter(|worker| worker.worker_id == "main" || worker.worker_id == "orchestrator-main")
+        .collect::<Vec<_>>();
+    if operators.is_empty() {
+        return false;
+    }
+
+    let now = Utc::now();
+    operators.iter().all(|worker| {
+        matches!(
+            worker.state,
+            WorkerState::Idle | WorkerState::Unknown | WorkerState::Stopped
+        ) && worker
+            .last_heartbeat_at
+            .map(|heartbeat| now - heartbeat >= Duration::seconds(OPERATOR_ONLY_QUIET_AFTER_SECS))
+            .unwrap_or(true)
     })
 }
 
@@ -1250,11 +1288,12 @@ fn blocked_decision_reason(worker: &WorkerProjection) -> String {
 #[cfg(test)]
 mod tests {
     use super::derive_operator_decision;
+    use super::OPERATOR_ONLY_QUIET_AFTER_SECS;
     use crate::runtime::types::{
         ApprovalStatus, ReadinessState, TaskRecord, TaskStatus, WorkerKind, WorkerProjection,
         WorkerState,
     };
-    use chrono::Utc;
+    use chrono::{Duration, Utc};
     use serde_json::Map;
 
     fn sample_readiness() -> ReadinessState {
@@ -1379,5 +1418,36 @@ mod tests {
         let decision = derive_operator_decision(&[], &sample_readiness(), &[], 0, false);
         assert_eq!(decision.next_action, "monitor");
         assert_eq!(decision.reason, "workers are still making progress");
+    }
+
+    #[test]
+    fn derive_operator_decision_reopens_quiet_operator_only_runs() {
+        let quiet_at = Utc::now() - Duration::seconds(OPERATOR_ONLY_QUIET_AFTER_SECS + 5);
+        let workers = vec![
+            WorkerProjection {
+                worker_id: "main".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("session running".to_string()),
+                last_heartbeat_at: Some(quiet_at),
+                terminal_label: Some("main".to_string()),
+                reason: None,
+            },
+            WorkerProjection {
+                worker_id: "orchestrator-main".to_string(),
+                worker_kind: WorkerKind::Orchestrator,
+                state: WorkerState::Idle,
+                current_task_id: None,
+                current_summary: Some("runtime initialized".to_string()),
+                last_heartbeat_at: Some(quiet_at),
+                terminal_label: Some("orchestrator-main".to_string()),
+                reason: None,
+            },
+        ];
+        let decision = derive_operator_decision(&workers, &sample_readiness(), &[], 0, false);
+        assert_eq!(decision.next_action, "resume-operator");
+        assert_eq!(decision.focus_worker.as_deref(), Some("main"));
+        assert_eq!(decision.reason, "operator-only loop has gone quiet");
     }
 }
