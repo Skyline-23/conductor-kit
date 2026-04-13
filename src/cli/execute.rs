@@ -4493,7 +4493,7 @@ fn suggested_operator_command(
     focus_reason: Option<&str>,
 ) -> Option<String> {
     match snapshot.decision.next_action.as_str() {
-        "resume-operator-now" | "resume-operator" => return Some("conductor resume".to_string()),
+        "resume-operator-now" | "resume-operator" => return None,
         _ => {}
     }
 
@@ -7494,24 +7494,12 @@ fn should_continue_ralph_via_codex_stop(
     ) {
         return false;
     }
-    if snapshot.readiness.stale_operator
+    snapshot.readiness.stale_operator
         || snapshot.monitor.leader_stale
-        || snapshot.monitor.pending_leader_notifications > 0
-        || snapshot.monitor.pending_handoffs > 0
-        || snapshot.monitor.verification_gaps > 0
         || matches!(
             snapshot.decision.next_action.as_str(),
             "resume-operator" | "resume-operator-now"
         )
-    {
-        return true;
-    }
-    snapshot.workers.iter().any(|worker| {
-        matches!(
-            worker.state,
-            WorkerState::Blocked | WorkerState::AwaitingReport | WorkerState::DonePendingVerification
-        ) || worker.reason.as_deref() == Some("stalled_non_reporting")
-    })
 }
 
 fn resolve_codex_hook_context(
@@ -9628,13 +9616,34 @@ mod tests {
     }
 
     #[test]
-    fn suggested_operator_command_returns_resume_for_stale_operator_with_messages() {
+    fn suggested_operator_command_skips_resume_for_stale_operator_with_messages() {
         let mut snapshot = sample_snapshot();
         snapshot.decision.next_action = "resume-operator-now".to_string();
         snapshot.decision.focus_worker = None;
-        let command =
-            suggested_operator_command("demo-run", &snapshot, None).expect("command should exist");
-        assert_eq!(command, "conductor resume");
+        let command = suggested_operator_command("demo-run", &snapshot, None);
+        assert!(command.is_none());
+    }
+
+    #[test]
+    fn stop_hook_only_continues_ralph_for_stale_operator_state() {
+        let mut snapshot = sample_snapshot();
+        snapshot.monitor.verification_gaps = 2;
+        snapshot.monitor.pending_handoffs = 1;
+        snapshot.monitor.pending_leader_notifications = 3;
+        snapshot.workers.push(WorkerProjection {
+            worker_id: "verify-1".to_string(),
+            worker_kind: WorkerKind::Verifier,
+            state: WorkerState::DonePendingVerification,
+            current_task_id: None,
+            current_summary: Some("waiting for acceptance".to_string()),
+            last_heartbeat_at: Some(Utc::now()),
+            terminal_label: Some("verify-1".to_string()),
+            reason: Some("accepted_by_operator".to_string()),
+        });
+        assert!(!should_continue_ralph_via_codex_stop(&snapshot));
+
+        snapshot.readiness.stale_operator = true;
+        assert!(should_continue_ralph_via_codex_stop(&snapshot));
     }
 
     #[test]
