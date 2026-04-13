@@ -4312,25 +4312,10 @@ fn resolve_surface_launch(
     );
     let mut launch = resolve_worker_adapter(&adapter, run_id, "main", None, None)?;
     if resume_surface && adapter.cli == "codex" {
-        let mut resume_args = vec!["resume".to_string()];
-        if ralph_loop_should_resume_last(run_id) {
-            resume_args.push("--last".to_string());
-        }
-        launch.args.splice(0..0, resume_args);
+        launch.args.splice(0..0, vec!["resume".to_string()]);
         launch.stdin_payload = None;
     }
     Ok(launch)
-}
-
-fn ralph_loop_should_resume_last(run_id: &str) -> bool {
-    let Ok(state) = read_ralph_loop_state(run_id) else {
-        return false;
-    };
-    should_resume_last_for_enabled_ralph_loop(state.enabled)
-}
-
-fn should_resume_last_for_enabled_ralph_loop(enabled: bool) -> bool {
-    enabled
 }
 
 fn maybe_resume_context_prompt(
@@ -9926,25 +9911,6 @@ mod tests {
         assert!(!should_attach_live_ralph_surface_from_state(false, false, true));
         assert!(!should_attach_live_ralph_surface_from_state(true, true, true));
         assert!(!should_attach_live_ralph_surface_from_state(true, false, false));
-    }
-
-    #[test]
-    fn ralph_loop_resume_last_only_when_enabled() {
-        let root = unique_temp_dir("conductor-ralph-resume-last");
-        fs::create_dir_all(&root).expect("failed to create temp root");
-        assert!(!read_ralph_loop_state_from_root(&root, "demo-run")
-            .expect("state should read")
-            .enabled);
-        enable_ralph_loop_for_root(&root, "demo-run").expect("failed to enable ralph");
-        assert!(read_ralph_loop_state_from_root(&root, "demo-run")
-            .expect("state should read")
-            .enabled);
-    }
-
-    #[test]
-    fn should_resume_last_when_the_ralph_loop_is_enabled() {
-        assert!(should_resume_last_for_enabled_ralph_loop(true));
-        assert!(!should_resume_last_for_enabled_ralph_loop(false));
     }
 
     #[test]
