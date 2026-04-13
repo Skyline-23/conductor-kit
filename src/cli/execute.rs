@@ -1466,16 +1466,29 @@ fn matches_any(haystack: &str, needles: &[&str]) -> bool {
 }
 
 fn run_ralph(args: &[String]) -> Result<(), String> {
-    let run_id = args
-        .first()
-        .map(String::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(default_run_id);
+    let mut idx = 0usize;
+    let run_id = match args.get(idx).map(String::as_str) {
+        Some(value) if !value.trim().is_empty() && !matches!(value, "team" | "--team" | "widen" | "auto-team") => {
+            idx += 1;
+            value.to_string()
+        }
+        _ => default_run_id(),
+    };
+    let mut team_requested = false;
+    if matches!(
+        args.get(idx).map(String::as_str),
+        Some("team" | "--team" | "widen" | "auto-team")
+    ) {
+        team_requested = true;
+        idx += 1;
+    }
     let requested_width = args
-        .get(1)
+        .get(idx)
         .map(|value| value.parse::<usize>().map_err(|err| err.to_string()))
         .transpose()?;
+    if requested_width.is_some() {
+        team_requested = true;
+    }
     let (_, cfg) = load_resolved_config()?;
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, &run_id)?;
@@ -1504,7 +1517,7 @@ fn run_ralph(args: &[String]) -> Result<(), String> {
     if command_available("tmux") && tmux_session_exists(&tmux_session_name)? {
         let _ = configure_tmux_main_exit_hook(&tmux_session_name, false);
     }
-    if requested_width.is_some() {
+    if team_requested {
         ensure_team_sessions(&run_id, TeamMode::Ralph, requested_width)?;
         return run_ops_open_with_filter(&run_id, &tmux_session_name, None);
     }
@@ -2203,7 +2216,7 @@ fn build_ralph_operator_prompt(
         .map(|value| format!("\nSuggested command: {value}"))
         .unwrap_or_default();
     format!(
-        "Ralph loop active for run {run_id}. Act now in the operator lane. Do one concrete orchestration step, not a recap. If you are already mid-step, continue it. Do not widen into a team unless a worker count was explicitly requested. Focus: {focus}. Why: {why}. Next: {next}.{suggested}"
+        "Ralph loop active for run {run_id}. Act now in the operator lane. Do one concrete orchestration step, not a recap. If you are already mid-step, continue it. Do not widen into a team unless team expansion was explicitly requested. Focus: {focus}. Why: {why}. Next: {next}.{suggested}"
     )
 }
 
@@ -2459,7 +2472,7 @@ fn open_direct_team_in_current_surface(
     let store = StateStore::new(resolve_state_root()?);
     ensure_run_exists(&store, run_id)?;
     stop_worker_session_if_present(&store, run_id, "main");
-    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let cwd = project_root_or_current_dir()?;
 
     let pane_specs = prepare_direct_team_panes(
         &store,
@@ -3111,22 +3124,6 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
     if !tmux_session_exists(tmux_session_name)? {
         return Ok(());
     }
-    let panes = run_tmux_capture([
-        "list-panes",
-        "-t",
-        &format!("{tmux_session_name}:0"),
-        "-F",
-        "#{pane_id}\t#{pane_title}",
-    ])?;
-    let pane_map = panes
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(2, '\t');
-            let pane_id = parts.next()?.trim().to_string();
-            let title = parts.next()?.trim().to_string();
-            Some((title, pane_id))
-        })
-        .collect::<BTreeMap<_, _>>();
     for worker_id in store.list_worker_ids(run_id)? {
         if worker_id == "main" || worker_id == "orchestrator-main" {
             continue;
@@ -3152,14 +3149,38 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
         if recently_emitted_reason(&store, run_id, Some(&worker_id), "worker_report_nudged", 20)? {
             continue;
         }
-        if let Some(pane_id) = pane_map.get(&worker_id) {
-            let prompt = build_team_report_nudge_prompt(&worker_id);
-            let _ = send_prompt_to_surface_slot(pane_id, &prompt);
-            let mut worker = worker;
-            let (next_reason, stalled) = advance_team_nudge_reason(worker.reason.as_deref());
-            worker.reason = Some(next_reason.to_string());
-            worker.last_event_at = Some(Utc::now());
-            let _ = store.upsert_worker(worker);
+        let prompt = build_team_report_nudge_prompt(&worker_id);
+        let _ = ask_worker(&store, run_id, &worker_id, &prompt);
+        let mut worker = worker;
+        let (next_reason, stalled) = advance_team_nudge_reason(worker.reason.as_deref());
+        worker.reason = Some(next_reason.to_string());
+        worker.last_event_at = Some(Utc::now());
+        let _ = store.upsert_worker(worker);
+        let _ = store.append_runtime_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::WorkerStateChanged,
+                timestamp: Utc::now(),
+                run_id: Some(run_id.to_string()),
+                session_id: None,
+                source: "team-nudge".to_string(),
+                worker: Some(worker_id.clone()),
+                task_id: None,
+                message_id: None,
+                reason: Some("worker_report_nudged".to_string()),
+                context: serde_json::Map::from_iter([("prompt".to_string(), json!(prompt))]),
+            },
+        );
+        if stalled
+            && !recently_emitted_reason(
+                &store,
+                run_id,
+                Some(&worker_id),
+                "worker_stalled_waiting_for_report",
+                60,
+            )?
+        {
             let _ = store.append_runtime_event(
                 run_id,
                 EventEnvelope {
@@ -3172,36 +3193,10 @@ fn run_team_nudge(args: &[String]) -> Result<(), String> {
                     worker: Some(worker_id.clone()),
                     task_id: None,
                     message_id: None,
-                    reason: Some("worker_report_nudged".to_string()),
-                    context: serde_json::Map::from_iter([("prompt".to_string(), json!(prompt))]),
+                    reason: Some("worker_stalled_waiting_for_report".to_string()),
+                    context: serde_json::Map::new(),
                 },
             );
-            if stalled {
-                if !recently_emitted_reason(
-                    &store,
-                    run_id,
-                    Some(&worker_id),
-                    "worker_stalled_waiting_for_report",
-                    60,
-                )? {
-                    let _ = store.append_runtime_event(
-                        run_id,
-                        EventEnvelope {
-                            schema_version: SCHEMA_VERSION,
-                            event: EventKind::WorkerStateChanged,
-                            timestamp: Utc::now(),
-                            run_id: Some(run_id.to_string()),
-                            session_id: None,
-                            source: "team-nudge".to_string(),
-                            worker: Some(worker_id.clone()),
-                            task_id: None,
-                            message_id: None,
-                            reason: Some("worker_stalled_waiting_for_report".to_string()),
-                            context: serde_json::Map::new(),
-                        },
-                    );
-                }
-            }
         }
     }
     Ok(())
@@ -3462,10 +3457,14 @@ fn ask_worker(
     let message = store.create_mailbox_message(run_id, &message_id, "main", worker_id, prompt)?;
     let _ = store.update_mailbox_status(run_id, worker_id, &message_id, false)?;
 
-    let delivered = deliver_operator_followup(store, run_id, &worker, prompt)?;
-    if delivered {
+    let delivery = deliver_operator_followup(store, run_id, &worker, prompt)?;
+    let delivered = matches!(
+        delivery,
+        FollowupDelivery::Delivered | FollowupDelivery::HookQueued
+    );
+    if matches!(delivery, FollowupDelivery::Delivered) {
         let _ = store.update_mailbox_status(run_id, worker_id, &message_id, true)?;
-    } else {
+    } else if matches!(delivery, FollowupDelivery::Unavailable) {
         store.append_runtime_event(
             run_id,
             EventEnvelope {
@@ -3485,6 +3484,26 @@ fn ask_worker(
                 ]),
             },
         )?;
+    } else {
+        store.append_runtime_event(
+            run_id,
+            EventEnvelope {
+                schema_version: SCHEMA_VERSION,
+                event: EventKind::MailboxMessageNotified,
+                timestamp: now,
+                run_id: Some(run_id.to_string()),
+                session_id: worker.session_ref.clone(),
+                source: "ask".to_string(),
+                worker: Some(worker_id.to_string()),
+                task_id: worker.current_task_id.clone(),
+                message_id: Some(message_id.clone()),
+                reason: Some("worker_followup_queued_for_stop_hook".to_string()),
+                context: serde_json::Map::from_iter([
+                    ("prompt".to_string(), json!(prompt)),
+                    ("to_worker".to_string(), json!(worker_id)),
+                ]),
+            },
+        )?;
     }
 
     Ok(json!({
@@ -3492,7 +3511,12 @@ fn ask_worker(
         "worker_id": worker_id,
         "prompt": prompt,
         "message_id": message.message_id,
-        "delivered": delivered
+        "delivered": delivered,
+        "delivery": match delivery {
+            FollowupDelivery::Delivered => "session",
+            FollowupDelivery::HookQueued => "hook",
+            FollowupDelivery::Unavailable => "deferred",
+        }
     }))
 }
 
@@ -3772,7 +3796,7 @@ fn respawn_direct_team_worker_pane(
         return Ok(false);
     };
     let adapter = worker_adapter_config(&cfg, worker_type)?;
-    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let cwd = project_root_or_current_dir()?;
     let launch = resolve_worker_adapter(&adapter, run_id, worker_id, None, None)?;
     let use_inline_prompt = launch_uses_inline_prompt(&launch);
     let pane_command =
@@ -3825,15 +3849,20 @@ fn respawn_direct_team_worker_pane(
     Ok(true)
 }
 
+enum FollowupDelivery {
+    Delivered,
+    HookQueued,
+    Unavailable,
+}
+
 fn deliver_operator_followup(
     store: &StateStore,
     run_id: &str,
     worker: &WorkerRecord,
     prompt: &str,
-) -> Result<bool, String> {
-    if let Some(pane_id) = find_worker_surface_slot_id(run_id, &worker.worker_id)? {
-        send_prompt_to_surface_slot(&pane_id, prompt)?;
-        return Ok(true);
+) -> Result<FollowupDelivery, String> {
+    if find_worker_surface_slot_id(run_id, &worker.worker_id)?.is_some() {
+        return Ok(FollowupDelivery::HookQueued);
     }
 
     if let Some(session_id) = worker.session_ref.as_deref() {
@@ -3844,10 +3873,14 @@ fn deliver_operator_followup(
                 data: format!("{prompt}\n"),
             },
         )?;
-        return Ok(response.ok);
+        return Ok(if response.ok {
+            FollowupDelivery::Delivered
+        } else {
+            FollowupDelivery::Unavailable
+        });
     }
 
-    Ok(false)
+    Ok(FollowupDelivery::Unavailable)
 }
 
 fn find_worker_surface_slot_id(run_id: &str, worker_id: &str) -> Result<Option<String>, String> {
@@ -5124,6 +5157,13 @@ fn git_repo_root() -> Result<PathBuf, String> {
         Err("git did not return a repository root".to_string())
     } else {
         Ok(PathBuf::from(root))
+    }
+}
+
+fn project_root_or_current_dir() -> Result<PathBuf, String> {
+    match git_repo_root() {
+        Ok(root) => Ok(root),
+        Err(_) => env::current_dir().map_err(|err| err.to_string()),
     }
 }
 
@@ -7241,6 +7281,12 @@ struct CodexHookEnvelope {
     stop_hook_active: Option<bool>,
 }
 
+struct CodexHookContext {
+    store: StateStore,
+    run_id: String,
+    worker_id: Option<String>,
+}
+
 fn run_codex_hook(args: &[String]) -> Result<(), String> {
     let subcommand = required_arg(
         args,
@@ -7304,23 +7350,27 @@ fn build_codex_additional_context(
     input: &CodexHookEnvelope,
     include_ralph_context: bool,
 ) -> Result<Option<String>, String> {
-    let Some((store, run_id)) = resolve_codex_hook_context(input)? else {
+    let Some(context) = resolve_codex_hook_context(input)? else {
         return Ok(None);
     };
     let mut parts = Vec::new();
 
-    let ralph_state = read_ralph_loop_state_from_root(store.root(), &run_id)?;
+    if let Some(prompt) = consume_pending_worker_mailbox_prompt(&context)? {
+        parts.push(prompt);
+    }
+
+    let ralph_state = read_ralph_loop_state_from_root(context.store.root(), &context.run_id)?;
     if include_ralph_context && ralph_state.enabled {
-        if let Some(summary) = maybe_resume_context_prompt(&store, &run_id, true) {
+        if let Some(summary) = maybe_resume_context_prompt(&context.store, &context.run_id, true) {
             if !summary.trim().is_empty() {
                 parts.push(summary);
             }
-        } else if let Ok(snapshot) = store.read_snapshot(&run_id) {
-            parts.push(build_ralph_operator_prompt(&run_id, &snapshot));
+        } else if let Ok(snapshot) = context.store.read_snapshot(&context.run_id) {
+            parts.push(build_ralph_operator_prompt(&context.run_id, &snapshot));
         }
     }
 
-    if let Ok(cfg) = read_autoresearch_config_from_root(store.root(), &run_id) {
+    if let Ok(cfg) = read_autoresearch_config_from_root(context.store.root(), &context.run_id) {
         parts.push(build_autoresearch_hook_context(&cfg));
     }
 
@@ -7332,13 +7382,16 @@ fn build_codex_additional_context(
 }
 
 fn build_codex_stop_context(input: &CodexHookEnvelope) -> Result<Option<String>, String> {
-    let Some((store, run_id)) = resolve_codex_hook_context(input)? else {
+    let Some(context) = resolve_codex_hook_context(input)? else {
         return Ok(None);
     };
-    if let Some(prompt) = build_ralph_stop_context(&store, &run_id)? {
+    if let Some(prompt) = consume_pending_worker_mailbox_prompt(&context)? {
         return Ok(Some(prompt));
     }
-    build_autoresearch_stop_context(store.root(), &run_id)
+    if let Some(prompt) = build_ralph_stop_context(&context.store, &context.run_id)? {
+        return Ok(Some(prompt));
+    }
+    build_autoresearch_stop_context(context.store.root(), &context.run_id)
 }
 
 fn build_ralph_stop_context(store: &StateStore, run_id: &str) -> Result<Option<String>, String> {
@@ -7423,7 +7476,15 @@ fn build_autoresearch_hook_context(cfg: &AutoresearchConfig) -> String {
 
 fn resolve_codex_hook_context(
     input: &CodexHookEnvelope,
-) -> Result<Option<(StateStore, String)>, String> {
+) -> Result<Option<CodexHookContext>, String> {
+    let run_id = env::var("CONDUCTOR_RUN_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let worker_id = env::var("CONDUCTOR_WORKER_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let cwd = input
         .cwd
         .as_deref()
@@ -7433,10 +7494,46 @@ fn resolve_codex_hook_context(
     let Some(state_root) = find_codex_hook_state_root(&cwd) else {
         return Ok(None);
     };
-    let Some(run_id) = infer_codex_hook_run_id(&state_root) else {
+    let Some(run_id) = run_id.or_else(|| infer_codex_hook_run_id(&state_root)) else {
         return Ok(None);
     };
-    Ok(Some((StateStore::new(state_root), run_id)))
+    Ok(Some(CodexHookContext {
+        store: StateStore::new(state_root),
+        run_id,
+        worker_id,
+    }))
+}
+
+fn consume_pending_worker_mailbox_prompt(
+    context: &CodexHookContext,
+) -> Result<Option<String>, String> {
+    let Some(worker_id) = context.worker_id.as_deref() else {
+        return Ok(None);
+    };
+    if worker_id == "main" || worker_id == "orchestrator-main" {
+        return Ok(None);
+    }
+    let mailbox = context.store.read_mailbox(&context.run_id, worker_id)?;
+    let Some(message) = mailbox
+        .records
+        .iter()
+        .find(|record| record.delivered_at.is_none())
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let _ = context
+        .store
+        .update_mailbox_status(&context.run_id, worker_id, &message.message_id, true)?;
+    if let Ok(mut worker) = context.store.read_worker(&context.run_id, worker_id) {
+        worker.last_event_at = Some(Utc::now());
+        worker.reason = Some("operator_followup_consumed_via_stop_hook".to_string());
+        if !matches!(worker.state, WorkerState::Failed | WorkerState::Stopped) {
+            worker.state = WorkerState::AwaitingReport;
+        }
+        let _ = context.store.upsert_worker(worker);
+    }
+    Ok(Some(message.body))
 }
 
 fn find_codex_hook_state_root(cwd: &Path) -> Option<PathBuf> {
@@ -11129,7 +11226,7 @@ mod tests {
         assert!(prompt.contains("Do one concrete orchestration step, not a recap."));
         assert!(
             prompt.contains(
-                "Do not widen into a team unless a worker count was explicitly requested."
+                "Do not widen into a team unless team expansion was explicitly requested."
             )
         );
         assert!(prompt.contains("Suggested command: conductor handoff main explore-1"));
@@ -11302,6 +11399,104 @@ mod tests {
             },
             None => unsafe {
                 std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
+    }
+
+    #[test]
+    fn stop_hook_consumes_pending_worker_mailbox_prompt() {
+        let root = unique_temp_dir("conductor-codex-stop-hook-worker-mailbox");
+        fs::create_dir_all(&root).expect("failed to create temp root");
+        let store = StateStore::new(&root);
+        store
+            .init_run("demo-run", "orchestrator-main")
+            .expect("failed to init run");
+        store
+            .upsert_worker(WorkerRecord {
+                worker_id: "build-1".to_string(),
+                run_id: "demo-run".to_string(),
+                worker_kind: WorkerKind::Worker,
+                session_ref: None,
+                state: WorkerState::Working,
+                current_task_id: Some("task-build-1".to_string()),
+                current_summary: Some("direct build pane ready".to_string()),
+                terminal_label: Some("build-1".to_string()),
+                last_heartbeat_at: Some(Utc::now()),
+                last_stdout_at: None,
+                last_event_at: Some(Utc::now()),
+                reason: Some("direct_team_pane".to_string()),
+            })
+            .expect("failed to create worker");
+        store
+            .create_mailbox_message(
+                "demo-run",
+                "ask-build-1",
+                "main",
+                "build-1",
+                "Continue only on /artists parity and report the first concrete mismatch.",
+            )
+            .expect("failed to create mailbox message");
+        store
+            .update_mailbox_status("demo-run", "build-1", "ask-build-1", false)
+            .expect("failed to mark mailbox message notified");
+
+        let repo_root = root.join("repo");
+        fs::create_dir_all(repo_root.join(".conductor").join("runs").join("demo-run"))
+            .expect("failed to create repo state root");
+        let previous_state_dir = std::env::var_os("CONDUCTOR_STATE_DIR");
+        let previous_run_id = std::env::var_os("CONDUCTOR_RUN_ID");
+        let previous_worker_id = std::env::var_os("CONDUCTOR_WORKER_ID");
+        unsafe {
+            std::env::set_var("CONDUCTOR_STATE_DIR", &root);
+            std::env::set_var("CONDUCTOR_RUN_ID", "demo-run");
+            std::env::set_var("CONDUCTOR_WORKER_ID", "build-1");
+        }
+
+        let envelope = CodexHookEnvelope {
+            cwd: Some(repo_root.display().to_string()),
+            stop_hook_active: Some(false),
+        };
+        let prompt =
+            build_codex_stop_context(&envelope).expect("stop hook should build worker follow-up");
+        assert_eq!(
+            prompt.as_deref(),
+            Some("Continue only on /artists parity and report the first concrete mismatch.")
+        );
+        let mailbox = store
+            .read_mailbox("demo-run", "build-1")
+            .expect("failed to read mailbox");
+        assert!(mailbox.records[0].delivered_at.is_some());
+        let worker = store
+            .read_worker("demo-run", "build-1")
+            .expect("failed to read worker");
+        assert_eq!(worker.state, WorkerState::AwaitingReport);
+        assert_eq!(
+            worker.reason.as_deref(),
+            Some("operator_followup_consumed_via_stop_hook")
+        );
+
+        match previous_state_dir {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_STATE_DIR", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_STATE_DIR");
+            },
+        }
+        match previous_run_id {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_RUN_ID", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_RUN_ID");
+            },
+        }
+        match previous_worker_id {
+            Some(value) => unsafe {
+                std::env::set_var("CONDUCTOR_WORKER_ID", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CONDUCTOR_WORKER_ID");
             },
         }
     }

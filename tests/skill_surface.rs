@@ -45,7 +45,8 @@ fn team_and_ralph_skills_force_cli_routing() {
     assert!(team.contains("## Verification & Completion"));
     assert!(ralph.contains("conductor ralph"));
     assert!(ralph.contains("do not call built-in sub-agent or delegation tools"));
-    assert!(ralph.contains("do not widen into a team unless the user explicitly asked for workers"));
+    assert!(ralph.contains("do not widen into a team unless the user explicitly asked to expand into a team"));
+    assert!(ralph.contains("conductor ralph team"));
     assert!(ralph.contains("keep iterating until one verified outcome is accepted"));
     assert!(ralph.contains("let the loop re-prime itself only after a real stall or other operator-attention event"));
     assert!(ralph.contains("## Recovery & Lifecycle"));
